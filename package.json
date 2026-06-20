@@ -12,6 +12,7 @@
   "dependencies": {
     "@mantine/core": "latest",
     "@mantine/hooks": "latest",
+    "lucide-react": "^1.21.0",
     "react": "latest",
     "react-dom": "latest"
   },

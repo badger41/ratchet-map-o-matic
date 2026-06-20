@@ -1,24 +1,16 @@
-import { AppShell, Badge, Group, Stack, Text, Title } from '@mantine/core';
+import { AppShell } from '@mantine/core';
+import { AppHeader } from './components/AppHeader';
+import { WadLoader } from './features/wad-loader/WadLoader';
 
 export default function App() {
   return (
-    <AppShell header={{ height: 56 }} padding="xl">
+    <AppShell header={{ height: 56 }} padding={0}>
       <AppShell.Header className="appHeader">
-        <Group h="100%" px="xl" justify="space-between">
-          <Text fw={700}>Map-O-Matic</Text>
-          <Badge variant="light" color="teal">
-            Home
-          </Badge>
-        </Group>
+        <AppHeader />
       </AppShell.Header>
 
       <AppShell.Main className="mainSurface">
-        <Stack gap="sm" className="homePanel">
-          <Title order={1}>Hello world</Title>
-          <Text c="dimmed" size="lg">
-            Map-O-Matic
-          </Text>
-        </Stack>
+        <WadLoader />
       </AppShell.Main>
     </AppShell>
   );

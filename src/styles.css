@@ -8,6 +8,7 @@ body,
 
 body {
   background: #080b0f;
+  color: #edf1f5;
 }
 
 .appHeader {
@@ -16,11 +17,85 @@ body {
 }
 
 .mainSurface {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #080b0f 0%, #111820 55%, #161318 100%);
+  min-height: calc(100vh - 56px);
+  background: #0b0f14;
 }
 
-.homePanel {
-  width: min(720px, 100%);
-  padding-top: clamp(64px, 12vh, 128px);
+.workspace {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.toolPanel,
+.tablePanel {
+  min-width: 0;
+  border-color: rgba(159, 174, 188, 0.22);
+  border-radius: 8px;
+  background: #111820;
+}
+
+.toolPanel {
+  padding: 18px;
+}
+
+.tablePanel {
+  overflow: hidden;
+}
+
+.tableHeader {
+  min-height: 54px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(159, 174, 188, 0.18);
+}
+
+.entryTableScroll {
+  height: min(480px, 52vh);
+}
+
+.entryPath {
+  display: inline-block;
+  max-width: min(620px, 56vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 112px;
+  border: 1px dashed rgba(159, 174, 188, 0.24);
+  border-radius: 8px;
+}
+
+.statBox {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(159, 174, 188, 0.18);
+  border-radius: 8px;
+  background: #0d1319;
+}
+
+.statBox > :last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusBadge {
+  align-self: flex-start;
+}
+
+@media (max-width: 640px) {
+  .workspace {
+    width: min(100vw - 20px, 1180px);
+    padding-top: 18px;
+  }
+
+  .entryPath {
+    max-width: 52vw;
+  }
 }
