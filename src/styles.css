@@ -1,0 +1,26 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #080b0f;
+}
+
+.appHeader {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #10161d;
+}
+
+.mainSurface {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #080b0f 0%, #111820 55%, #161318 100%);
+}
+
+.homePanel {
+  width: min(720px, 100%);
+  padding-top: clamp(64px, 12vh, 128px);
+}
