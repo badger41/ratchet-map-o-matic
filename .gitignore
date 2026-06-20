@@ -1,4 +1,7 @@
 node_modules/
 dist/
 .vite/
+.wasm-release/
+public/ratchetps2/
+src/vendor/ratchetps2-wasm/
 *.local

@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      wasm_version:
+        description: Ratchet PS2 CLI/WASM release tag to bundle. Defaults to ratchetps2-wasm.version.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -19,34 +24,42 @@ jobs:
   deploy:
     name: Build and Deploy
     runs-on: ubuntu-latest
+    env:
+      WASM_REPO: badger41/ratchet-ps2-cli
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install Dependencies
         run: npm ci
 
+      - name: Install Ratchet PS2 WASM
+        env:
+          GH_TOKEN: ${{ secrets.RATCHET_PS2_CLI_RELEASE_TOKEN || github.token }}
+          WASM_VERSION: ${{ inputs.wasm_version || '' }}
+        run: bash scripts/install-ratchetps2-wasm.sh
+
       - name: Build
         run: npm run build
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload GitHub Pages Artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
