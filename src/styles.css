@@ -27,8 +27,25 @@ body {
   padding: 28px 0 48px;
 }
 
+.welcomeSurface {
+  display: flex;
+  align-items: center;
+  min-height: calc(100vh - 56px);
+  padding: 28px 16px;
+}
+
+.welcomePanel {
+  width: min(680px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+  border-color: rgba(159, 174, 188, 0.22);
+  border-radius: 8px;
+  background: #111820;
+}
+
 .toolPanel,
-.tablePanel {
+.tablePanel,
+.loadPanel {
   min-width: 0;
   border-color: rgba(159, 174, 188, 0.22);
   border-radius: 8px;
@@ -41,6 +58,20 @@ body {
 
 .tablePanel {
   overflow: hidden;
+}
+
+.loadPanel {
+  padding: 18px;
+}
+
+.loadStage {
+  display: grid;
+  gap: 8px;
+  min-height: 88px;
+  padding: 12px;
+  border: 1px solid rgba(159, 174, 188, 0.16);
+  border-radius: 8px;
+  background: #0d1319;
 }
 
 .tableHeader {

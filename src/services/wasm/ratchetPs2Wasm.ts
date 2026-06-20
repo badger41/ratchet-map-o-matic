@@ -1,5 +1,3 @@
-export const ratchetPs2WasmAssetBaseUrl = '/ratchetps2/';
-
 export interface PackedFileEntry {
   path: string;
   offset: number;
@@ -33,11 +31,14 @@ export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
 }
 
 async function initializeRatchetPs2WasmModule(): Promise<RatchetPs2WasmModule> {
-  const moduleUrl = new URL(
-    'ratchetps2-wasm.js',
-    new URL(ratchetPs2WasmAssetBaseUrl, window.location.origin)
-  );
+  const assetBaseUrl = resolveRatchetPs2WasmAssetBaseUrl();
+  const moduleUrl = new URL('ratchetps2-wasm.js', assetBaseUrl);
   const wasm = await import(/* @vite-ignore */ moduleUrl.toString()) as RatchetPs2WasmModule;
-  await wasm.initializeRatchetPs2Wasm({ assetBaseUrl: ratchetPs2WasmAssetBaseUrl });
+  await wasm.initializeRatchetPs2Wasm({ assetBaseUrl });
   return wasm;
+}
+
+function resolveRatchetPs2WasmAssetBaseUrl(): string {
+  const viteBaseUrl = new URL(import.meta.env.BASE_URL, window.location.href);
+  return new URL('ratchetps2/', viteBaseUrl).toString();
 }

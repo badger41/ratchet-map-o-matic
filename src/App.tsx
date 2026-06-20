@@ -1,6 +1,6 @@
 import { AppShell } from '@mantine/core';
 import { AppHeader } from './components/AppHeader';
-import { WadLoader } from './features/wad-loader/WadLoader';
+import { MapLoader } from './features/map-loader/MapLoader';
 
 export default function App() {
   return (
@@ -10,7 +10,7 @@ export default function App() {
       </AppShell.Header>
 
       <AppShell.Main className="mainSurface">
-        <WadLoader />
+        <MapLoader />
       </AppShell.Main>
     </AppShell>
   );
