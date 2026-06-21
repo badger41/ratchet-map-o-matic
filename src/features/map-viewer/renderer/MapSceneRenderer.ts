@@ -3,27 +3,33 @@ import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   defaultSkyboxRenderOptions,
+  defaultTieRenderOptions,
   defaultTfragMaterialOptions,
   type LoadedMapPackage,
   type MapSceneLoadStageUpdate,
   type SkyboxRenderOptions,
   type SkyboxStats,
+  type TieRenderOptions,
+  type TieStats,
   type TfragMaterialOptions,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import { DlTfragMaterialController } from './DlTfragMaterial';
 import { FpsCameraController } from './FpsCameraController';
 import { SkyboxController } from './skybox/SkyboxController';
+import { TieInstanceController } from './ties/TieInstanceController';
 
 interface MapSceneRendererOptions {
   container: HTMLElement;
   materialOptions?: TfragMaterialOptions;
   skyboxRenderOptions?: SkyboxRenderOptions;
+  tieRenderOptions?: TieRenderOptions;
   frameRateLimit?: number;
   onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
   onStatus: (status: string) => void;
   onTfragStats: (stats: TfragStats) => void;
   onSkyboxStats: (stats: SkyboxStats) => void;
+  onTieStats: (stats: TieStats) => void;
   onFrameStats?: (stats: MapSceneFrameStats) => void;
 }
 
@@ -43,6 +49,7 @@ export class MapSceneRenderer {
   private readonly onStatus: (status: string) => void;
   private readonly onTfragStats: (stats: TfragStats) => void;
   private readonly onSkyboxStats: (stats: SkyboxStats) => void;
+  private readonly onTieStats: (stats: TieStats) => void;
   private readonly onFrameStats?: (stats: MapSceneFrameStats) => void;
   private readonly scene = new THREE.Scene();
   private readonly skyScene = new THREE.Scene();
@@ -51,8 +58,10 @@ export class MapSceneRenderer {
   private readonly loader = new GLTFLoader();
   private readonly tfragController = new DlTfragMaterialController();
   private readonly skyboxController = new SkyboxController();
+  private readonly tieController = new TieInstanceController();
   private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
+  private tieRenderOptions: TieRenderOptions;
   private renderer: WebGPURenderer | null = null;
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -72,9 +81,11 @@ export class MapSceneRenderer {
     this.onStatus = options.onStatus;
     this.onTfragStats = options.onTfragStats;
     this.onSkyboxStats = options.onSkyboxStats;
+    this.onTieStats = options.onTieStats;
     this.onFrameStats = options.onFrameStats;
     this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
+    this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
   }
@@ -138,12 +149,12 @@ export class MapSceneRenderer {
 
       this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Preparing materials' });
       await yieldToBrowser();
-      const stats = this.tfragController.prepare(tfragRoot, mapPackage.directionalLights, this.materialOptions);
-      this.onTfragStats(stats);
+      const tfragStats = this.tfragController.prepare(tfragRoot, mapPackage.directionalLights, this.materialOptions);
+      this.onTfragStats(tfragStats);
       this.onLoadProgress({
         id: 'tfrag',
         status: 'done',
-        detail: `${stats.triangles.toLocaleString()} triangles`
+        detail: `${tfragStats.triangles.toLocaleString()} triangles`
       });
 
       this.onLoadProgress({ id: 'skybox', status: 'active', detail: 'Loading glTF' });
@@ -160,6 +171,33 @@ export class MapSceneRenderer {
         id: 'skybox',
         status: 'done',
         detail: skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} shells` : 'No skybox'
+      });
+
+      this.onLoadProgress({ id: 'ties', status: 'active', detail: 'Preparing instances' });
+      this.onStatus('Loading tie instances');
+      const tieStats = await this.tieController.load(
+        root,
+        mapPackage,
+        this.loader,
+        this.tieRenderOptions,
+        this.skyboxController.getReflectionTexture(),
+        (loaded, total) => {
+          this.onLoadProgress({
+            id: 'ties',
+            status: 'active',
+            detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
+            loaded,
+            total
+          });
+        }
+      );
+      this.onTieStats(tieStats);
+      this.onLoadProgress({
+        id: 'ties',
+        status: 'done',
+        detail: tieStats.renderedInstances > 0
+          ? `${tieStats.renderedInstances.toLocaleString()} instances`
+          : 'No ties'
       });
 
       this.onLoadProgress({
@@ -199,11 +237,14 @@ export class MapSceneRenderer {
         status: 'done',
         detail: 'Ready'
       });
-      this.onStatus(skyboxStats.loaded
-        ? `Tfrag and ${skyboxStats.shells.toLocaleString()} skybox shells loaded`
-        : 'Tfrag loaded');
-      return stats;
+      this.onStatus([
+        `${tfragStats.triangles.toLocaleString()} terrain triangles`,
+        skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} skybox shells` : null,
+        tieStats.renderedInstances > 0 ? `${tieStats.renderedInstances.toLocaleString()} tie instances` : null
+      ].filter(Boolean).join(', '));
+      return tfragStats;
     } catch (error: unknown) {
+      this.tieController.dispose();
       this.skyboxController.dispose();
       this.tfragController.dispose();
       disposeObject3D(root);
@@ -221,6 +262,7 @@ export class MapSceneRenderer {
     this.controls?.dispose();
     this.disposeCurrentRoot();
     this.skyboxController.dispose();
+    this.tieController.dispose();
     this.renderer?.dispose();
     this.container.replaceChildren();
   }
@@ -243,6 +285,16 @@ export class MapSceneRenderer {
     const stats = this.skyboxController.setOptions(options);
     if (stats) {
       this.onSkyboxStats(stats);
+    }
+
+    return stats;
+  }
+
+  setTieRenderOptions(options: TieRenderOptions): TieStats | null {
+    this.tieRenderOptions = options;
+    const stats = this.tieController.setOptions(options);
+    if (stats) {
+      this.onTieStats(stats);
     }
 
     return stats;
@@ -346,6 +398,7 @@ export class MapSceneRenderer {
     this.currentPackage = null;
     this.tfragController.dispose();
     this.skyboxController.dispose();
+    this.tieController.dispose();
     currentPackage?.assetPackage.dispose();
 
     if (!this.currentRoot) {

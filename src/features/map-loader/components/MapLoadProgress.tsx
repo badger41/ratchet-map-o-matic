@@ -73,6 +73,7 @@ export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps)
                   color={stageColor(stage.status)}
                   radius="xs"
                   size="sm"
+                  transitionDuration={stage.status === 'active' ? 180 : 0}
                 />
                 {stage.loaded !== null ? (
                   <Text size="xs" c="dimmed">

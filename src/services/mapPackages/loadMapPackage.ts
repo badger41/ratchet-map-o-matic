@@ -69,6 +69,7 @@ export async function loadMapPackageFromAssetPackage(
     ? resolveAssetPath(manifestRootPath, skyboxEntry.GltfPath)
     : null;
   const skyboxGltfUrl = skyboxGltfPath ? await assetPackage.resolveUrl(skyboxGltfPath) : null;
+  const tieEntries = findTieGltfEntries(assetManifest);
 
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
   const worldManifest = await assetPackage.readOptionalJson<WorldManifest>(worldManifestPath);
@@ -77,6 +78,9 @@ export async function loadMapPackageFromAssetPackage(
   const directionalLightUrl = await assetPackage.resolveUrl(directionalLightPackagePath);
   const directionalLightBuffer = toStandaloneArrayBuffer(await assetPackage.readBytes(directionalLightPackagePath));
   const directionalLights = parseDirectionalLightRecords(directionalLightBuffer);
+  const tieClassIdsPath = findWorldSlotPath(worldManifest, 'tie_class_ids');
+  const tieInstancesPath = findWorldSlotPath(worldManifest, 'tie_instances');
+  const tieColorsPath = findWorldSlotPath(worldManifest, 'tie_instance_colors');
 
   const tfragDiagnosticsPath = tfragEntry.DiagnosticsPath
     ? resolveAssetPath(manifestRootPath, tfragEntry.DiagnosticsPath)
@@ -84,6 +88,9 @@ export async function loadMapPackageFromAssetPackage(
   const tfragDiagnostics = tfragDiagnosticsPath
     ? await assetPackage.readOptionalJson<TfragDiagnostics>(tfragDiagnosticsPath)
     : null;
+  const tieClassIdsPackagePath = tieClassIdsPath ? resolveWorldPath(manifestRootPath, tieClassIdsPath) : null;
+  const tieInstancesPackagePath = tieInstancesPath ? resolveWorldPath(manifestRootPath, tieInstancesPath) : null;
+  const tieColorsPackagePath = tieColorsPath ? resolveWorldPath(manifestRootPath, tieColorsPath) : null;
 
   return {
     assetPackage,
@@ -102,6 +109,12 @@ export async function loadMapPackageFromAssetPackage(
     tfragGltfPath,
     tfragGltfUrl,
     tfragDiagnostics,
+    tieEntries,
+    tieClassIdsPath: tieClassIdsPackagePath,
+    tieInstancesPath: tieInstancesPackagePath,
+    tieColorsPath: tieColorsPackagePath,
+    tieClassCountExpected: numberValue(worldManifest?.TieClassCount),
+    tieInstanceCountExpected: numberValue(worldManifest?.TieInstanceCount),
     directionalLightPath: directionalLightPackagePath,
     directionalLightUrl,
     directionalLights
@@ -169,6 +182,20 @@ function findSkyboxGltfEntry(assetManifest: AssetManifest): GltfExportEntry | nu
   }) ?? null;
 }
 
+function findTieGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
+  return (assetManifest.GltfExports ?? [])
+    .filter((candidate) => {
+      return (
+        candidate.Family?.toLowerCase() === 'tie' &&
+        candidate.Status?.toLowerCase() === 'written' &&
+        typeof candidate.GltfPath === 'string' &&
+        candidate.GltfPath.length > 0 &&
+        numberValue(candidate.ModelId) !== null
+      );
+    })
+    .sort((a, b) => (numberValue(a.ModelId) ?? 0) - (numberValue(b.ModelId) ?? 0));
+}
+
 function findDirectionalLightPath(worldManifest: WorldManifest | null): string {
   return findWorldSlotPath(worldManifest, 'directional_lights') ?? 'lighting/directional_lights.bin';
 }
@@ -204,4 +231,17 @@ function readVec4(view: DataView, offset: number): Vec4 {
     view.getFloat32(offset + 8, true),
     view.getFloat32(offset + 12, true)
   ];
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }

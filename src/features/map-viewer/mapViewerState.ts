@@ -20,6 +20,7 @@ export const mapViewerStageDefinitions: MapViewerStageDefinition[] = [
   { id: 'manifest', label: 'Read package manifests' },
   { id: 'tfrag', label: 'Load terrain' },
   { id: 'skybox', label: 'Load skybox' },
+  { id: 'ties', label: 'Load ties' },
   { id: 'compile', label: 'Scene setup' }
 ];
 

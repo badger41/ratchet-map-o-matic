@@ -16,6 +16,7 @@ import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadl
 import {
   defaultTfragMaterialOptions,
   type SkyboxStats,
+  type TieStats,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import { loadViewerPackageSource } from '../../../services/mapPackages/viewerPackageSource';
@@ -55,6 +56,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [stages, setStages] = useState<MapViewerStageState[]>(() => createMapViewerStages('manifest'));
   const [tfragStats, setTfragStats] = useState<TfragStats | null>(null);
   const [skyboxStats, setSkyboxStats] = useState<SkyboxStats | null>(null);
+  const [tieStats, setTieStats] = useState<TieStats | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
@@ -120,6 +122,11 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           setSkyboxStats(stats);
         }
       },
+      onTieStats: (stats) => {
+        if (!disposed) {
+          setTieStats(stats);
+        }
+      },
       onFrameStats: (stats) => {
         if (!disposed) {
           setFrameStats(stats);
@@ -133,6 +140,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       setLastError(null);
       setTfragStats(null);
       setSkyboxStats(null);
+      setTieStats(null);
       setStages(createMapViewerStages('manifest'));
 
       try {
@@ -273,6 +281,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 <DebugRow label="Skybox shells" value={skyboxStats?.shells.toLocaleString() ?? '-'} />
                 <DebugRow label="Skybox triangles" value={skyboxStats?.triangles.toLocaleString() ?? '-'} />
                 <DebugRow label="Animated shells" value={skyboxStats?.animatedShells.toLocaleString() ?? '-'} />
+                <DebugRow label="Tie classes" value={formatTieLoadedClasses(tieStats)} />
+                <DebugRow label="Tie instances" value={tieStats?.renderedInstances.toLocaleString() ?? '-'} />
+                <DebugRow label="Tie batches" value={tieStats?.batches.toLocaleString() ?? '-'} />
+                <DebugRow label="Tie primitives" value={tieStats?.primitives.toLocaleString() ?? '-'} />
+                <DebugRow label="Tie triangles" value={tieStats?.triangles.toLocaleString() ?? '-'} />
+                <DebugRow label="Tie color rows" value={tieStats?.colorEntries.toLocaleString() ?? '-'} />
+                <DebugRow label="Tie ambient batches" value={tieStats?.ambientBatches.toLocaleString() ?? '-'} />
+                <DebugRow label="Missing ties" value={tieStats?.missingClasses.toLocaleString() ?? '-'} />
                 <DebugRow label="Directional Lights" value={tfragStats.directionalLightRecords.toLocaleString()} />
                 <DebugRow label="Material Rebakes" value={tfragStats.materialRebakes.toLocaleString()} />
                 <DebugRow label="Render Package" value={formatByteSize(result.packedByteLength)} />
@@ -284,6 +300,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       ) : null}
     </Box>
   );
+}
+
+function formatTieLoadedClasses(stats: TieStats | null): string {
+  if (!stats) {
+    return '-';
+  }
+
+  return `${stats.loadedClasses.toLocaleString()} / ${stats.classIds.toLocaleString()}`;
 }
 
 function DebugRow({ label, value }: { label: string; value: string }) {

@@ -4,7 +4,7 @@ export type Vec4 = [number, number, number, number];
 
 export type DiagnosticMode = 'runtime' | 'base' | 'cache' | 'selector';
 export type SkyboxBlendMode = 'metadata' | 'auto-additive-overlays' | 'additive-blend-layers';
-export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'compile';
+export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'ties' | 'compile';
 export type MapSceneLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
 
 export interface MapSceneLoadStageUpdate {
@@ -94,6 +94,12 @@ export interface LoadedMapPackage {
   tfragGltfPath: string;
   tfragGltfUrl: string;
   tfragDiagnostics: TfragDiagnostics | null;
+  tieEntries: GltfExportEntry[];
+  tieClassIdsPath: string | null;
+  tieInstancesPath: string | null;
+  tieColorsPath: string | null;
+  tieClassCountExpected: number | null;
+  tieInstanceCountExpected: number | null;
   directionalLightPath: string;
   directionalLightUrl: string;
   directionalLights: DirectionalLightRecord[];
@@ -119,6 +125,55 @@ export interface SkyboxStats {
   triangles: number;
 }
 
+export interface TieInstanceRecord {
+  index: number;
+  classId: number;
+  headerWords: [number, number, number];
+  matrixRows: [Vec4, Vec4, Vec4];
+  position: Vec4;
+  tailWords: [number, number, number, number];
+  lightSelector: number;
+}
+
+export interface TieColorEntry {
+  entryIndex: number;
+  id: number;
+  wordCount: number;
+  byteLength: number;
+  offset: number;
+  nonZeroCount: number;
+  firstWords: number[];
+  words: number[];
+  averageRgb: [number, number, number];
+}
+
+export interface TieColorTable {
+  entries: TieColorEntry[];
+  byInstanceId: Map<number, TieColorEntry>;
+  entryCount: number;
+  mappedCount: number;
+  sentinelCount: number;
+  duplicateIdCount: number;
+}
+
+export interface TieStats {
+  classIds: number;
+  exportedClasses: number;
+  loadedClasses: number;
+  instances: number;
+  renderedInstances: number;
+  colorEntries: number;
+  coloredInstances: number;
+  ambientBatches: number;
+  ambientRecipes: number;
+  ambientRecipeSamples: number;
+  ambientValidSamples: number;
+  missingClasses: number;
+  batches: number;
+  primitives: number;
+  triangles: number;
+}
+
 export interface TfragMaterialOptions {
   diagnosticMode: DiagnosticMode;
   lightIntensity: number;
@@ -126,6 +181,41 @@ export interface TfragMaterialOptions {
   cacheMix: number;
   ditherStrength: number;
   postScaleEnabled: boolean;
+}
+
+export type TieLightingMode =
+  | 'combined'
+  | 'directional'
+  | 'ambient'
+  | 'color-data'
+  | 'color-raw'
+  | 'world-rays'
+  | 'world-colors';
+
+export type TieBlendMode =
+  | 'additive'
+  | 'tinted-world'
+  | 'modulate'
+  | 'max-light';
+
+export type TieMaterialDebugMode =
+  | 'normal'
+  | 'base'
+  | 'lit'
+  | 'reflection'
+  | 'mask';
+
+export interface TieRenderOptions {
+  colorsEnabled: boolean;
+  lightingMode: TieLightingMode;
+  blendMode: TieBlendMode;
+  colorStrength: number;
+  ambientIntensity: number;
+  directionalIntensity: number;
+  shineIntensity: number;
+  reflectionIntensity: number;
+  materialDebugMode: TieMaterialDebugMode;
+  directionalOverrideSlot: number | null;
 }
 
 export interface SkyboxRenderOptions {
@@ -143,6 +233,19 @@ export const defaultTfragMaterialOptions: TfragMaterialOptions = {
   cacheMix: 0,
   ditherStrength: 0,
   postScaleEnabled: true
+};
+
+export const defaultTieRenderOptions: TieRenderOptions = {
+  colorsEnabled: true,
+  lightingMode: 'combined',
+  blendMode: 'modulate',
+  colorStrength: 1,
+  ambientIntensity: 1,
+  directionalIntensity: 1,
+  shineIntensity: 1.35,
+  reflectionIntensity: 1,
+  materialDebugMode: 'normal',
+  directionalOverrideSlot: null
 };
 
 export const defaultSkyboxRenderOptions: SkyboxRenderOptions = {
