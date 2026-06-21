@@ -209,7 +209,15 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [result.cachedPackage.id]);
 
   return (
-    <Box pos="relative" mih="calc(100vh - 56px)" bg="#070a0d" style={{ overflow: 'hidden' }}>
+    <Box
+      pos="relative"
+      bg="#070a0d"
+      style={{
+        height: 'calc(100dvh - 56px)',
+        minHeight: 'calc(100dvh - 56px)',
+        overflow: 'hidden'
+      }}
+    >
       <Box pos="absolute" inset={0} ref={viewportRef} />
 
       <Paper

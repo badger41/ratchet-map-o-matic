@@ -103,6 +103,7 @@ export class MapSceneRenderer {
   private renderer: WebGPURenderer | null = null;
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private pendingResizeFrame: number | null = null;
   private worldRenderTarget: THREE.RenderTarget | null = null;
   private worldCompositeMaterial: THREE.MeshBasicNodeMaterial | null = null;
   private worldCompositeQuad: THREE.QuadMesh | null = null;
@@ -171,8 +172,10 @@ export class MapSceneRenderer {
     this.container.replaceChildren(renderer.domElement);
     this.controls = new FpsCameraController(this.camera, renderer.domElement);
 
-    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver = new ResizeObserver(this.scheduleResize);
     this.resizeObserver.observe(this.container);
+    window.addEventListener('resize', this.scheduleResize);
+    window.visualViewport?.addEventListener('resize', this.scheduleResize);
     this.resize();
     this.start();
     this.onStatus('WebGPU renderer initialized');
@@ -337,6 +340,13 @@ export class MapSceneRenderer {
   dispose(): void {
     this.renderer?.setAnimationLoop(null);
     this.resizeObserver?.disconnect();
+    window.removeEventListener('resize', this.scheduleResize);
+    window.visualViewport?.removeEventListener('resize', this.scheduleResize);
+    if (this.pendingResizeFrame !== null) {
+      window.cancelAnimationFrame(this.pendingResizeFrame);
+      this.pendingResizeFrame = null;
+    }
+
     this.controls?.dispose();
     this.disposeCurrentRoot();
     this.skyboxController.dispose();
@@ -406,6 +416,17 @@ export class MapSceneRenderer {
     this.lastStatsUpdateTime = this.lastFrameTime;
     this.renderer?.setAnimationLoop((time) => this.handleAnimationFrame(time));
   }
+
+  private readonly scheduleResize = (): void => {
+    if (this.pendingResizeFrame !== null) {
+      return;
+    }
+
+    this.pendingResizeFrame = window.requestAnimationFrame(() => {
+      this.pendingResizeFrame = null;
+      this.resize();
+    });
+  };
 
   private handleAnimationFrame(time: DOMHighResTimeStamp): void {
     if (this.minRenderIntervalMs > 0 && this.lastRenderSubmitTime > 0) {
@@ -490,6 +511,9 @@ export class MapSceneRenderer {
     if (shouldUseWorldComposite(this.worldDisplayLift)) {
       this.resizeWorldRenderTarget(width, height);
     }
+
+    this.lastRenderSubmitTime = 0;
+    this.renderFrame(performance.now());
   }
 
   private ensureWorldComposite(): void {
@@ -510,6 +534,13 @@ export class MapSceneRenderer {
     const pixelRatio = this.renderer.getPixelRatio();
     const targetWidth = Math.max(1, Math.floor(width * pixelRatio));
     const targetHeight = Math.max(1, Math.floor(height * pixelRatio));
+    if (
+      this.worldRenderTarget &&
+      (this.worldRenderTarget.width !== targetWidth || this.worldRenderTarget.height !== targetHeight)
+    ) {
+      this.disposeWorldComposite();
+    }
+
     if (!this.worldRenderTarget) {
       this.worldRenderTarget = new THREE.RenderTarget(targetWidth, targetHeight, {
         depthBuffer: true,
@@ -524,10 +555,6 @@ export class MapSceneRenderer {
       this.worldRenderTarget.texture.name = 'map_omatic_world_display_layer';
       this.createWorldCompositeMaterial();
       return;
-    }
-
-    if (this.worldRenderTarget.width !== targetWidth || this.worldRenderTarget.height !== targetHeight) {
-      this.worldRenderTarget.setSize(targetWidth, targetHeight);
     }
 
     if (!this.worldCompositeQuad) {

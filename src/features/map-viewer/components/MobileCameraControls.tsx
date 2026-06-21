@@ -64,13 +64,13 @@ export function MobileCameraControls({ onMoveInputChange }: MobileCameraControls
     <>
       <Paper
         pos="absolute"
-        bottom={{ base: 14, sm: 18 }}
-        left={{ base: 14, sm: 18 }}
         p={6}
         radius="md"
         bg="rgba(17, 24, 32, 0.78)"
         withBorder
         style={{
+          bottom: 'max(10px, calc(env(safe-area-inset-bottom, 0px) + 10px))',
+          left: 'max(10px, calc(env(safe-area-inset-left, 0px) + 10px))',
           zIndex: 3,
           borderColor: 'rgba(159, 174, 188, 0.22)',
           backdropFilter: 'blur(10px)',
@@ -114,13 +114,13 @@ export function MobileCameraControls({ onMoveInputChange }: MobileCameraControls
 
       <Paper
         pos="absolute"
-        bottom={{ base: 14, sm: 18 }}
-        right={{ base: 14, sm: 18 }}
         p={6}
         radius="md"
         bg="rgba(17, 24, 32, 0.78)"
         withBorder
         style={{
+          bottom: 'max(10px, calc(env(safe-area-inset-bottom, 0px) + 10px))',
+          right: 'max(10px, calc(env(safe-area-inset-right, 0px) + 10px))',
           zIndex: 3,
           borderColor: 'rgba(159, 174, 188, 0.22)',
           backdropFilter: 'blur(10px)',
@@ -162,7 +162,7 @@ function ControlButton({ children, label, onPress, onRelease }: ControlButtonPro
       aria-label={label}
       color="gray"
       radius="md"
-      size={42}
+      size={40}
       variant="filled"
       onPointerDown={onPress}
       onPointerUp={onRelease}
