@@ -9,6 +9,12 @@ export interface SceneCameraFrame {
   far: number;
 }
 
+interface SceneMeasurement {
+  bounds: THREE.Box3;
+  instancedFocus: THREE.Vector3 | null;
+  meshFocus: THREE.Vector3 | null;
+}
+
 const fallbackSceneRadius = 400;
 const fallbackCameraPosition = new THREE.Vector3(0, 150, 300);
 const fallbackCameraTarget = new THREE.Vector3(0, 0, 0);
@@ -27,16 +33,14 @@ export function createFallbackCameraFrame(): SceneCameraFrame {
 export function createInitialSceneCameraFrame(root: THREE.Object3D): SceneCameraFrame {
   root.updateWorldMatrix(true, true);
 
-  const bounds = new THREE.Box3().setFromObject(root);
+  const { bounds, instancedFocus, meshFocus } = measureScene(root);
   if (bounds.isEmpty()) {
     return createFallbackCameraFrame();
   }
 
   const size = bounds.getSize(new THREE.Vector3());
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
-  const focus = averageInstancedPlacements(root)
-    ?? averageMeshCenters(root)
-    ?? bounds.getCenter(new THREE.Vector3());
+  const focus = instancedFocus ?? meshFocus ?? bounds.getCenter(new THREE.Vector3());
   const horizontalSpan = Math.max(size.x, size.z, 1);
   const horizontalOffset = clamp(horizontalSpan * 0.055, 160, 760);
   const elevation = clamp(Math.max(horizontalSpan * 0.035, size.y * 0.35), 120, 460);
@@ -56,47 +60,69 @@ export function createInitialSceneCameraFrame(root: THREE.Object3D): SceneCamera
   };
 }
 
-function averageInstancedPlacements(root: THREE.Object3D): THREE.Vector3 | null {
-  const average = createVectorAverage();
+function measureScene(root: THREE.Object3D): SceneMeasurement {
+  const bounds = new THREE.Box3().makeEmpty();
+  const instancedAverage = createVectorAverage();
+  const meshAverage = createVectorAverage();
+  const localBox = new THREE.Box3();
   const instanceMatrix = new THREE.Matrix4();
   const worldMatrix = new THREE.Matrix4();
   const placement = new THREE.Vector3();
-
-  root.traverse((object) => {
-    if (!isInstancedMesh(object)) {
-      return;
-    }
-
-    for (let index = 0; index < object.count; index += 1) {
-      object.getMatrixAt(index, instanceMatrix);
-      worldMatrix.multiplyMatrices(object.matrixWorld, instanceMatrix);
-      placement.setFromMatrixPosition(worldMatrix);
-      average.add(placement);
-    }
-  });
-
-  return average.value();
-}
-
-function averageMeshCenters(root: THREE.Object3D): THREE.Vector3 | null {
-  const average = createVectorAverage();
-  const box = new THREE.Box3();
   const center = new THREE.Vector3();
 
   root.traverse((object) => {
-    if (!isMesh(object) || isInstancedMesh(object)) {
+    if (!isMesh(object)) {
       return;
     }
 
-    box.setFromObject(object);
-    if (box.isEmpty()) {
+    const objectBounds = getObjectLocalBounds(object, localBox);
+    if (!objectBounds) {
       return;
     }
 
-    average.add(box.getCenter(center));
+    localBox.applyMatrix4(object.matrixWorld);
+    bounds.union(localBox);
+
+    if (isInstancedMesh(object)) {
+      for (let index = 0; index < object.count; index += 1) {
+        object.getMatrixAt(index, instanceMatrix);
+        worldMatrix.multiplyMatrices(object.matrixWorld, instanceMatrix);
+        placement.setFromMatrixPosition(worldMatrix);
+        instancedAverage.add(placement);
+      }
+      return;
+    }
+
+    meshAverage.add(localBox.getCenter(center));
   });
 
-  return average.value();
+  return {
+    bounds,
+    instancedFocus: instancedAverage.value(),
+    meshFocus: meshAverage.value()
+  };
+}
+
+function getObjectLocalBounds(object: THREE.Mesh, target: THREE.Box3): THREE.Box3 | null {
+  if (isInstancedMesh(object)) {
+    if (!object.boundingBox) {
+      object.computeBoundingBox();
+    }
+    if (object.boundingBox) {
+      return target.copy(object.boundingBox);
+    }
+  }
+
+  const geometry = object.geometry;
+  if (!geometry) {
+    return null;
+  }
+
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
+
+  return geometry.boundingBox ? target.copy(geometry.boundingBox) : null;
 }
 
 function createVectorAverage(): { add: (value: THREE.Vector3) => void; value: () => THREE.Vector3 | null } {

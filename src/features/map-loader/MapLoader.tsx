@@ -1,12 +1,13 @@
 import { Alert, Button, Stack } from '@mantine/core';
 import { AlertCircle, RotateCcw } from 'lucide-react';
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   deadlockedMaps,
   defaultDeadlockedMap
 } from '../../data/deadlockedMaps';
 import {
   loadDeadlockedMapRenderPackage,
+  preloadDeadlockedMapConverter,
   type DeadlockedMapLoadResult
 } from '../../services/mapLoading/deadlockedMapLoadPipeline';
 import { MapLoadProgress } from './components/MapLoadProgress';
@@ -38,6 +39,18 @@ export function MapLoader() {
   const selectedMap = useMemo(() => {
     return deadlockedMaps.find((map) => map.id === selectedMapId) ?? defaultDeadlockedMap;
   }, [selectedMapId]);
+
+  useEffect(() => {
+    if (phase !== 'welcome') {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void preloadDeadlockedMapConverter(selectedMap);
+    }, 1000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [phase, selectedMap]);
 
   async function viewSelectedMap() {
     setPhase('loading');

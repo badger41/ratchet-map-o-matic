@@ -3,9 +3,13 @@ import {
   HttpMapAssetPackage,
   joinPackagePath,
   normalizePackagePath,
-  toStandaloneArrayBuffer,
   type MapAssetPackage
 } from '../mapAssets/mapAssetPackage';
+import {
+  binaryByteLength,
+  createDataView,
+  type BinaryBuffer
+} from './binaryBuffer';
 import type {
   AssetManifest,
   DirectionalLightRecord,
@@ -77,8 +81,8 @@ export async function loadMapPackageFromAssetPackage(
   const directionalLightPath = findDirectionalLightPath(worldManifest);
   const directionalLightPackagePath = resolveWorldPath(manifestRootPath, directionalLightPath);
   const directionalLightUrl = await assetPackage.resolveUrl(directionalLightPackagePath);
-  const directionalLightBuffer = toStandaloneArrayBuffer(await assetPackage.readBytes(directionalLightPackagePath));
-  const directionalLights = parseDirectionalLightRecords(directionalLightBuffer);
+  const directionalLightBytes = await assetPackage.readBytes(directionalLightPackagePath);
+  const directionalLights = parseDirectionalLightRecords(directionalLightBytes);
   const tieClassIdsPath = findWorldSlotPath(worldManifest, 'tie_class_ids');
   const tieInstancesPath = findWorldSlotPath(worldManifest, 'tie_instances');
   const tieColorsPath = findWorldSlotPath(worldManifest, 'tie_instance_colors');
@@ -134,20 +138,21 @@ export async function loadMapPackageFromAssetPackage(
   };
 }
 
-export function parseDirectionalLightRecords(buffer: ArrayBuffer): DirectionalLightRecord[] {
+export function parseDirectionalLightRecords(buffer: BinaryBuffer): DirectionalLightRecord[] {
   const headerSize = 0x10;
   const recordSize = 0x40;
+  const byteLength = binaryByteLength(buffer);
 
-  if (buffer.byteLength < headerSize) {
-    throw new Error(`Directional light payload is too small: ${buffer.byteLength} bytes`);
+  if (byteLength < headerSize) {
+    throw new Error(`Directional light payload is too small: ${byteLength} bytes`);
   }
 
-  const recordBytes = buffer.byteLength - headerSize;
+  const recordBytes = byteLength - headerSize;
   if (recordBytes % recordSize !== 0) {
     throw new Error(`Directional light payload has ${recordBytes} record bytes, not a multiple of 0x40`);
   }
 
-  const view = new DataView(buffer);
+  const view = createDataView(buffer);
   const headerCount = Math.max(0, view.getInt32(0, true));
   const availableCount = recordBytes / recordSize;
   const records: DirectionalLightRecord[] = [];

@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
 import type { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { toStandaloneArrayBuffer } from '../../../../services/mapAssets/mapAssetPackage';
 import {
   defaultShrubRenderOptions,
   type GltfExportEntry,
@@ -85,11 +84,8 @@ export class ShrubInstanceController {
       mapPackage.assetPackage.readBytes(mapPackage.shrubClassIdsPath),
       mapPackage.assetPackage.readBytes(mapPackage.shrubInstancesPath)
     ]);
-    const classIds = parseShrubClassIds(toStandaloneArrayBuffer(classIdsBytes));
-    const records = parseShrubInstanceRecords(
-      toStandaloneArrayBuffer(instancesBytes),
-      mapPackage.shrubInstanceCountExpected
-    );
+    const classIds = parseShrubClassIds(classIdsBytes);
+    const records = parseShrubInstanceRecords(instancesBytes, mapPackage.shrubInstanceCountExpected);
     const entriesByClassId = buildShrubEntryMap(mapPackage.shrubEntries);
     const recordsByClassId = groupShrubRecordsByClassId(records);
 

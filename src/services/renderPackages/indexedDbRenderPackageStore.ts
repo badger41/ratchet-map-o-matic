@@ -54,6 +54,7 @@ export async function saveIndexedDbRenderPackage(
   options: SaveIndexedDbRenderPackageOptions
 ): Promise<IndexedDbRenderPackageMetadata> {
   const entries = normalizeEntries(options.entries);
+  const sourceUrl = normalizeSourceUrl(options.sourceUrl);
   const rootManifest = readPackedJson<{ Game?: unknown; Level?: unknown }>(
     options.packedBytes,
     entries,
@@ -65,7 +66,7 @@ export async function saveIndexedDbRenderPackage(
   const metadata: IndexedDbRenderPackageMetadata = {
     id,
     label: options.label,
-    sourceUrl: options.sourceUrl,
+    sourceUrl,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     game: stringValue(rootManifest?.Game),
@@ -89,6 +90,21 @@ export async function saveIndexedDbRenderPackage(
   }
 
   return metadata;
+}
+
+export async function findIndexedDbRenderPackageBySourceUrl(
+  sourceUrl: string
+): Promise<IndexedDbRenderPackageMetadata | null> {
+  const normalizedSourceUrl = normalizeSourceUrl(sourceUrl);
+  const records = await listIndexedDbRenderPackages();
+  return (
+    records.find((record) => {
+      return (
+        normalizeSourceUrl(record.sourceUrl) === normalizedSourceUrl &&
+        hasViewerRenderPackageEntries(record.entries)
+      );
+    }) ?? null
+  );
 }
 
 export async function listIndexedDbRenderPackages(): Promise<IndexedDbRenderPackageMetadata[]> {
@@ -243,6 +259,15 @@ function normalizeEntries(entries: PackedFileEntry[]): PackedFileEntry[] {
 
 function normalizePackagePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function normalizeSourceUrl(sourceUrl: string): string {
+  const trimmed = sourceUrl.trim();
+  try {
+    return new URL(trimmed, window.location.href).toString();
+  } catch {
+    return trimmed;
+  }
 }
 
 function readPackedJson<T>(packedBytes: Uint8Array, entries: PackedFileEntry[], path: string): T | null {

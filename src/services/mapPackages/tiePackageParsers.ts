@@ -4,15 +4,21 @@ import type {
   TieInstanceRecord,
   Vec4
 } from './mapPackageTypes';
+import {
+  binaryByteLength,
+  createDataView,
+  type BinaryBuffer
+} from './binaryBuffer';
 
-export function parseTieClassIds(buffer: ArrayBuffer): number[] {
-  if (buffer.byteLength < 4) {
+export function parseTieClassIds(buffer: BinaryBuffer): number[] {
+  const byteLength = binaryByteLength(buffer);
+  if (byteLength < 4) {
     return [];
   }
 
-  const view = new DataView(buffer);
+  const view = createDataView(buffer);
   const headerCount = Math.max(0, view.getInt32(0, true));
-  const availableCount = Math.max(0, Math.floor((buffer.byteLength - 4) / 4));
+  const availableCount = Math.max(0, Math.floor((byteLength - 4) / 4));
   const count = Math.min(headerCount, availableCount);
   const classIds: number[] = [];
 
@@ -23,18 +29,19 @@ export function parseTieClassIds(buffer: ArrayBuffer): number[] {
   return classIds;
 }
 
-export function parseTieInstanceRecords(buffer: ArrayBuffer, expectedCount: number | null = null): TieInstanceRecord[] {
+export function parseTieInstanceRecords(buffer: BinaryBuffer, expectedCount: number | null = null): TieInstanceRecord[] {
   const headerSize = 0x10;
   const recordSize = 0x60;
+  const byteLength = binaryByteLength(buffer);
 
-  if (buffer.byteLength < headerSize) {
-    throw new Error(`Tie instance payload is too small: ${buffer.byteLength} bytes`);
+  if (byteLength < headerSize) {
+    throw new Error(`Tie instance payload is too small: ${byteLength} bytes`);
   }
 
-  const view = new DataView(buffer);
+  const view = createDataView(buffer);
   const headerCount = Math.max(0, view.getInt32(0, true));
   const manifestCount = expectedCount == null ? headerCount : Math.max(0, expectedCount);
-  const availableCount = Math.floor(Math.max(buffer.byteLength - headerSize, 0) / recordSize);
+  const availableCount = Math.floor(Math.max(byteLength - headerSize, 0) / recordSize);
   const count = Math.min(headerCount, manifestCount, availableCount);
   const records: TieInstanceRecord[] = [];
 
@@ -46,8 +53,9 @@ export function parseTieInstanceRecords(buffer: ArrayBuffer, expectedCount: numb
   return records;
 }
 
-export function parseTieColorTable(buffer: ArrayBuffer): TieColorTable {
-  const view = new DataView(buffer);
+export function parseTieColorTable(buffer: BinaryBuffer): TieColorTable {
+  const byteLength = binaryByteLength(buffer);
+  const view = createDataView(buffer);
   const entries: TieColorEntry[] = [];
   const byInstanceId = new Map<number, TieColorEntry>();
   let mappedCount = 0;
@@ -55,14 +63,14 @@ export function parseTieColorTable(buffer: ArrayBuffer): TieColorTable {
   let duplicateIdCount = 0;
   let offset = 0;
 
-  while (offset + 4 <= buffer.byteLength) {
+  while (offset + 4 <= byteLength) {
     const entryIndex = entries.length;
     const entryOffset = offset;
     const id = view.getInt16(offset, true);
     const wordCount = view.getInt16(offset + 0x02, true);
     offset += 4;
 
-    if (wordCount < 0 || offset + wordCount * 2 > buffer.byteLength) {
+    if (wordCount < 0 || offset + wordCount * 2 > byteLength) {
       break;
     }
 

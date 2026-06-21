@@ -113,6 +113,7 @@ export class MapSceneRenderer {
   private worldDisplayLift: number;
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
+  private animationRenderSuspended = false;
   private lastRenderSubmitTime = 0;
   private lastFrameTime = performance.now();
   private lastStatsUpdateTime = this.lastFrameTime;
@@ -186,6 +187,7 @@ export class MapSceneRenderer {
       throw new Error('Renderer has not initialized');
     }
 
+    this.animationRenderSuspended = true;
     this.disposeCurrentRoot();
     this.currentPackage = mapPackage;
 
@@ -284,7 +286,7 @@ export class MapSceneRenderer {
         status: 'active',
         detail: 'Attaching scene',
         loaded: 1,
-        total: 3
+        total: 4
       });
       this.onStatus('Attaching scene');
       await yieldToBrowser();
@@ -296,7 +298,7 @@ export class MapSceneRenderer {
         status: 'active',
         detail: 'Framing camera',
         loaded: 2,
-        total: 3
+        total: 4
       });
       this.onStatus('Framing camera');
       await yieldToBrowser();
@@ -305,12 +307,25 @@ export class MapSceneRenderer {
       this.onLoadProgress({
         id: 'compile',
         status: 'active',
-        detail: 'Submitting first frame',
+        detail: 'Warming GPU pipelines',
         loaded: 3,
-        total: 3
+        total: 4
+      });
+      this.onStatus('Warming GPU pipelines');
+      await yieldToBrowser();
+      await this.warmupScenePipelines();
+
+      this.onLoadProgress({
+        id: 'compile',
+        status: 'active',
+        detail: 'Submitting first frame',
+        loaded: 4,
+        total: 4
       });
       await yieldToBrowser();
       this.renderFrame(performance.now());
+      this.animationRenderSuspended = false;
+      this.lastRenderSubmitTime = 0;
       this.onLoadProgress({
         id: 'compile',
         status: 'done',
@@ -324,6 +339,7 @@ export class MapSceneRenderer {
       ].filter(Boolean).join(', '));
       return tfragStats;
     } catch (error: unknown) {
+      this.animationRenderSuspended = false;
       this.shrubController.dispose();
       this.tieController.dispose();
       this.skyboxController.dispose();
@@ -429,6 +445,10 @@ export class MapSceneRenderer {
   };
 
   private handleAnimationFrame(time: DOMHighResTimeStamp): void {
+    if (this.animationRenderSuspended) {
+      return;
+    }
+
     if (this.minRenderIntervalMs > 0 && this.lastRenderSubmitTime > 0) {
       const elapsedMs = time - this.lastRenderSubmitTime;
       if (elapsedMs < this.minRenderIntervalMs - 0.35) {
@@ -609,6 +629,37 @@ export class MapSceneRenderer {
     this.camera.lookAt(frame.target);
     this.controls?.setSceneRadius(frame.radius);
     this.controls?.syncFromCamera();
+  }
+
+  private async warmupScenePipelines(): Promise<void> {
+    if (!this.renderer) {
+      return;
+    }
+
+    this.skyboxController.syncCamera(this.camera, this.skyCamera);
+    if (this.skyboxController.isVisible()) {
+      await this.renderer.compileAsync(this.skyScene, this.skyCamera);
+    }
+
+    if (shouldUseWorldComposite(this.worldDisplayLift)) {
+      this.ensureWorldComposite();
+      const previousRenderTarget = this.renderer.getRenderTarget();
+      try {
+        if (this.worldRenderTarget) {
+          this.renderer.setRenderTarget(this.worldRenderTarget);
+        }
+        await this.renderer.compileAsync(this.scene, this.camera);
+      } finally {
+        this.renderer.setRenderTarget(previousRenderTarget);
+      }
+
+      if (this.worldCompositeQuad) {
+        await this.renderer.compileAsync(this.worldCompositeQuad, this.worldCompositeQuad.camera);
+      }
+      return;
+    }
+
+    await this.renderer.compileAsync(this.scene, this.camera);
   }
 
   private disposeCurrentRoot(): void {
