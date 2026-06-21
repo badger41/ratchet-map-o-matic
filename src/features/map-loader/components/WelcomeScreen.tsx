@@ -40,7 +40,7 @@ export function WelcomeScreen({
         <Stack gap="md">
           <Group justify="space-between" align="flex-start">
             <Stack gap={4}>
-              <Title order={2}>Ratchet Map-O-Matic</Title>
+              <Title order={2}>Map-O-Matic</Title>
               <Text size="sm" c="dimmed">{selectedMap.label}</Text>
             </Stack>
             <Badge variant="outline" color="gray">

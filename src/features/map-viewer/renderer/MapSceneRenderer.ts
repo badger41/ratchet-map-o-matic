@@ -12,11 +12,14 @@ import {
 } from 'three/tsl';
 import type UniformNode from 'three/src/nodes/core/UniformNode.js';
 import {
+  defaultShrubRenderOptions,
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
   defaultTfragMaterialOptions,
   type LoadedMapPackage,
   type MapSceneLoadStageUpdate,
+  type ShrubRenderOptions,
+  type ShrubStats,
   type SkyboxRenderOptions,
   type SkyboxStats,
   type TieRenderOptions,
@@ -24,9 +27,13 @@ import {
   type TfragMaterialOptions,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
+import {
+  createInitialSceneCameraFrame
+} from './camera/SceneCameraFraming';
 import { DlTfragMaterialController } from './DlTfragMaterial';
 import { FpsCameraController } from './FpsCameraController';
 import { SkyboxController } from './skybox/SkyboxController';
+import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
 
 interface MapSceneRendererOptions {
@@ -34,6 +41,7 @@ interface MapSceneRendererOptions {
   materialOptions?: TfragMaterialOptions;
   skyboxRenderOptions?: SkyboxRenderOptions;
   tieRenderOptions?: TieRenderOptions;
+  shrubRenderOptions?: ShrubRenderOptions;
   worldDisplayLift?: number;
   frameRateLimit?: number;
   onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
@@ -41,6 +49,7 @@ interface MapSceneRendererOptions {
   onTfragStats: (stats: TfragStats) => void;
   onSkyboxStats: (stats: SkyboxStats) => void;
   onTieStats: (stats: TieStats) => void;
+  onShrubStats: (stats: ShrubStats) => void;
   onFrameStats?: (stats: MapSceneFrameStats) => void;
 }
 
@@ -48,7 +57,7 @@ const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const worldTargetClearColor = 0x000000;
 const worldTargetClearAlpha = 0;
-const defaultWorldDisplayLift = 3.0;
+const defaultWorldDisplayLift = 2.5;
 const statsUpdateIntervalMs = 500;
 
 export interface MapSceneFrameStats {
@@ -64,6 +73,7 @@ export class MapSceneRenderer {
   private readonly onTfragStats: (stats: TfragStats) => void;
   private readonly onSkyboxStats: (stats: SkyboxStats) => void;
   private readonly onTieStats: (stats: TieStats) => void;
+  private readonly onShrubStats: (stats: ShrubStats) => void;
   private readonly onFrameStats?: (stats: MapSceneFrameStats) => void;
   private readonly scene = new THREE.Scene();
   private readonly skyScene = new THREE.Scene();
@@ -73,9 +83,11 @@ export class MapSceneRenderer {
   private readonly tfragController = new DlTfragMaterialController();
   private readonly skyboxController = new SkyboxController();
   private readonly tieController = new TieInstanceController();
+  private readonly shrubController = new ShrubInstanceController();
   private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
+  private shrubRenderOptions: ShrubRenderOptions;
   private renderer: WebGPURenderer | null = null;
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -101,10 +113,12 @@ export class MapSceneRenderer {
     this.onTfragStats = options.onTfragStats;
     this.onSkyboxStats = options.onSkyboxStats;
     this.onTieStats = options.onTieStats;
+    this.onShrubStats = options.onShrubStats;
     this.onFrameStats = options.onFrameStats;
     this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
+    this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
     this.worldDisplayLift = resolveWorldDisplayLift(options.worldDisplayLift ?? defaultWorldDisplayLift);
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
@@ -220,6 +234,32 @@ export class MapSceneRenderer {
           : 'No ties'
       });
 
+      this.onLoadProgress({ id: 'shrubs', status: 'active', detail: 'Preparing instances' });
+      this.onStatus('Loading shrub instances');
+      const shrubStats = await this.shrubController.load(
+        root,
+        mapPackage,
+        this.loader,
+        this.shrubRenderOptions,
+        (loaded, total) => {
+          this.onLoadProgress({
+            id: 'shrubs',
+            status: 'active',
+            detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
+            loaded,
+            total
+          });
+        }
+      );
+      this.onShrubStats(shrubStats);
+      this.onLoadProgress({
+        id: 'shrubs',
+        status: 'done',
+        detail: shrubStats.renderedInstances > 0
+          ? `${shrubStats.renderedInstances.toLocaleString()} instances`
+          : 'No shrubs'
+      });
+
       this.onLoadProgress({
         id: 'compile',
         status: 'active',
@@ -260,10 +300,12 @@ export class MapSceneRenderer {
       this.onStatus([
         `${tfragStats.triangles.toLocaleString()} terrain triangles`,
         skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} skybox shells` : null,
-        tieStats.renderedInstances > 0 ? `${tieStats.renderedInstances.toLocaleString()} tie instances` : null
+        tieStats.renderedInstances > 0 ? `${tieStats.renderedInstances.toLocaleString()} tie instances` : null,
+        shrubStats.renderedInstances > 0 ? `${shrubStats.renderedInstances.toLocaleString()} shrub instances` : null
       ].filter(Boolean).join(', '));
       return tfragStats;
     } catch (error: unknown) {
+      this.shrubController.dispose();
       this.tieController.dispose();
       this.skyboxController.dispose();
       this.tfragController.dispose();
@@ -283,6 +325,7 @@ export class MapSceneRenderer {
     this.disposeCurrentRoot();
     this.skyboxController.dispose();
     this.tieController.dispose();
+    this.shrubController.dispose();
     this.disposeWorldComposite();
     this.renderer?.dispose();
     this.container.replaceChildren();
@@ -323,6 +366,16 @@ export class MapSceneRenderer {
     const stats = this.tieController.setOptions(options);
     if (stats) {
       this.onTieStats(stats);
+    }
+
+    return stats;
+  }
+
+  setShrubRenderOptions(options: ShrubRenderOptions): ShrubStats | null {
+    this.shrubRenderOptions = options;
+    const stats = this.shrubController.setOptions(options);
+    if (stats) {
+      this.onShrubStats(stats);
     }
 
     return stats;
@@ -501,25 +554,13 @@ export class MapSceneRenderer {
   }
 
   private frameObject(root: THREE.Object3D): void {
-    const bounds = new THREE.Box3().setFromObject(root);
-    if (bounds.isEmpty()) {
-      this.camera.position.set(0, 150, 300);
-      this.camera.lookAt(0, 0, 0);
-      this.controls?.setSceneRadius(400);
-      this.controls?.syncFromCamera();
-      return;
-    }
-
-    const center = bounds.getCenter(new THREE.Vector3());
-    const size = bounds.getSize(new THREE.Vector3());
-    const radius = Math.max(size.x, size.y, size.z) * 0.5;
-    const distance = Math.max(radius * 1.8, 120);
-    this.camera.near = Math.max(0.1, distance / 1000);
-    this.camera.far = Math.max(5000, distance * 20);
+    const frame = createInitialSceneCameraFrame(root);
+    this.camera.near = frame.near;
+    this.camera.far = frame.far;
     this.camera.updateProjectionMatrix();
-    this.camera.position.set(center.x + distance * 0.75, center.y + distance * 0.55, center.z + distance * 0.75);
-    this.camera.lookAt(center);
-    this.controls?.setSceneRadius(radius);
+    this.camera.position.copy(frame.position);
+    this.camera.lookAt(frame.target);
+    this.controls?.setSceneRadius(frame.radius);
     this.controls?.syncFromCamera();
   }
 
@@ -529,6 +570,7 @@ export class MapSceneRenderer {
     this.tfragController.dispose();
     this.skyboxController.dispose();
     this.tieController.dispose();
+    this.shrubController.dispose();
     currentPackage?.assetPackage.dispose();
 
     if (!this.currentRoot) {

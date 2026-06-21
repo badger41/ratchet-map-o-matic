@@ -13,7 +13,7 @@ export function AppHeader() {
     <Group h="100%" px="xl" justify="space-between" wrap="nowrap">
       <Group gap="sm" wrap="nowrap" flex="0 0 auto">
         <FileArchive size={20} />
-        <Text fw={700}>Ratchet Map-O-Matic</Text>
+        <Text fw={700}>Map-O-Matic</Text>
       </Group>
 
       <Group gap="md" wrap="nowrap" justify="flex-end" flex={1} miw={0}>

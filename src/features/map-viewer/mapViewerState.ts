@@ -21,6 +21,7 @@ export const mapViewerStageDefinitions: MapViewerStageDefinition[] = [
   { id: 'tfrag', label: 'Load terrain' },
   { id: 'skybox', label: 'Load skybox' },
   { id: 'ties', label: 'Load ties' },
+  { id: 'shrubs', label: 'Load shrubs' },
   { id: 'compile', label: 'Scene setup' }
 ];
 

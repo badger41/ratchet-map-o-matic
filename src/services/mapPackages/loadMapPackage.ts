@@ -70,6 +70,7 @@ export async function loadMapPackageFromAssetPackage(
     : null;
   const skyboxGltfUrl = skyboxGltfPath ? await assetPackage.resolveUrl(skyboxGltfPath) : null;
   const tieEntries = findTieGltfEntries(assetManifest);
+  const shrubEntries = findShrubGltfEntries(assetManifest);
 
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
   const worldManifest = await assetPackage.readOptionalJson<WorldManifest>(worldManifestPath);
@@ -81,6 +82,9 @@ export async function loadMapPackageFromAssetPackage(
   const tieClassIdsPath = findWorldSlotPath(worldManifest, 'tie_class_ids');
   const tieInstancesPath = findWorldSlotPath(worldManifest, 'tie_instances');
   const tieColorsPath = findWorldSlotPath(worldManifest, 'tie_instance_colors');
+  const shrubClassIdsPath = findWorldSlotPath(worldManifest, 'shrub_class_ids');
+  const shrubInstancesPath = findWorldSlotPath(worldManifest, 'shrub_instances');
+  const shrubGroupsPath = findWorldSlotPath(worldManifest, 'shrub_groups');
 
   const tfragDiagnosticsPath = tfragEntry.DiagnosticsPath
     ? resolveAssetPath(manifestRootPath, tfragEntry.DiagnosticsPath)
@@ -91,6 +95,9 @@ export async function loadMapPackageFromAssetPackage(
   const tieClassIdsPackagePath = tieClassIdsPath ? resolveWorldPath(manifestRootPath, tieClassIdsPath) : null;
   const tieInstancesPackagePath = tieInstancesPath ? resolveWorldPath(manifestRootPath, tieInstancesPath) : null;
   const tieColorsPackagePath = tieColorsPath ? resolveWorldPath(manifestRootPath, tieColorsPath) : null;
+  const shrubClassIdsPackagePath = shrubClassIdsPath ? resolveWorldPath(manifestRootPath, shrubClassIdsPath) : null;
+  const shrubInstancesPackagePath = shrubInstancesPath ? resolveWorldPath(manifestRootPath, shrubInstancesPath) : null;
+  const shrubGroupsPackagePath = shrubGroupsPath ? resolveWorldPath(manifestRootPath, shrubGroupsPath) : null;
 
   return {
     assetPackage,
@@ -115,6 +122,12 @@ export async function loadMapPackageFromAssetPackage(
     tieColorsPath: tieColorsPackagePath,
     tieClassCountExpected: numberValue(worldManifest?.TieClassCount),
     tieInstanceCountExpected: numberValue(worldManifest?.TieInstanceCount),
+    shrubEntries,
+    shrubClassIdsPath: shrubClassIdsPackagePath,
+    shrubInstancesPath: shrubInstancesPackagePath,
+    shrubGroupsPath: shrubGroupsPackagePath,
+    shrubClassCountExpected: numberValue(worldManifest?.ShrubClassCount),
+    shrubInstanceCountExpected: numberValue(worldManifest?.ShrubInstanceCount),
     directionalLightPath: directionalLightPackagePath,
     directionalLightUrl,
     directionalLights
@@ -183,10 +196,18 @@ function findSkyboxGltfEntry(assetManifest: AssetManifest): GltfExportEntry | nu
 }
 
 function findTieGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
+  return findFamilyGltfEntries(assetManifest, 'tie');
+}
+
+function findShrubGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
+  return findFamilyGltfEntries(assetManifest, 'shrub');
+}
+
+function findFamilyGltfEntries(assetManifest: AssetManifest, family: string): GltfExportEntry[] {
   return (assetManifest.GltfExports ?? [])
     .filter((candidate) => {
       return (
-        candidate.Family?.toLowerCase() === 'tie' &&
+        candidate.Family?.toLowerCase() === family &&
         candidate.Status?.toLowerCase() === 'written' &&
         typeof candidate.GltfPath === 'string' &&
         candidate.GltfPath.length > 0 &&

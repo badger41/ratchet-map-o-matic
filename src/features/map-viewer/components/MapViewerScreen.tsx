@@ -15,6 +15,7 @@ import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadlockedMapLoadPipeline';
 import {
   defaultTfragMaterialOptions,
+  type ShrubStats,
   type SkyboxStats,
   type TieStats,
   type TfragStats
@@ -57,6 +58,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [tfragStats, setTfragStats] = useState<TfragStats | null>(null);
   const [skyboxStats, setSkyboxStats] = useState<SkyboxStats | null>(null);
   const [tieStats, setTieStats] = useState<TieStats | null>(null);
+  const [shrubStats, setShrubStats] = useState<ShrubStats | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
@@ -127,6 +129,11 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           setTieStats(stats);
         }
       },
+      onShrubStats: (stats) => {
+        if (!disposed) {
+          setShrubStats(stats);
+        }
+      },
       onFrameStats: (stats) => {
         if (!disposed) {
           setFrameStats(stats);
@@ -141,6 +148,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       setTfragStats(null);
       setSkyboxStats(null);
       setTieStats(null);
+      setShrubStats(null);
       setStages(createMapViewerStages('manifest'));
 
       try {
@@ -289,6 +297,13 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 <DebugRow label="Tie color rows" value={tieStats?.colorEntries.toLocaleString() ?? '-'} />
                 <DebugRow label="Tie ambient batches" value={tieStats?.ambientBatches.toLocaleString() ?? '-'} />
                 <DebugRow label="Missing ties" value={tieStats?.missingClasses.toLocaleString() ?? '-'} />
+                <DebugRow label="Shrub classes" value={formatShrubLoadedClasses(shrubStats)} />
+                <DebugRow label="Shrub instances" value={shrubStats?.renderedInstances.toLocaleString() ?? '-'} />
+                <DebugRow label="Shrub batches" value={shrubStats?.batches.toLocaleString() ?? '-'} />
+                <DebugRow label="Shrub billboards" value={shrubStats?.billboardBatches.toLocaleString() ?? '-'} />
+                <DebugRow label="Shrub primitives" value={shrubStats?.primitives.toLocaleString() ?? '-'} />
+                <DebugRow label="Shrub triangles" value={shrubStats?.triangles.toLocaleString() ?? '-'} />
+                <DebugRow label="Missing shrubs" value={shrubStats?.missingClasses.toLocaleString() ?? '-'} />
                 <DebugRow label="Directional Lights" value={tfragStats.directionalLightRecords.toLocaleString()} />
                 <DebugRow label="Material Rebakes" value={tfragStats.materialRebakes.toLocaleString()} />
                 <DebugRow label="Render Package" value={formatByteSize(result.packedByteLength)} />
@@ -303,6 +318,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
 }
 
 function formatTieLoadedClasses(stats: TieStats | null): string {
+  if (!stats) {
+    return '-';
+  }
+
+  return `${stats.loadedClasses.toLocaleString()} / ${stats.classIds.toLocaleString()}`;
+}
+
+function formatShrubLoadedClasses(stats: ShrubStats | null): string {
   if (!stats) {
     return '-';
   }

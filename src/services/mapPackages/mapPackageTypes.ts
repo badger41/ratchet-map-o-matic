@@ -4,7 +4,7 @@ export type Vec4 = [number, number, number, number];
 
 export type DiagnosticMode = 'runtime' | 'base' | 'cache' | 'selector';
 export type SkyboxBlendMode = 'metadata' | 'auto-additive-overlays' | 'additive-blend-layers';
-export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'ties' | 'compile';
+export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'ties' | 'shrubs' | 'compile';
 export type MapSceneLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
 
 export interface MapSceneLoadStageUpdate {
@@ -100,6 +100,12 @@ export interface LoadedMapPackage {
   tieColorsPath: string | null;
   tieClassCountExpected: number | null;
   tieInstanceCountExpected: number | null;
+  shrubEntries: GltfExportEntry[];
+  shrubClassIdsPath: string | null;
+  shrubInstancesPath: string | null;
+  shrubGroupsPath: string | null;
+  shrubClassCountExpected: number | null;
+  shrubInstanceCountExpected: number | null;
   directionalLightPath: string;
   directionalLightUrl: string;
   directionalLights: DirectionalLightRecord[];
@@ -133,6 +139,19 @@ export interface TieInstanceRecord {
   position: Vec4;
   tailWords: [number, number, number, number];
   lightSelector: number;
+}
+
+export interface ShrubInstanceRecord {
+  index: number;
+  classId: number;
+  drawDistance: number;
+  matrixRows: [Vec4, Vec4, Vec4];
+  position: Vec4;
+  lightRgb: [number, number, number];
+  lightBucket: number;
+  lightSelector: number;
+  payloadWords: number[];
+  payloadBytes: number[];
 }
 
 export interface TieColorEntry {
@@ -174,6 +193,19 @@ export interface TieStats {
   triangles: number;
 }
 
+export interface ShrubStats {
+  classIds: number;
+  exportedClasses: number;
+  loadedClasses: number;
+  instances: number;
+  renderedInstances: number;
+  missingClasses: number;
+  batches: number;
+  primitives: number;
+  billboardBatches: number;
+  triangles: number;
+}
+
 export interface TfragMaterialOptions {
   diagnosticMode: DiagnosticMode;
   lightIntensity: number;
@@ -205,6 +237,10 @@ export type TieMaterialDebugMode =
   | 'reflection'
   | 'mask';
 
+export type ShrubBlendMode =
+  | 'additive'
+  | 'modulate';
+
 export interface TieRenderOptions {
   colorsEnabled: boolean;
   lightingMode: TieLightingMode;
@@ -216,6 +252,14 @@ export interface TieRenderOptions {
   reflectionIntensity: number;
   materialDebugMode: TieMaterialDebugMode;
   directionalOverrideSlot: number | null;
+}
+
+export interface ShrubRenderOptions {
+  visible: boolean;
+  billboardsVisible: boolean;
+  blendMode: ShrubBlendMode;
+  ambientIntensity: number;
+  directionalIntensity: number;
 }
 
 export interface SkyboxRenderOptions {
@@ -246,6 +290,14 @@ export const defaultTieRenderOptions: TieRenderOptions = {
   reflectionIntensity: 1,
   materialDebugMode: 'normal',
   directionalOverrideSlot: null
+};
+
+export const defaultShrubRenderOptions: ShrubRenderOptions = {
+  visible: true,
+  billboardsVisible: false,
+  blendMode: 'modulate',
+  ambientIntensity: 0.35,
+  directionalIntensity: 1
 };
 
 export const defaultSkyboxRenderOptions: SkyboxRenderOptions = {

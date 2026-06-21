@@ -64,7 +64,7 @@ function formatStageProgressText(stage: MapViewerStageState): string | null {
 
   const loaded = stage.loaded.toLocaleString();
   const total = stage.total ? stage.total.toLocaleString() : null;
-  const suffix = stage.id === 'ties'
+  const suffix = stage.id === 'ties' || stage.id === 'shrubs'
     ? ' classes'
     : stage.id === 'compile'
       ? ' steps'

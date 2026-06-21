@@ -186,7 +186,11 @@ export class FpsCameraController {
     if (this.pressedKeys.has('Space') || this.pressedKeys.has('KeyE')) {
       input.y += 1;
     }
-    if (this.pressedKeys.has('KeyQ')) {
+    if (
+      this.pressedKeys.has('KeyQ') ||
+      this.pressedKeys.has('ControlLeft') ||
+      this.pressedKeys.has('ControlRight')
+    ) {
       input.y -= 1;
     }
 
@@ -205,27 +209,19 @@ export class FpsCameraController {
   }
 
   private resolveAcceleration(): number {
-    if (this.pressedKeys.has('ControlLeft') || this.pressedKeys.has('ControlRight')) {
-      return 160 * this.sceneScale;
-    }
-
     if (this.pressedKeys.has('ShiftLeft') || this.pressedKeys.has('ShiftRight')) {
-      return 1700 * this.sceneScale;
+      return 850 * this.sceneScale;
     }
 
-    return 560 * this.sceneScale;
+    return 280 * this.sceneScale;
   }
 
   private resolveMaxSpeed(): number {
-    if (this.pressedKeys.has('ControlLeft') || this.pressedKeys.has('ControlRight')) {
-      return 140 * this.sceneScale;
-    }
-
     if (this.pressedKeys.has('ShiftLeft') || this.pressedKeys.has('ShiftRight')) {
-      return 1800 * this.sceneScale;
+      return 900 * this.sceneScale;
     }
 
-    return 620 * this.sceneScale;
+    return 310 * this.sceneScale;
   }
 
   private applyRotation(): void {
