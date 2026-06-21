@@ -3,7 +3,8 @@ import type { MapAssetPackage } from '../mapAssets/mapAssetPackage';
 export type Vec4 = [number, number, number, number];
 
 export type DiagnosticMode = 'runtime' | 'base' | 'cache' | 'selector';
-export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'compile';
+export type SkyboxBlendMode = 'metadata' | 'auto-additive-overlays' | 'additive-blend-layers';
+export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'compile';
 export type MapSceneLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
 
 export interface MapSceneLoadStageUpdate {
@@ -86,6 +87,9 @@ export interface LoadedMapPackage {
   rootManifest: RootManifest;
   assetManifest: AssetManifest;
   worldManifest: WorldManifest | null;
+  skyboxEntry: GltfExportEntry | null;
+  skyboxGltfPath: string | null;
+  skyboxGltfUrl: string | null;
   tfragEntry: GltfExportEntry;
   tfragGltfPath: string;
   tfragGltfUrl: string;
@@ -104,6 +108,17 @@ export interface TfragStats {
   materialRebakes: number;
 }
 
+export interface SkyboxStats {
+  loaded: boolean;
+  shells: number;
+  animatedShells: number;
+  meshes: number;
+  primitives: number;
+  materials: number;
+  additiveMaterials: number;
+  triangles: number;
+}
+
 export interface TfragMaterialOptions {
   diagnosticMode: DiagnosticMode;
   lightIntensity: number;
@@ -113,6 +128,14 @@ export interface TfragMaterialOptions {
   postScaleEnabled: boolean;
 }
 
+export interface SkyboxRenderOptions {
+  visible: boolean;
+  animationEnabled: boolean;
+  animationSpeed: number;
+  blendMode: SkyboxBlendMode;
+  alphaFalloff: number;
+}
+
 export const defaultTfragMaterialOptions: TfragMaterialOptions = {
   diagnosticMode: 'runtime',
   exposure: 1,
@@ -120,4 +143,12 @@ export const defaultTfragMaterialOptions: TfragMaterialOptions = {
   cacheMix: 0,
   ditherStrength: 0,
   postScaleEnabled: true
+};
+
+export const defaultSkyboxRenderOptions: SkyboxRenderOptions = {
+  visible: true,
+  animationEnabled: true,
+  animationSpeed: 1,
+  blendMode: 'auto-additive-overlays',
+  alphaFalloff: 1
 };

@@ -64,6 +64,11 @@ export async function loadMapPackageFromAssetPackage(
   const tfragEntry = findTfragGltfEntry(assetManifest);
   const tfragGltfPath = resolveAssetPath(manifestRootPath, requiredString(tfragEntry.GltfPath, 'tfrag GltfPath'));
   const tfragGltfUrl = await assetPackage.resolveUrl(tfragGltfPath);
+  const skyboxEntry = findSkyboxGltfEntry(assetManifest);
+  const skyboxGltfPath = skyboxEntry?.GltfPath
+    ? resolveAssetPath(manifestRootPath, skyboxEntry.GltfPath)
+    : null;
+  const skyboxGltfUrl = skyboxGltfPath ? await assetPackage.resolveUrl(skyboxGltfPath) : null;
 
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
   const worldManifest = await assetPackage.readOptionalJson<WorldManifest>(worldManifestPath);
@@ -90,6 +95,9 @@ export async function loadMapPackageFromAssetPackage(
     rootManifest,
     assetManifest,
     worldManifest,
+    skyboxEntry,
+    skyboxGltfPath,
+    skyboxGltfUrl,
     tfragEntry,
     tfragGltfPath,
     tfragGltfUrl,
@@ -148,6 +156,17 @@ function findTfragGltfEntry(assetManifest: AssetManifest): GltfExportEntry {
   }
 
   return entry;
+}
+
+function findSkyboxGltfEntry(assetManifest: AssetManifest): GltfExportEntry | null {
+  return assetManifest.GltfExports?.find((candidate) => {
+    return (
+      candidate.Family?.toLowerCase() === 'skybox' &&
+      candidate.Status?.toLowerCase() === 'written' &&
+      typeof candidate.GltfPath === 'string' &&
+      candidate.GltfPath.length > 0
+    );
+  }) ?? null;
 }
 
 function findDirectionalLightPath(worldManifest: WorldManifest | null): string {

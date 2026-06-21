@@ -15,6 +15,7 @@ import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadlockedMapLoadPipeline';
 import {
   defaultTfragMaterialOptions,
+  type SkyboxStats,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import { loadViewerPackageSource } from '../../../services/mapPackages/viewerPackageSource';
@@ -27,9 +28,9 @@ import {
   type MapViewerStageState
 } from '../mapViewerState';
 import {
-  TfragMapRenderer,
-  type TfragFrameStats
-} from '../renderer/TfragMapRenderer';
+  MapSceneRenderer,
+  type MapSceneFrameStats
+} from '../renderer/MapSceneRenderer';
 import { MapViewerStageList } from './MapViewerStageList';
 
 interface MapViewerScreenProps {
@@ -44,7 +45,7 @@ const frameRateOptions = ['30', '60', '120', '240'].map((value) => ({
 
 export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const rendererRef = useRef<TfragMapRenderer | null>(null);
+  const rendererRef = useRef<MapSceneRenderer | null>(null);
   const {
     debugPanelsVisible,
     setViewerChrome,
@@ -53,10 +54,11 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [status, setStatus] = useState('Initializing renderer');
   const [stages, setStages] = useState<MapViewerStageState[]>(() => createMapViewerStages('manifest'));
   const [tfragStats, setTfragStats] = useState<TfragStats | null>(null);
+  const [skyboxStats, setSkyboxStats] = useState<SkyboxStats | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
-  const [frameStats, setFrameStats] = useState<TfragFrameStats>({
+  const [frameStats, setFrameStats] = useState<MapSceneFrameStats>({
     fps: 0,
     frameMs: 0,
     frameRateLimit
@@ -94,7 +96,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     }
 
     let disposed = false;
-    const renderer = new TfragMapRenderer({
+    const renderer = new MapSceneRenderer({
       container,
       materialOptions: defaultTfragMaterialOptions,
       frameRateLimit,
@@ -113,6 +115,11 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           setTfragStats(stats);
         }
       },
+      onSkyboxStats: (stats) => {
+        if (!disposed) {
+          setSkyboxStats(stats);
+        }
+      },
       onFrameStats: (stats) => {
         if (!disposed) {
           setFrameStats(stats);
@@ -124,6 +131,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     async function loadScene() {
       setReady(false);
       setLastError(null);
+      setTfragStats(null);
+      setSkyboxStats(null);
       setStages(createMapViewerStages('manifest'));
 
       try {
@@ -253,13 +262,17 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           }}
         >
           <Stack gap="xs">
-            <Text size="xs" c="dimmed" fw={700}>Tfrag Debug</Text>
+            <Text size="xs" c="dimmed" fw={700}>Scene Debug</Text>
             <Table withRowBorders={false} verticalSpacing={2}>
               <Table.Tbody>
-                <DebugRow label="Meshes" value={tfragStats.meshes.toLocaleString()} />
-                <DebugRow label="Source Primitives" value={tfragStats.sourcePrimitives.toLocaleString()} />
-                <DebugRow label="Triangles" value={tfragStats.triangles.toLocaleString()} />
-                <DebugRow label="LOD0 Triangles" value={tfragStats.lod0Triangles?.toLocaleString() ?? '-'} />
+                <DebugRow label="Tfrag meshes" value={tfragStats.meshes.toLocaleString()} />
+                <DebugRow label="Tfrag primitives" value={tfragStats.sourcePrimitives.toLocaleString()} />
+                <DebugRow label="Tfrag triangles" value={tfragStats.triangles.toLocaleString()} />
+                <DebugRow label="Tfrag LOD0" value={tfragStats.lod0Triangles?.toLocaleString() ?? '-'} />
+                <DebugRow label="Skybox" value={skyboxStats?.loaded ? 'loaded' : 'none'} />
+                <DebugRow label="Skybox shells" value={skyboxStats?.shells.toLocaleString() ?? '-'} />
+                <DebugRow label="Skybox triangles" value={skyboxStats?.triangles.toLocaleString() ?? '-'} />
+                <DebugRow label="Animated shells" value={skyboxStats?.animatedShells.toLocaleString() ?? '-'} />
                 <DebugRow label="Directional Lights" value={tfragStats.directionalLightRecords.toLocaleString()} />
                 <DebugRow label="Material Rebakes" value={tfragStats.materialRebakes.toLocaleString()} />
                 <DebugRow label="Render Package" value={formatByteSize(result.packedByteLength)} />

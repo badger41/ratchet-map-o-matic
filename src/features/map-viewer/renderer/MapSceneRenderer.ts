@@ -2,46 +2,57 @@ import * as THREE from 'three/webgpu';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
+  defaultSkyboxRenderOptions,
   defaultTfragMaterialOptions,
   type LoadedMapPackage,
   type MapSceneLoadStageUpdate,
+  type SkyboxRenderOptions,
+  type SkyboxStats,
   type TfragMaterialOptions,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import { DlTfragMaterialController } from './DlTfragMaterial';
 import { FpsCameraController } from './FpsCameraController';
+import { SkyboxController } from './skybox/SkyboxController';
 
-interface TfragMapRendererOptions {
+interface MapSceneRendererOptions {
   container: HTMLElement;
   materialOptions?: TfragMaterialOptions;
+  skyboxRenderOptions?: SkyboxRenderOptions;
   frameRateLimit?: number;
   onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
   onStatus: (status: string) => void;
   onTfragStats: (stats: TfragStats) => void;
-  onFrameStats?: (stats: TfragFrameStats) => void;
+  onSkyboxStats: (stats: SkyboxStats) => void;
+  onFrameStats?: (stats: MapSceneFrameStats) => void;
 }
 
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
 
-export interface TfragFrameStats {
+export interface MapSceneFrameStats {
   fps: number;
   frameMs: number;
   frameRateLimit: number;
 }
 
-export class TfragMapRenderer {
+export class MapSceneRenderer {
   private readonly container: HTMLElement;
   private readonly onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
   private readonly onStatus: (status: string) => void;
   private readonly onTfragStats: (stats: TfragStats) => void;
-  private readonly onFrameStats?: (stats: TfragFrameStats) => void;
+  private readonly onSkyboxStats: (stats: SkyboxStats) => void;
+  private readonly onFrameStats?: (stats: MapSceneFrameStats) => void;
   private readonly scene = new THREE.Scene();
+  private readonly skyScene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 50000);
+  private readonly skyCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 50000);
   private readonly loader = new GLTFLoader();
   private readonly tfragController = new DlTfragMaterialController();
+  private readonly skyboxController = new SkyboxController();
   private readonly materialOptions: TfragMaterialOptions;
+  private skyboxRenderOptions: SkyboxRenderOptions;
   private renderer: WebGPURenderer | null = null;
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -55,13 +66,15 @@ export class TfragMapRenderer {
   private frameSampleTotalMs = 0;
   private frameSampleCount = 0;
 
-  constructor(options: TfragMapRendererOptions) {
+  constructor(options: MapSceneRendererOptions) {
     this.container = options.container;
     this.onLoadProgress = options.onLoadProgress;
     this.onStatus = options.onStatus;
     this.onTfragStats = options.onTfragStats;
+    this.onSkyboxStats = options.onSkyboxStats;
     this.onFrameStats = options.onFrameStats;
     this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
+    this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
   }
@@ -71,7 +84,7 @@ export class TfragMapRenderer {
       throw new Error('WebGPU is not available in this browser');
     }
 
-    this.scene.background = new THREE.Color(canvasClearColor);
+    this.scene.background = null;
 
     const renderer = new WebGPURenderer({
       antialias: false,
@@ -82,6 +95,7 @@ export class TfragMapRenderer {
     await renderer.init();
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
+    renderer.autoClear = false;
     renderer.setClearColor(canvasClearColor, canvasClearAlpha);
     renderer.setPixelRatio(1);
     renderer.setSize(this.container.clientWidth, this.container.clientHeight);
@@ -132,6 +146,22 @@ export class TfragMapRenderer {
         detail: `${stats.triangles.toLocaleString()} triangles`
       });
 
+      this.onLoadProgress({ id: 'skybox', status: 'active', detail: 'Loading glTF' });
+      this.onStatus('Loading skybox');
+      const skyboxStats = await this.skyboxController.load(
+        this.skyScene,
+        mapPackage,
+        this.loader,
+        this.skyboxRenderOptions,
+        this.renderer.getMaxAnisotropy()
+      );
+      this.onSkyboxStats(skyboxStats);
+      this.onLoadProgress({
+        id: 'skybox',
+        status: 'done',
+        detail: skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} shells` : 'No skybox'
+      });
+
       this.onLoadProgress({
         id: 'compile',
         status: 'active',
@@ -169,9 +199,12 @@ export class TfragMapRenderer {
         status: 'done',
         detail: 'Ready'
       });
-      this.onStatus('Tfrag loaded');
+      this.onStatus(skyboxStats.loaded
+        ? `Tfrag and ${skyboxStats.shells.toLocaleString()} skybox shells loaded`
+        : 'Tfrag loaded');
       return stats;
     } catch (error: unknown) {
+      this.skyboxController.dispose();
       this.tfragController.dispose();
       disposeObject3D(root);
       if (this.currentPackage === mapPackage) {
@@ -187,6 +220,7 @@ export class TfragMapRenderer {
     this.resizeObserver?.disconnect();
     this.controls?.dispose();
     this.disposeCurrentRoot();
+    this.skyboxController.dispose();
     this.renderer?.dispose();
     this.container.replaceChildren();
   }
@@ -202,6 +236,16 @@ export class TfragMapRenderer {
       frameMs: 0,
       frameRateLimit: this.frameRateLimit
     });
+  }
+
+  setSkyboxRenderOptions(options: SkyboxRenderOptions): SkyboxStats | null {
+    this.skyboxRenderOptions = options;
+    const stats = this.skyboxController.setOptions(options);
+    if (stats) {
+      this.onSkyboxStats(stats);
+    }
+
+    return stats;
   }
 
   private start(): void {
@@ -235,6 +279,16 @@ export class TfragMapRenderer {
     }
 
     this.controls?.update(frameMs / 1000);
+    this.skyboxController.update(time / 1000);
+    this.skyboxController.syncCamera(this.camera, this.skyCamera);
+
+    this.renderer.setRenderTarget(null);
+    this.renderer.setClearColor(canvasClearColor, canvasClearAlpha);
+    this.renderer.clear(true, true, true);
+    if (this.skyboxController.isVisible()) {
+      this.renderer.render(this.skyScene, this.skyCamera);
+      this.renderer.clearDepth();
+    }
     this.renderer.render(this.scene, this.camera);
 
     if (this.onFrameStats && time - this.lastStatsUpdateTime >= statsUpdateIntervalMs) {
@@ -259,6 +313,8 @@ export class TfragMapRenderer {
     const height = Math.max(1, this.container.clientHeight);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.skyCamera.aspect = width / height;
+    this.skyCamera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
   }
 
@@ -289,6 +345,7 @@ export class TfragMapRenderer {
     const currentPackage = this.currentPackage;
     this.currentPackage = null;
     this.tfragController.dispose();
+    this.skyboxController.dispose();
     currentPackage?.assetPackage.dispose();
 
     if (!this.currentRoot) {
