@@ -9,8 +9,9 @@ import {
   Table,
   Text
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { AlertCircle } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadlockedMapLoadPipeline';
 import {
@@ -33,7 +34,9 @@ import {
   MapSceneRenderer,
   type MapSceneFrameStats
 } from '../renderer/MapSceneRenderer';
+import type { CameraVirtualMoveInput } from '../renderer/FpsCameraController';
 import { MapViewerStageList } from './MapViewerStageList';
+import { MobileCameraControls } from './MobileCameraControls';
 
 interface MapViewerScreenProps {
   result: DeadlockedMapLoadResult;
@@ -67,6 +70,11 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     frameMs: 0,
     frameRateLimit
   });
+  const mobileControlsVisible = useMediaQuery('(pointer: coarse)', false);
+
+  const handleMobileMoveInputChange = useCallback((input: CameraVirtualMoveInput) => {
+    rendererRef.current?.setVirtualMoveInput(input);
+  }, []);
 
   useEffect(() => {
     return () => resetViewerChrome();
@@ -258,6 +266,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
             </Stack>
           </Paper>
         </Center>
+      ) : null}
+
+      {ready && mobileControlsVisible ? (
+        <MobileCameraControls onMoveInputChange={handleMobileMoveInputChange} />
       ) : null}
 
       {debugPanelsVisible && ready && tfragStats ? (

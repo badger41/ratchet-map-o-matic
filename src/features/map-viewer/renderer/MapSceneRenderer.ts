@@ -31,7 +31,10 @@ import {
   createInitialSceneCameraFrame
 } from './camera/SceneCameraFraming';
 import { DlTfragMaterialController } from './DlTfragMaterial';
-import { FpsCameraController } from './FpsCameraController';
+import {
+  FpsCameraController,
+  type CameraVirtualMoveInput
+} from './FpsCameraController';
 import { SkyboxController } from './skybox/SkyboxController';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
@@ -59,6 +62,15 @@ const worldTargetClearColor = 0x000000;
 const worldTargetClearAlpha = 0;
 const defaultWorldDisplayLift = 2.5;
 const statsUpdateIntervalMs = 500;
+const webGpuUnavailableMessage = 'WebGPU is not available on this browser/device. Try a current desktop Chrome/Edge browser, or a mobile browser/device with WebGPU support enabled.';
+
+type WebGpuAdapterOptions = GPURequestAdapterOptions & {
+  featureLevel?: 'core' | 'compatibility';
+};
+
+const webGpuAdapterOptions: WebGpuAdapterOptions = {
+  featureLevel: 'compatibility'
+};
 
 export interface MapSceneFrameStats {
   fps: number;
@@ -125,19 +137,22 @@ export class MapSceneRenderer {
   }
 
   async initialize(): Promise<void> {
-    if (!('gpu' in navigator)) {
-      throw new Error('WebGPU is not available in this browser');
-    }
+    await assertWebGpuAvailable();
 
     this.scene.background = null;
 
     const renderer = new WebGPURenderer({
       antialias: false,
-      alpha: false,
-      powerPreference: 'high-performance'
+      alpha: false
     });
 
-    await renderer.init();
+    try {
+      await renderer.init();
+    } catch (error) {
+      renderer.dispose();
+      throw createRendererInitializationError(error);
+    }
+
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.autoClear = false;
@@ -148,7 +163,8 @@ export class MapSceneRenderer {
       display: 'block',
       width: '100%',
       height: '100%',
-      outline: 'none'
+      outline: 'none',
+      touchAction: 'none'
     });
 
     this.renderer = renderer;
@@ -342,6 +358,10 @@ export class MapSceneRenderer {
       frameMs: 0,
       frameRateLimit: this.frameRateLimit
     });
+  }
+
+  setVirtualMoveInput(input: CameraVirtualMoveInput): void {
+    this.controls?.setVirtualMoveInput(input);
   }
 
   setSkyboxRenderOptions(options: SkyboxRenderOptions): SkyboxStats | null {
@@ -609,6 +629,30 @@ function resolveWorldDisplayLift(value: number): number {
 
 function shouldUseWorldComposite(value: number): boolean {
   return Math.abs(value - 1) > 0.001;
+}
+
+async function assertWebGpuAvailable(): Promise<void> {
+  if (!('gpu' in navigator)) {
+    throw new Error(webGpuUnavailableMessage);
+  }
+
+  const adapter = await navigator.gpu.requestAdapter(webGpuAdapterOptions);
+  if (!adapter) {
+    throw new Error(webGpuUnavailableMessage);
+  }
+}
+
+function createRendererInitializationError(error: unknown): Error {
+  const originalMessage = error instanceof Error ? error.message : String(error);
+  const message = originalMessage.includes('this.gl is null') || originalMessage.includes('WebGPUBackend')
+    ? webGpuUnavailableMessage
+    : `WebGPU renderer failed to initialize: ${originalMessage}`;
+  const nextError = new Error(message);
+  if (error instanceof Error && error.stack) {
+    nextError.stack = error.stack;
+  }
+
+  return nextError;
 }
 
 function frameIntervalForLimit(limit: number): number {

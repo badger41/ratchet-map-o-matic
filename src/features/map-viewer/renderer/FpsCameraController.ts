@@ -1,5 +1,11 @@
 import * as THREE from 'three/webgpu';
 
+export interface CameraVirtualMoveInput {
+  x: number;
+  y: number;
+  z: number;
+}
+
 interface FpsCameraControllerOptions {
   onActiveChange?: (active: boolean) => void;
 }
@@ -19,6 +25,8 @@ const trackedKeys = new Set([
 ]);
 
 const maxPitch = Math.PI / 2 - 0.001;
+const mouseLookSensitivity = 0.0022;
+const touchLookSensitivity = 0.003;
 
 export class FpsCameraController {
   private readonly camera: THREE.PerspectiveCamera;
@@ -27,6 +35,7 @@ export class FpsCameraController {
   private readonly pressedKeys = new Set<string>();
   private readonly velocity = new THREE.Vector3();
   private readonly input = new THREE.Vector3();
+  private readonly virtualMoveInput = new THREE.Vector3();
   private readonly worldInput = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
@@ -36,6 +45,9 @@ export class FpsCameraController {
   private pitch = 0;
   private sceneScale = 1;
   private active = false;
+  private activeTouchPointerId: number | null = null;
+  private lastTouchX = 0;
+  private lastTouchY = 0;
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, options: FpsCameraControllerOptions = {}) {
     this.camera = camera;
@@ -48,6 +60,9 @@ export class FpsCameraController {
     this.syncFromCamera();
 
     this.domElement.addEventListener('pointerdown', this.handlePointerDown);
+    this.domElement.addEventListener('pointermove', this.handlePointerMove);
+    this.domElement.addEventListener('pointerup', this.handlePointerUp);
+    this.domElement.addEventListener('pointercancel', this.handlePointerUp);
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
     document.addEventListener('mousemove', this.handleMouseMove);
     window.addEventListener('keydown', this.handleKeyDown);
@@ -57,6 +72,9 @@ export class FpsCameraController {
 
   dispose(): void {
     this.domElement.removeEventListener('pointerdown', this.handlePointerDown);
+    this.domElement.removeEventListener('pointermove', this.handlePointerMove);
+    this.domElement.removeEventListener('pointerup', this.handlePointerUp);
+    this.domElement.removeEventListener('pointercancel', this.handlePointerUp);
     document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
     document.removeEventListener('mousemove', this.handleMouseMove);
     window.removeEventListener('keydown', this.handleKeyDown);
@@ -66,6 +84,14 @@ export class FpsCameraController {
     if (document.pointerLockElement === this.domElement) {
       document.exitPointerLock();
     }
+  }
+
+  setVirtualMoveInput(input: CameraVirtualMoveInput): void {
+    this.virtualMoveInput.set(
+      sanitizeInputComponent(input.x),
+      sanitizeInputComponent(input.y),
+      sanitizeInputComponent(input.z)
+    );
   }
 
   update(deltaSeconds: number): void {
@@ -107,6 +133,15 @@ export class FpsCameraController {
   }
 
   private handlePointerDown = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') {
+      this.activeTouchPointerId = event.pointerId;
+      this.lastTouchX = event.clientX;
+      this.lastTouchY = event.clientY;
+      this.domElement.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+
     if (event.button !== 0 || document.pointerLockElement === this.domElement) {
       return;
     }
@@ -114,6 +149,32 @@ export class FpsCameraController {
     blurActiveEditableElement();
     this.domElement.focus({ preventScroll: true });
     this.domElement.requestPointerLock();
+    event.preventDefault();
+  };
+
+  private handlePointerMove = (event: PointerEvent): void => {
+    if (this.activeTouchPointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - this.lastTouchX;
+    const deltaY = event.clientY - this.lastTouchY;
+    this.lastTouchX = event.clientX;
+    this.lastTouchY = event.clientY;
+    this.applyLookDelta(deltaX, deltaY, touchLookSensitivity);
+    event.preventDefault();
+  };
+
+  private handlePointerUp = (event: PointerEvent): void => {
+    if (this.activeTouchPointerId !== event.pointerId) {
+      return;
+    }
+
+    this.activeTouchPointerId = null;
+    if (this.domElement.hasPointerCapture(event.pointerId)) {
+      this.domElement.releasePointerCapture(event.pointerId);
+    }
+
     event.preventDefault();
   };
 
@@ -137,10 +198,7 @@ export class FpsCameraController {
       return;
     }
 
-    const sensitivity = 0.0022;
-    this.yaw -= event.movementX * sensitivity;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - event.movementY * sensitivity, -maxPitch, maxPitch);
-    this.applyRotation();
+    this.applyLookDelta(event.movementX, event.movementY, mouseLookSensitivity);
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
@@ -166,6 +224,8 @@ export class FpsCameraController {
   private handleBlur = (): void => {
     this.pressedKeys.clear();
     this.velocity.set(0, 0, 0);
+    this.virtualMoveInput.set(0, 0, 0);
+    this.activeTouchPointerId = null;
   };
 
   private readInputVector(): THREE.Vector3 {
@@ -194,6 +254,7 @@ export class FpsCameraController {
       input.y -= 1;
     }
 
+    input.add(this.virtualMoveInput);
     return input;
   }
 
@@ -228,6 +289,20 @@ export class FpsCameraController {
     this.euler.set(this.pitch, this.yaw, 0, 'YXZ');
     this.camera.quaternion.setFromEuler(this.euler);
   }
+
+  private applyLookDelta(deltaX: number, deltaY: number, sensitivity: number): void {
+    this.yaw -= deltaX * sensitivity;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - deltaY * sensitivity, -maxPitch, maxPitch);
+    this.applyRotation();
+  }
+}
+
+function sanitizeInputComponent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return THREE.MathUtils.clamp(value, -1, 1);
 }
 
 function clampVectorLength(vector: THREE.Vector3, maxLength: number): void {
