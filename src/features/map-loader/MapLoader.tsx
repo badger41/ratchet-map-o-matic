@@ -1,6 +1,6 @@
 import { Alert, Button, Stack } from '@mantine/core';
 import { AlertCircle, RotateCcw } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import {
   deadlockedMaps,
   defaultDeadlockedMap
@@ -10,7 +10,6 @@ import {
   type DeadlockedMapLoadResult
 } from '../../services/mapLoading/deadlockedMapLoadPipeline';
 import { MapLoadProgress } from './components/MapLoadProgress';
-import { MapReadyPanel } from './components/MapReadyPanel';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import {
   applyStageUpdate,
@@ -24,6 +23,11 @@ const mapOptions = deadlockedMaps.map((map) => ({
   value: map.id,
   label: map.label
 }));
+
+const MapViewerScreen = lazy(async () => {
+  const module = await import('../map-viewer/components/MapViewerScreen');
+  return { default: module.MapViewerScreen };
+});
 
 export function MapLoader() {
   const [phase, setPhase] = useState<MapLoaderPhase>('welcome');
@@ -56,19 +60,23 @@ export function MapLoader() {
     }
   }
 
-  function chooseAnotherMap() {
+  const chooseAnotherMap = useCallback(() => {
     setPhase('welcome');
     setResult(null);
     setLastError(null);
     setStages(createMapLoadStages());
-  }
+  }, []);
 
   if (phase === 'loading') {
     return <MapLoadProgress map={selectedMap} stages={stages} />;
   }
 
   if (phase === 'ready' && result) {
-    return <MapReadyPanel result={result} onChooseAnother={chooseAnotherMap} />;
+    return (
+      <Suspense fallback={<MapLoadProgress map={result.map} stages={stages} />}>
+        <MapViewerScreen result={result} onChooseAnother={chooseAnotherMap} />
+      </Suspense>
+    );
   }
 
   if (phase === 'error') {

@@ -1,5 +1,6 @@
 import {
   Badge,
+  Container,
   Group,
   Paper,
   Progress,
@@ -24,7 +25,7 @@ interface MapLoadProgressProps {
 
 export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps) {
   return (
-    <div className="workspace">
+    <Container size={1180} px="md" py="xl">
       <Stack gap="lg">
         <Group justify="space-between" align="flex-start">
           <Stack gap={4}>
@@ -36,10 +37,26 @@ export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps)
           </Badge>
         </Group>
 
-        <Paper className="loadPanel" withBorder>
+        <Paper
+          p="lg"
+          radius="md"
+          bg="#111820"
+          withBorder
+          style={{ borderColor: 'rgba(159, 174, 188, 0.22)' }}
+        >
           <Stack gap="md">
             {stages.map((stage) => (
-              <div className="loadStage" key={stage.id}>
+              <Paper
+                key={stage.id}
+                p="sm"
+                radius="md"
+                bg="#0d1319"
+                withBorder
+                style={{
+                  borderColor: 'rgba(159, 174, 188, 0.16)',
+                  minHeight: 88
+                }}
+              >
                 <Group justify="space-between" wrap="nowrap">
                   <Stack gap={2}>
                     <Text fw={700}>{stage.label}</Text>
@@ -63,13 +80,13 @@ export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps)
                     {stage.total ? ` / ${formatByteSize(stage.total)}` : ''}
                   </Text>
                 ) : null}
-              </div>
+              </Paper>
             ))}
           </Stack>
         </Paper>
 
         {children}
       </Stack>
-    </div>
+    </Container>
   );
 }

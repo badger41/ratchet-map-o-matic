@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Center,
   Group,
   Paper,
   Select,
@@ -27,13 +28,20 @@ export function WelcomeScreen({
   onView
 }: WelcomeScreenProps) {
   return (
-    <div className="welcomeSurface">
-      <Paper className="welcomePanel" withBorder>
-        <Stack gap="lg">
+    <Center mih="calc(100vh - 56px)" p="sm">
+      <Paper
+        w="min(520px, 100%)"
+        p="lg"
+        radius="md"
+        bg="#111820"
+        withBorder
+        style={{ borderColor: 'rgba(159, 174, 188, 0.22)' }}
+      >
+        <Stack gap="md">
           <Group justify="space-between" align="flex-start">
             <Stack gap={4}>
-              <Title order={1}>Ratchet Map-O-Matic</Title>
-              <Text c="dimmed">{selectedMap.label}</Text>
+              <Title order={2}>Ratchet Map-O-Matic</Title>
+              <Text size="sm" c="dimmed">{selectedMap.label}</Text>
             </Stack>
             <Badge variant="outline" color="gray">
               {selectedMap.gameId} level {selectedMap.level.toString().padStart(2, '0')}
@@ -48,11 +56,11 @@ export function WelcomeScreen({
             onChange={onMapChange}
           />
 
-          <Button size="md" leftSection={<Play size={18} />} onClick={onView}>
+          <Button size="sm" leftSection={<Play size={16} />} onClick={onView}>
             View Map
           </Button>
         </Stack>
       </Paper>
-    </div>
+    </Center>
   );
 }

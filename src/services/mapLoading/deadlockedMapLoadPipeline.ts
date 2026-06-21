@@ -7,7 +7,7 @@ import {
 import { loadRatchetPs2Wasm } from '../wasm/ratchetPs2Wasm';
 import { fetchWadBytes } from '../wads/fetchWadBytes';
 
-export type MapLoadStageId = 'download' | 'wasm' | 'convert' | 'store';
+export type MapLoadStageId = 'download' | 'convert' | 'store';
 export type MapLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
 
 export interface MapLoadStageDefinition {
@@ -36,7 +36,6 @@ export interface DeadlockedMapLoadResult {
 
 export const mapLoadStageDefinitions: MapLoadStageDefinition[] = [
   { id: 'download', label: 'Download WAD' },
-  { id: 'wasm', label: 'Start WASM' },
   { id: 'convert', label: 'Build render package' },
   { id: 'store', label: 'Cache package' }
 ];
@@ -73,9 +72,9 @@ export async function loadDeadlockedMapRenderPackage(
   });
 
   onStageUpdate?.({
-    id: 'wasm',
+    id: 'convert',
     status: 'active',
-    detail: 'Loading runtime',
+    detail: 'Preparing converter',
     loaded: null,
     total: null
   });
@@ -83,17 +82,9 @@ export async function loadDeadlockedMapRenderPackage(
   const wasm = await loadRatchetPs2Wasm();
   const apiVersion = await wasm.getApiVersion();
   onStageUpdate?.({
-    id: 'wasm',
-    status: 'done',
-    detail: `API ${apiVersion}`,
-    loaded: null,
-    total: null
-  });
-
-  onStageUpdate?.({
     id: 'convert',
     status: 'active',
-    detail: 'Exporting render assets',
+    detail: `Exporting render assets with API ${apiVersion}`,
     loaded: null,
     total: null
   });
