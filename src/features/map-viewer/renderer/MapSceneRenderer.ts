@@ -2,6 +2,16 @@ import * as THREE from 'three/webgpu';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
+  dot,
+  float,
+  max,
+  texture,
+  uniform,
+  uv,
+  vec3
+} from 'three/tsl';
+import type UniformNode from 'three/src/nodes/core/UniformNode.js';
+import {
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
   defaultTfragMaterialOptions,
@@ -24,6 +34,7 @@ interface MapSceneRendererOptions {
   materialOptions?: TfragMaterialOptions;
   skyboxRenderOptions?: SkyboxRenderOptions;
   tieRenderOptions?: TieRenderOptions;
+  worldDisplayLift?: number;
   frameRateLimit?: number;
   onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
   onStatus: (status: string) => void;
@@ -35,6 +46,9 @@ interface MapSceneRendererOptions {
 
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
+const worldTargetClearColor = 0x000000;
+const worldTargetClearAlpha = 0;
+const defaultWorldDisplayLift = 3.0;
 const statsUpdateIntervalMs = 500;
 
 export interface MapSceneFrameStats {
@@ -65,8 +79,13 @@ export class MapSceneRenderer {
   private renderer: WebGPURenderer | null = null;
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private worldRenderTarget: THREE.RenderTarget | null = null;
+  private worldCompositeMaterial: THREE.MeshBasicNodeMaterial | null = null;
+  private worldCompositeQuad: THREE.QuadMesh | null = null;
+  private worldCompositeLift: UniformNode<'float', number> | null = null;
   private currentRoot: THREE.Object3D | null = null;
   private currentPackage: LoadedMapPackage | null = null;
+  private worldDisplayLift: number;
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
   private lastRenderSubmitTime = 0;
@@ -86,6 +105,7 @@ export class MapSceneRenderer {
     this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
+    this.worldDisplayLift = resolveWorldDisplayLift(options.worldDisplayLift ?? defaultWorldDisplayLift);
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
   }
@@ -263,6 +283,7 @@ export class MapSceneRenderer {
     this.disposeCurrentRoot();
     this.skyboxController.dispose();
     this.tieController.dispose();
+    this.disposeWorldComposite();
     this.renderer?.dispose();
     this.container.replaceChildren();
   }
@@ -288,6 +309,13 @@ export class MapSceneRenderer {
     }
 
     return stats;
+  }
+
+  setWorldDisplayLift(value: number): void {
+    this.worldDisplayLift = resolveWorldDisplayLift(value);
+    if (this.worldCompositeLift) {
+      this.worldCompositeLift.value = this.worldDisplayLift;
+    }
   }
 
   setTieRenderOptions(options: TieRenderOptions): TieStats | null {
@@ -333,6 +361,10 @@ export class MapSceneRenderer {
     this.controls?.update(frameMs / 1000);
     this.skyboxController.update(time / 1000);
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
+    const useWorldComposite = shouldUseWorldComposite(this.worldDisplayLift);
+    if (useWorldComposite) {
+      this.ensureWorldComposite();
+    }
 
     this.renderer.setRenderTarget(null);
     this.renderer.setClearColor(canvasClearColor, canvasClearAlpha);
@@ -341,7 +373,21 @@ export class MapSceneRenderer {
       this.renderer.render(this.skyScene, this.skyCamera);
       this.renderer.clearDepth();
     }
-    this.renderer.render(this.scene, this.camera);
+
+    const worldRenderTarget = this.worldRenderTarget;
+    const worldCompositeQuad = this.worldCompositeQuad;
+    if (useWorldComposite && worldRenderTarget && worldCompositeQuad) {
+      this.renderer.setRenderTarget(worldRenderTarget);
+      this.renderer.setClearColor(worldTargetClearColor, worldTargetClearAlpha);
+      this.renderer.clear(true, true, true);
+      this.renderer.render(this.scene, this.camera);
+      this.renderer.setRenderTarget(null);
+      this.renderer.setClearColor(canvasClearColor, canvasClearAlpha);
+      this.renderer.clearDepth();
+      worldCompositeQuad.render(this.renderer);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
 
     if (this.onFrameStats && time - this.lastStatsUpdateTime >= statsUpdateIntervalMs) {
       const averageFrameMs = this.frameSampleTotalMs / Math.max(1, this.frameSampleCount);
@@ -368,6 +414,90 @@ export class MapSceneRenderer {
     this.skyCamera.aspect = width / height;
     this.skyCamera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    if (shouldUseWorldComposite(this.worldDisplayLift)) {
+      this.resizeWorldRenderTarget(width, height);
+    }
+  }
+
+  private ensureWorldComposite(): void {
+    if (!this.renderer) {
+      return;
+    }
+
+    const width = Math.max(1, this.container.clientWidth);
+    const height = Math.max(1, this.container.clientHeight);
+    this.resizeWorldRenderTarget(width, height);
+  }
+
+  private resizeWorldRenderTarget(width: number, height: number): void {
+    if (!this.renderer) {
+      return;
+    }
+
+    const pixelRatio = this.renderer.getPixelRatio();
+    const targetWidth = Math.max(1, Math.floor(width * pixelRatio));
+    const targetHeight = Math.max(1, Math.floor(height * pixelRatio));
+    if (!this.worldRenderTarget) {
+      this.worldRenderTarget = new THREE.RenderTarget(targetWidth, targetHeight, {
+        depthBuffer: true,
+        stencilBuffer: false,
+        samples: 0,
+        format: THREE.RGBAFormat,
+        type: THREE.HalfFloatType,
+        colorSpace: THREE.SRGBColorSpace,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter
+      });
+      this.worldRenderTarget.texture.name = 'map_omatic_world_display_layer';
+      this.createWorldCompositeMaterial();
+      return;
+    }
+
+    if (this.worldRenderTarget.width !== targetWidth || this.worldRenderTarget.height !== targetHeight) {
+      this.worldRenderTarget.setSize(targetWidth, targetHeight);
+    }
+
+    if (!this.worldCompositeQuad) {
+      this.createWorldCompositeMaterial();
+    }
+  }
+
+  private createWorldCompositeMaterial(): void {
+    if (!this.worldRenderTarget) {
+      return;
+    }
+
+    this.worldCompositeMaterial?.dispose();
+    const lift = uniform(this.worldDisplayLift);
+    const sampleNode = texture(this.worldRenderTarget.texture, uv());
+    const colorNode = sampleNode.rgb;
+    const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
+    const liftedLumaNode = lumaNode.mul(lift).clamp(0, 1);
+    const ratioNode = liftedLumaNode.div(max(lumaNode, float(0.001)));
+    const liftedColorNode = colorNode.mul(ratioNode).clamp(0, 1);
+    const material = new THREE.MeshBasicNodeMaterial({
+      name: 'world_display_lift_composite',
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false
+    });
+    material.colorNode = liftedColorNode;
+    material.opacityNode = sampleNode.a;
+    material.blending = THREE.NormalBlending;
+    material.forceSinglePass = true;
+    this.worldCompositeLift = lift;
+    this.worldCompositeMaterial = material;
+    this.worldCompositeQuad = new THREE.QuadMesh(material);
+  }
+
+  private disposeWorldComposite(): void {
+    this.worldCompositeMaterial?.dispose();
+    this.worldRenderTarget?.dispose();
+    this.worldCompositeMaterial = null;
+    this.worldCompositeQuad = null;
+    this.worldCompositeLift = null;
+    this.worldRenderTarget = null;
   }
 
   private frameObject(root: THREE.Object3D): void {
@@ -429,6 +559,14 @@ function resolveFrameRateLimit(value: number): number {
   }
 
   return 240;
+}
+
+function resolveWorldDisplayLift(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 1;
+}
+
+function shouldUseWorldComposite(value: number): boolean {
+  return Math.abs(value - 1) > 0.001;
 }
 
 function frameIntervalForLimit(limit: number): number {
