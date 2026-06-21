@@ -2,24 +2,33 @@ import type {
   ShrubInstanceRecord,
   Vec4
 } from './mapPackageTypes';
+import {
+  binaryByteLength,
+  createDataView,
+  type BinaryBuffer
+} from './binaryBuffer';
 import { parseTieClassIds } from './tiePackageParsers';
 
-export function parseShrubClassIds(buffer: ArrayBuffer): number[] {
+export function parseShrubClassIds(buffer: BinaryBuffer): number[] {
   return parseTieClassIds(buffer);
 }
 
-export function parseShrubInstanceRecords(buffer: ArrayBuffer, expectedCount: number | null = null): ShrubInstanceRecord[] {
+export function parseShrubInstanceRecords(
+  buffer: BinaryBuffer,
+  expectedCount: number | null = null
+): ShrubInstanceRecord[] {
   const headerSize = 0x10;
   const recordSize = 0x70;
+  const byteLength = binaryByteLength(buffer);
 
-  if (buffer.byteLength < headerSize) {
-    throw new Error(`Shrub instance payload is too small: ${buffer.byteLength} bytes`);
+  if (byteLength < headerSize) {
+    throw new Error(`Shrub instance payload is too small: ${byteLength} bytes`);
   }
 
-  const view = new DataView(buffer);
+  const view = createDataView(buffer);
   const headerCount = Math.max(0, view.getInt32(0, true));
   const manifestCount = expectedCount == null ? headerCount : Math.max(0, expectedCount);
-  const availableCount = Math.floor(Math.max(buffer.byteLength - headerSize, 0) / recordSize);
+  const availableCount = Math.floor(Math.max(byteLength - headerSize, 0) / recordSize);
   const count = Math.min(headerCount, manifestCount, availableCount);
   const records: ShrubInstanceRecord[] = [];
 

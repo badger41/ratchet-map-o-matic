@@ -136,7 +136,7 @@ export class PackedMapAssetPackage implements MapAssetPackage {
       throw new Error(`Packed map package entry '${entry.path}' is out of bounds.`);
     }
 
-    return this.packedBytes.slice(start, end);
+    return this.packedBytes.subarray(start, end);
   }
 
   async readOptionalBytes(path: string): Promise<Uint8Array | null> {
@@ -182,7 +182,7 @@ export class PackedMapAssetPackage implements MapAssetPackage {
   private async createRawObjectUrl(path: string): Promise<string> {
     const bytes = await this.readBytes(path);
     const entry = this.entriesByPath.get(path);
-    const blob = new Blob([toStandaloneArrayBuffer(bytes)], { type: entry?.contentType || contentTypeForPath(path) });
+    const blob = new Blob([toBlobPart(bytes)], { type: entry?.contentType || contentTypeForPath(path) });
     const url = URL.createObjectURL(blob);
     this.objectUrls.add(url);
     return url;
@@ -253,14 +253,18 @@ export function dirnamePackagePath(path: string): string {
   return index >= 0 ? normalized.substring(0, index) : '';
 }
 
-export function toStandaloneArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+function isRelativeResourceUri(uri: string): boolean {
+  return !/^(?:[a-z]+:|\/\/)/i.test(uri);
+}
+
+function toBlobPart(bytes: Uint8Array): BlobPart {
+  if (bytes.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;
-}
-
-function isRelativeResourceUri(uri: string): boolean {
-  return !/^(?:[a-z]+:|\/\/)/i.test(uri);
 }
 
 function safeDecodeUriComponent(value: string): string {

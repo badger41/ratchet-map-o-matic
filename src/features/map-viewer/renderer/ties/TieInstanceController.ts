@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
 import type { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { toStandaloneArrayBuffer } from '../../../../services/mapAssets/mapAssetPackage';
 import {
   defaultTieRenderOptions,
   type GltfExportEntry,
@@ -102,13 +101,10 @@ export class TieInstanceController {
         ? mapPackage.assetPackage.readOptionalBytes(mapPackage.tieColorsPath)
         : Promise.resolve(null)
     ]);
-    const classIds = parseTieClassIds(toStandaloneArrayBuffer(classIdsBytes));
-    const records = parseTieInstanceRecords(
-      toStandaloneArrayBuffer(instancesBytes),
-      mapPackage.tieInstanceCountExpected
-    );
+    const classIds = parseTieClassIds(classIdsBytes);
+    const records = parseTieInstanceRecords(instancesBytes, mapPackage.tieInstanceCountExpected);
     const colorTable = colorBytes
-      ? parseTieColorTable(toStandaloneArrayBuffer(colorBytes))
+      ? parseTieColorTable(colorBytes)
       : null;
     const entriesByClassId = buildTieEntryMap(mapPackage.tieEntries);
     const recordsByClassId = groupRecordsByClassId(records);

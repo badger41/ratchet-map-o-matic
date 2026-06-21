@@ -1,5 +1,6 @@
 import type { DeadlockedMapDefinition } from '../../data/deadlockedMaps';
 import {
+  findIndexedDbRenderPackageBySourceUrl,
   hasViewerRenderPackageEntries,
   saveIndexedDbRenderPackage,
   type IndexedDbRenderPackageMetadata
@@ -40,12 +41,69 @@ export const mapLoadStageDefinitions: MapLoadStageDefinition[] = [
   { id: 'store', label: 'Cache package' }
 ];
 
+export async function preloadDeadlockedMapConverter(map: DeadlockedMapDefinition): Promise<void> {
+  const existingPackage = await findCachedPackage(map.wadUrl);
+  if (existingPackage) {
+    return;
+  }
+
+  try {
+    await loadRatchetPs2Wasm();
+  } catch (error) {
+    console.warn('Failed to preload Ratchet PS2 WASM converter.', error);
+  }
+}
+
 export async function loadDeadlockedMapRenderPackage(
   map: DeadlockedMapDefinition,
   onStageUpdate?: (update: MapLoadStageUpdate) => void
 ): Promise<DeadlockedMapLoadResult> {
   const startedAt = performance.now();
   const sourceUrl = map.wadUrl;
+
+  onStageUpdate?.({
+    id: 'download',
+    status: 'active',
+    detail: 'Checking cache',
+    loaded: null,
+    total: null
+  });
+
+  const existingPackage = await findCachedPackage(sourceUrl);
+  if (existingPackage) {
+    onStageUpdate?.({
+      id: 'download',
+      status: 'done',
+      detail: 'Using cached render package',
+      loaded: null,
+      total: null
+    });
+    onStageUpdate?.({
+      id: 'convert',
+      status: 'done',
+      detail: `${existingPackage.entryCount} cached entries`,
+      loaded: existingPackage.packedByteLength,
+      total: existingPackage.packedByteLength
+    });
+    onStageUpdate?.({
+      id: 'store',
+      status: 'done',
+      detail: existingPackage.id,
+      loaded: existingPackage.packedByteLength,
+      total: existingPackage.packedByteLength
+    });
+
+    return {
+      map,
+      sourceUrl,
+      apiVersion: 'cached',
+      wadByteLength: 0,
+      packedByteLength: existingPackage.packedByteLength,
+      entryCount: existingPackage.entryCount,
+      cachedPackage: existingPackage,
+      durationMs: performance.now() - startedAt
+    };
+  }
 
   onStageUpdate?.({
     id: 'download',
@@ -138,4 +196,13 @@ export async function loadDeadlockedMapRenderPackage(
 
 function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function findCachedPackage(sourceUrl: string): Promise<IndexedDbRenderPackageMetadata | null> {
+  try {
+    return await findIndexedDbRenderPackageBySourceUrl(sourceUrl);
+  } catch (error) {
+    console.warn('Failed to check IndexedDB render package cache.', error);
+    return null;
+  }
 }
