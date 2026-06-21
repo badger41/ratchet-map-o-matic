@@ -2,16 +2,6 @@ import * as THREE from 'three/webgpu';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
-  dot,
-  float,
-  max,
-  texture,
-  uniform,
-  uv,
-  vec3
-} from 'three/tsl';
-import type UniformNode from 'three/src/nodes/core/UniformNode.js';
-import {
   defaultShrubRenderOptions,
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
@@ -35,9 +25,30 @@ import {
   FpsCameraController,
   type CameraVirtualMoveInput
 } from './FpsCameraController';
+import {
+  assertWebGpuAvailable,
+  createRendererDeviceLostError,
+  createRendererInitializationError,
+  createRendererRuntimeError,
+  type RendererDeviceLostInfo,
+  shouldSkipGpuPipelineWarmup
+} from './RendererCompatibility';
+import {
+  disposeObject3D,
+  runRendererCleanup
+} from './RendererDisposal';
+import {
+  defaultWorldDisplayLift,
+  frameIntervalForLimit,
+  resolveFrameRateLimit,
+  resolveWorldDisplayLift,
+  shouldUseWorldComposite
+} from './RendererSettings';
+import { yieldToBrowser } from './RendererTiming';
 import { SkyboxController } from './skybox/SkyboxController';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
+import { WorldCompositeController } from './WorldCompositeController';
 
 interface MapSceneRendererOptions {
   container: HTMLElement;
@@ -54,23 +65,12 @@ interface MapSceneRendererOptions {
   onTieStats: (stats: TieStats) => void;
   onShrubStats: (stats: ShrubStats) => void;
   onFrameStats?: (stats: MapSceneFrameStats) => void;
+  onRuntimeError?: (message: string) => void;
 }
 
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
-const worldTargetClearColor = 0x000000;
-const worldTargetClearAlpha = 0;
-const defaultWorldDisplayLift = 2.5;
 const statsUpdateIntervalMs = 500;
-const webGpuUnavailableMessage = 'WebGPU is not available on this browser/device. Try a current desktop Chrome/Edge browser, or a mobile browser/device with WebGPU support enabled.';
-
-type WebGpuAdapterOptions = GPURequestAdapterOptions & {
-  featureLevel?: 'core' | 'compatibility';
-};
-
-const webGpuAdapterOptions: WebGpuAdapterOptions = {
-  featureLevel: 'compatibility'
-};
 
 export interface MapSceneFrameStats {
   fps: number;
@@ -87,6 +87,7 @@ export class MapSceneRenderer {
   private readonly onTieStats: (stats: TieStats) => void;
   private readonly onShrubStats: (stats: ShrubStats) => void;
   private readonly onFrameStats?: (stats: MapSceneFrameStats) => void;
+  private readonly onRuntimeError?: (message: string) => void;
   private readonly scene = new THREE.Scene();
   private readonly skyScene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 50000);
@@ -96,6 +97,7 @@ export class MapSceneRenderer {
   private readonly skyboxController = new SkyboxController();
   private readonly tieController = new TieInstanceController();
   private readonly shrubController = new ShrubInstanceController();
+  private readonly worldComposite = new WorldCompositeController();
   private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
@@ -104,16 +106,14 @@ export class MapSceneRenderer {
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private pendingResizeFrame: number | null = null;
-  private worldRenderTarget: THREE.RenderTarget | null = null;
-  private worldCompositeMaterial: THREE.MeshBasicNodeMaterial | null = null;
-  private worldCompositeQuad: THREE.QuadMesh | null = null;
-  private worldCompositeLift: UniformNode<'float', number> | null = null;
   private currentRoot: THREE.Object3D | null = null;
   private currentPackage: LoadedMapPackage | null = null;
   private worldDisplayLift: number;
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
   private animationRenderSuspended = false;
+  private rendererUnavailable = false;
+  private disposed = false;
   private lastRenderSubmitTime = 0;
   private lastFrameTime = performance.now();
   private lastStatsUpdateTime = this.lastFrameTime;
@@ -129,11 +129,13 @@ export class MapSceneRenderer {
     this.onTieStats = options.onTieStats;
     this.onShrubStats = options.onShrubStats;
     this.onFrameStats = options.onFrameStats;
+    this.onRuntimeError = options.onRuntimeError;
     this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
     this.worldDisplayLift = resolveWorldDisplayLift(options.worldDisplayLift ?? defaultWorldDisplayLift);
+    this.worldComposite.setLift(this.worldDisplayLift);
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
   }
@@ -147,6 +149,11 @@ export class MapSceneRenderer {
       antialias: false,
       alpha: false
     });
+    const defaultOnDeviceLost = renderer.onDeviceLost.bind(renderer);
+    renderer.onDeviceLost = (info) => {
+      defaultOnDeviceLost(info);
+      this.handleDeviceLost(info);
+    };
 
     try {
       await renderer.init();
@@ -155,6 +162,7 @@ export class MapSceneRenderer {
       throw createRendererInitializationError(error);
     }
 
+    this.rendererUnavailable = false;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.autoClear = false;
@@ -195,137 +203,12 @@ export class MapSceneRenderer {
     root.name = 'map_package';
 
     try {
-      this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Loading glTF' });
-      this.onStatus('Loading tfrag glTF');
-      const gltf = await this.loader.loadAsync(mapPackage.tfragGltfUrl);
-      const tfragRoot = gltf.scene;
-      tfragRoot.name = 'level_tfrag_lod0';
-      root.add(tfragRoot);
+      const tfragStats = await this.loadTerrain(root, mapPackage);
+      const skyboxStats = await this.loadSkybox(mapPackage);
+      const tieStats = await this.loadTies(root, mapPackage);
+      const shrubStats = await this.loadShrubs(root, mapPackage);
 
-      this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Preparing materials' });
-      await yieldToBrowser();
-      const tfragStats = this.tfragController.prepare(tfragRoot, mapPackage.directionalLights, this.materialOptions);
-      this.onTfragStats(tfragStats);
-      this.onLoadProgress({
-        id: 'tfrag',
-        status: 'done',
-        detail: `${tfragStats.triangles.toLocaleString()} triangles`
-      });
-
-      this.onLoadProgress({ id: 'skybox', status: 'active', detail: 'Loading glTF' });
-      this.onStatus('Loading skybox');
-      const skyboxStats = await this.skyboxController.load(
-        this.skyScene,
-        mapPackage,
-        this.loader,
-        this.skyboxRenderOptions,
-        this.renderer.getMaxAnisotropy()
-      );
-      this.onSkyboxStats(skyboxStats);
-      this.onLoadProgress({
-        id: 'skybox',
-        status: 'done',
-        detail: skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} shells` : 'No skybox'
-      });
-
-      this.onLoadProgress({ id: 'ties', status: 'active', detail: 'Preparing instances' });
-      this.onStatus('Loading tie instances');
-      const tieStats = await this.tieController.load(
-        root,
-        mapPackage,
-        this.loader,
-        this.tieRenderOptions,
-        this.skyboxController.getReflectionTexture(),
-        (loaded, total) => {
-          this.onLoadProgress({
-            id: 'ties',
-            status: 'active',
-            detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
-            loaded,
-            total
-          });
-        }
-      );
-      this.onTieStats(tieStats);
-      this.onLoadProgress({
-        id: 'ties',
-        status: 'done',
-        detail: tieStats.renderedInstances > 0
-          ? `${tieStats.renderedInstances.toLocaleString()} instances`
-          : 'No ties'
-      });
-
-      this.onLoadProgress({ id: 'shrubs', status: 'active', detail: 'Preparing instances' });
-      this.onStatus('Loading shrub instances');
-      const shrubStats = await this.shrubController.load(
-        root,
-        mapPackage,
-        this.loader,
-        this.shrubRenderOptions,
-        (loaded, total) => {
-          this.onLoadProgress({
-            id: 'shrubs',
-            status: 'active',
-            detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
-            loaded,
-            total
-          });
-        }
-      );
-      this.onShrubStats(shrubStats);
-      this.onLoadProgress({
-        id: 'shrubs',
-        status: 'done',
-        detail: shrubStats.renderedInstances > 0
-          ? `${shrubStats.renderedInstances.toLocaleString()} instances`
-          : 'No shrubs'
-      });
-
-      this.onLoadProgress({
-        id: 'compile',
-        status: 'active',
-        detail: 'Attaching scene',
-        loaded: 1,
-        total: 4
-      });
-      this.onStatus('Attaching scene');
-      await yieldToBrowser();
-      this.scene.add(root);
-      this.currentRoot = root;
-
-      this.onLoadProgress({
-        id: 'compile',
-        status: 'active',
-        detail: 'Framing camera',
-        loaded: 2,
-        total: 4
-      });
-      this.onStatus('Framing camera');
-      await yieldToBrowser();
-      this.frameObject(root);
-
-      this.onLoadProgress({
-        id: 'compile',
-        status: 'active',
-        detail: 'Warming GPU pipelines',
-        loaded: 3,
-        total: 4
-      });
-      this.onStatus('Warming GPU pipelines');
-      await yieldToBrowser();
-      await this.warmupScenePipelines();
-
-      this.onLoadProgress({
-        id: 'compile',
-        status: 'active',
-        detail: 'Submitting first frame',
-        loaded: 4,
-        total: 4
-      });
-      await yieldToBrowser();
-      this.renderFrame(performance.now());
-      this.animationRenderSuspended = false;
-      this.lastRenderSubmitTime = 0;
+      await this.prepareFirstFrame(root);
       this.onLoadProgress({
         id: 'compile',
         status: 'done',
@@ -339,21 +222,170 @@ export class MapSceneRenderer {
       ].filter(Boolean).join(', '));
       return tfragStats;
     } catch (error: unknown) {
+      const loadError = createRendererRuntimeError(error);
       this.animationRenderSuspended = false;
-      this.shrubController.dispose();
-      this.tieController.dispose();
-      this.skyboxController.dispose();
-      this.tfragController.dispose();
-      disposeObject3D(root);
-      if (this.currentPackage === mapPackage) {
-        this.currentPackage = null;
-        mapPackage.assetPackage.dispose();
-      }
-      throw error;
+      this.cleanupFailedPackageLoad(root, mapPackage);
+      throw loadError;
     }
   }
 
+  private async loadTerrain(root: THREE.Object3D, mapPackage: LoadedMapPackage): Promise<TfragStats> {
+    this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Loading glTF' });
+    this.onStatus('Loading tfrag glTF');
+    const gltf = await this.loader.loadAsync(mapPackage.tfragGltfUrl);
+    const tfragRoot = gltf.scene;
+    tfragRoot.name = 'level_tfrag_lod0';
+    root.add(tfragRoot);
+
+    this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Preparing materials' });
+    await yieldToBrowser();
+    const tfragStats = this.tfragController.prepare(tfragRoot, mapPackage.directionalLights, this.materialOptions);
+    this.onTfragStats(tfragStats);
+    this.onLoadProgress({
+      id: 'tfrag',
+      status: 'done',
+      detail: `${tfragStats.triangles.toLocaleString()} triangles`
+    });
+    return tfragStats;
+  }
+
+  private async loadSkybox(mapPackage: LoadedMapPackage): Promise<SkyboxStats> {
+    if (!this.renderer) {
+      throw new Error('Renderer has not initialized');
+    }
+
+    this.onLoadProgress({ id: 'skybox', status: 'active', detail: 'Loading glTF' });
+    this.onStatus('Loading skybox');
+    const skyboxStats = await this.skyboxController.load(
+      this.skyScene,
+      mapPackage,
+      this.loader,
+      this.skyboxRenderOptions,
+      this.renderer.getMaxAnisotropy()
+    );
+    this.onSkyboxStats(skyboxStats);
+    this.onLoadProgress({
+      id: 'skybox',
+      status: 'done',
+      detail: skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} shells` : 'No skybox'
+    });
+    return skyboxStats;
+  }
+
+  private async loadTies(root: THREE.Object3D, mapPackage: LoadedMapPackage): Promise<TieStats> {
+    this.onLoadProgress({ id: 'ties', status: 'active', detail: 'Preparing instances' });
+    this.onStatus('Loading tie instances');
+    const tieStats = await this.tieController.load(
+      root,
+      mapPackage,
+      this.loader,
+      this.tieRenderOptions,
+      this.skyboxController.getReflectionTexture(),
+      (loaded, total) => {
+        this.onLoadProgress({
+          id: 'ties',
+          status: 'active',
+          detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
+          loaded,
+          total
+        });
+      }
+    );
+    this.onTieStats(tieStats);
+    this.onLoadProgress({
+      id: 'ties',
+      status: 'done',
+      detail: tieStats.renderedInstances > 0
+        ? `${tieStats.renderedInstances.toLocaleString()} instances`
+        : 'No ties'
+    });
+    return tieStats;
+  }
+
+  private async loadShrubs(root: THREE.Object3D, mapPackage: LoadedMapPackage): Promise<ShrubStats> {
+    this.onLoadProgress({ id: 'shrubs', status: 'active', detail: 'Preparing instances' });
+    this.onStatus('Loading shrub instances');
+    const shrubStats = await this.shrubController.load(
+      root,
+      mapPackage,
+      this.loader,
+      this.shrubRenderOptions,
+      (loaded, total) => {
+        this.onLoadProgress({
+          id: 'shrubs',
+          status: 'active',
+          detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
+          loaded,
+          total
+        });
+      }
+    );
+    this.onShrubStats(shrubStats);
+    this.onLoadProgress({
+      id: 'shrubs',
+      status: 'done',
+      detail: shrubStats.renderedInstances > 0
+        ? `${shrubStats.renderedInstances.toLocaleString()} instances`
+        : 'No shrubs'
+    });
+    return shrubStats;
+  }
+
+  private async prepareFirstFrame(root: THREE.Object3D): Promise<void> {
+    this.onLoadProgress({
+      id: 'compile',
+      status: 'active',
+      detail: 'Attaching scene',
+      loaded: 1,
+      total: 4
+    });
+    this.onStatus('Attaching scene');
+    await yieldToBrowser();
+    this.scene.add(root);
+    this.currentRoot = root;
+
+    this.onLoadProgress({
+      id: 'compile',
+      status: 'active',
+      detail: 'Framing camera',
+      loaded: 2,
+      total: 4
+    });
+    this.onStatus('Framing camera');
+    await yieldToBrowser();
+    this.frameObject(root);
+
+    const skipPipelineWarmup = shouldSkipGpuPipelineWarmup();
+    this.onLoadProgress({
+      id: 'compile',
+      status: 'active',
+      detail: skipPipelineWarmup ? 'Skipping GPU warmup' : 'Warming GPU pipelines',
+      loaded: 3,
+      total: 4
+    });
+    this.onStatus(skipPipelineWarmup ? 'Skipping GPU warmup' : 'Warming GPU pipelines');
+    await yieldToBrowser();
+    if (!skipPipelineWarmup) {
+      await this.warmupScenePipelines();
+    }
+
+    this.onLoadProgress({
+      id: 'compile',
+      status: 'active',
+      detail: 'Submitting first frame',
+      loaded: 4,
+      total: 4
+    });
+    await yieldToBrowser();
+    this.renderFrame(performance.now());
+    this.animationRenderSuspended = false;
+    this.lastRenderSubmitTime = 0;
+  }
+
   dispose(): void {
+    this.disposed = true;
+    this.rendererUnavailable = true;
+    this.animationRenderSuspended = true;
     this.renderer?.setAnimationLoop(null);
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.scheduleResize);
@@ -368,7 +400,7 @@ export class MapSceneRenderer {
     this.skyboxController.dispose();
     this.tieController.dispose();
     this.shrubController.dispose();
-    this.disposeWorldComposite();
+    this.worldComposite.dispose();
     this.renderer?.dispose();
     this.container.replaceChildren();
   }
@@ -402,9 +434,7 @@ export class MapSceneRenderer {
 
   setWorldDisplayLift(value: number): void {
     this.worldDisplayLift = resolveWorldDisplayLift(value);
-    if (this.worldCompositeLift) {
-      this.worldCompositeLift.value = this.worldDisplayLift;
-    }
+    this.worldComposite.setLift(this.worldDisplayLift);
   }
 
   setTieRenderOptions(options: TieRenderOptions): TieStats | null {
@@ -445,7 +475,7 @@ export class MapSceneRenderer {
   };
 
   private handleAnimationFrame(time: DOMHighResTimeStamp): void {
-    if (this.animationRenderSuspended) {
+    if (this.animationRenderSuspended || this.rendererUnavailable) {
       return;
     }
 
@@ -457,11 +487,15 @@ export class MapSceneRenderer {
     }
 
     this.lastRenderSubmitTime = time;
-    this.renderFrame(time);
+    try {
+      this.renderFrame(time);
+    } catch (error: unknown) {
+      this.reportRendererRuntimeError(error);
+    }
   }
 
   private renderFrame(time: DOMHighResTimeStamp): void {
-    if (!this.renderer) {
+    if (!this.renderer || this.rendererUnavailable) {
       return;
     }
 
@@ -488,17 +522,12 @@ export class MapSceneRenderer {
       this.renderer.clearDepth();
     }
 
-    const worldRenderTarget = this.worldRenderTarget;
-    const worldCompositeQuad = this.worldCompositeQuad;
-    if (useWorldComposite && worldRenderTarget && worldCompositeQuad) {
-      this.renderer.setRenderTarget(worldRenderTarget);
-      this.renderer.setClearColor(worldTargetClearColor, worldTargetClearAlpha);
-      this.renderer.clear(true, true, true);
+    if (useWorldComposite && this.worldComposite.prepareWorldTarget(this.renderer)) {
       this.renderer.render(this.scene, this.camera);
       this.renderer.setRenderTarget(null);
       this.renderer.setClearColor(canvasClearColor, canvasClearAlpha);
       this.renderer.clearDepth();
-      worldCompositeQuad.render(this.renderer);
+      this.worldComposite.renderComposite(this.renderer);
     } else {
       this.renderer.render(this.scene, this.camera);
     }
@@ -517,23 +546,27 @@ export class MapSceneRenderer {
   }
 
   private resize(): void {
-    if (!this.renderer) {
+    if (!this.renderer || this.rendererUnavailable) {
       return;
     }
 
-    const width = Math.max(1, this.container.clientWidth);
-    const height = Math.max(1, this.container.clientHeight);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.skyCamera.aspect = width / height;
-    this.skyCamera.updateProjectionMatrix();
-    this.renderer.setSize(width, height, false);
-    if (shouldUseWorldComposite(this.worldDisplayLift)) {
-      this.resizeWorldRenderTarget(width, height);
-    }
+    try {
+      const width = Math.max(1, this.container.clientWidth);
+      const height = Math.max(1, this.container.clientHeight);
+      this.camera.aspect = width / height;
+      this.camera.updateProjectionMatrix();
+      this.skyCamera.aspect = width / height;
+      this.skyCamera.updateProjectionMatrix();
+      this.renderer.setSize(width, height, false);
+      if (shouldUseWorldComposite(this.worldDisplayLift)) {
+        this.worldComposite.resize(this.renderer, width, height);
+      }
 
-    this.lastRenderSubmitTime = 0;
-    this.renderFrame(performance.now());
+      this.lastRenderSubmitTime = 0;
+      this.renderFrame(performance.now());
+    } catch (error: unknown) {
+      this.reportRendererRuntimeError(error);
+    }
   }
 
   private ensureWorldComposite(): void {
@@ -543,81 +576,7 @@ export class MapSceneRenderer {
 
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
-    this.resizeWorldRenderTarget(width, height);
-  }
-
-  private resizeWorldRenderTarget(width: number, height: number): void {
-    if (!this.renderer) {
-      return;
-    }
-
-    const pixelRatio = this.renderer.getPixelRatio();
-    const targetWidth = Math.max(1, Math.floor(width * pixelRatio));
-    const targetHeight = Math.max(1, Math.floor(height * pixelRatio));
-    if (
-      this.worldRenderTarget &&
-      (this.worldRenderTarget.width !== targetWidth || this.worldRenderTarget.height !== targetHeight)
-    ) {
-      this.disposeWorldComposite();
-    }
-
-    if (!this.worldRenderTarget) {
-      this.worldRenderTarget = new THREE.RenderTarget(targetWidth, targetHeight, {
-        depthBuffer: true,
-        stencilBuffer: false,
-        samples: 0,
-        format: THREE.RGBAFormat,
-        type: THREE.HalfFloatType,
-        colorSpace: THREE.SRGBColorSpace,
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter
-      });
-      this.worldRenderTarget.texture.name = 'map_omatic_world_display_layer';
-      this.createWorldCompositeMaterial();
-      return;
-    }
-
-    if (!this.worldCompositeQuad) {
-      this.createWorldCompositeMaterial();
-    }
-  }
-
-  private createWorldCompositeMaterial(): void {
-    if (!this.worldRenderTarget) {
-      return;
-    }
-
-    this.worldCompositeMaterial?.dispose();
-    const lift = uniform(this.worldDisplayLift);
-    const sampleNode = texture(this.worldRenderTarget.texture, uv());
-    const colorNode = sampleNode.rgb;
-    const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
-    const liftedLumaNode = lumaNode.mul(lift).clamp(0, 1);
-    const ratioNode = liftedLumaNode.div(max(lumaNode, float(0.001)));
-    const liftedColorNode = colorNode.mul(ratioNode).clamp(0, 1);
-    const material = new THREE.MeshBasicNodeMaterial({
-      name: 'world_display_lift_composite',
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false
-    });
-    material.colorNode = liftedColorNode;
-    material.opacityNode = sampleNode.a;
-    material.blending = THREE.NormalBlending;
-    material.forceSinglePass = true;
-    this.worldCompositeLift = lift;
-    this.worldCompositeMaterial = material;
-    this.worldCompositeQuad = new THREE.QuadMesh(material);
-  }
-
-  private disposeWorldComposite(): void {
-    this.worldCompositeMaterial?.dispose();
-    this.worldRenderTarget?.dispose();
-    this.worldCompositeMaterial = null;
-    this.worldCompositeQuad = null;
-    this.worldCompositeLift = null;
-    this.worldRenderTarget = null;
+    this.worldComposite.ensure(this.renderer, width, height);
   }
 
   private frameObject(root: THREE.Object3D): void {
@@ -645,21 +604,49 @@ export class MapSceneRenderer {
       this.ensureWorldComposite();
       const previousRenderTarget = this.renderer.getRenderTarget();
       try {
-        if (this.worldRenderTarget) {
-          this.renderer.setRenderTarget(this.worldRenderTarget);
+        if (this.worldComposite.renderTarget) {
+          this.renderer.setRenderTarget(this.worldComposite.renderTarget);
         }
         await this.renderer.compileAsync(this.scene, this.camera);
       } finally {
         this.renderer.setRenderTarget(previousRenderTarget);
       }
 
-      if (this.worldCompositeQuad) {
-        await this.renderer.compileAsync(this.worldCompositeQuad, this.worldCompositeQuad.camera);
-      }
+      await this.worldComposite.compile(this.renderer);
       return;
     }
 
     await this.renderer.compileAsync(this.scene, this.camera);
+  }
+
+  private handleDeviceLost(info: RendererDeviceLostInfo): void {
+    this.reportRendererRuntimeError(createRendererDeviceLostError(info));
+  }
+
+  private reportRendererRuntimeError(error: unknown): Error {
+    const rendererError = createRendererRuntimeError(error);
+    if (this.disposed || this.rendererUnavailable) {
+      return rendererError;
+    }
+
+    this.rendererUnavailable = true;
+    this.animationRenderSuspended = true;
+    this.renderer?.setAnimationLoop(null);
+    this.onStatus(rendererError.message);
+    this.onRuntimeError?.(rendererError.message);
+    return rendererError;
+  }
+
+  private cleanupFailedPackageLoad(root: THREE.Object3D, mapPackage: LoadedMapPackage): void {
+    runRendererCleanup('shrub controller', () => this.shrubController.dispose());
+    runRendererCleanup('tie controller', () => this.tieController.dispose());
+    runRendererCleanup('skybox controller', () => this.skyboxController.dispose());
+    runRendererCleanup('tfrag controller', () => this.tfragController.dispose());
+    runRendererCleanup('partial scene root', () => disposeObject3D(root));
+    if (this.currentPackage === mapPackage) {
+      this.currentPackage = null;
+      runRendererCleanup('asset package', () => mapPackage.assetPackage.dispose());
+    }
   }
 
   private disposeCurrentRoot(): void {
@@ -679,89 +666,4 @@ export class MapSceneRenderer {
     disposeObject3D(this.currentRoot);
     this.currentRoot = null;
   }
-}
-
-function resolveFrameRateLimit(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 120;
-  }
-
-  if (value <= 30) {
-    return 30;
-  }
-
-  if (value <= 60) {
-    return 60;
-  }
-
-  if (value <= 120) {
-    return 120;
-  }
-
-  return 240;
-}
-
-function resolveWorldDisplayLift(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : 1;
-}
-
-function shouldUseWorldComposite(value: number): boolean {
-  return Math.abs(value - 1) > 0.001;
-}
-
-async function assertWebGpuAvailable(): Promise<void> {
-  if (!('gpu' in navigator)) {
-    throw new Error(webGpuUnavailableMessage);
-  }
-
-  const adapter = await navigator.gpu.requestAdapter(webGpuAdapterOptions);
-  if (!adapter) {
-    throw new Error(webGpuUnavailableMessage);
-  }
-}
-
-function createRendererInitializationError(error: unknown): Error {
-  const originalMessage = error instanceof Error ? error.message : String(error);
-  const message = originalMessage.includes('this.gl is null') || originalMessage.includes('WebGPUBackend')
-    ? webGpuUnavailableMessage
-    : `WebGPU renderer failed to initialize: ${originalMessage}`;
-  const nextError = new Error(message);
-  if (error instanceof Error && error.stack) {
-    nextError.stack = error.stack;
-  }
-
-  return nextError;
-}
-
-function frameIntervalForLimit(limit: number): number {
-  return 1000 / limit;
-}
-
-function yieldToBrowser(): Promise<void> {
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
-  });
-}
-
-function disposeObject3D(root: THREE.Object3D): void {
-  root.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh) {
-      return;
-    }
-
-    mesh.geometry?.dispose();
-    disposeMaterial(mesh.material);
-  });
-}
-
-function disposeMaterial(material: THREE.Material | THREE.Material[]): void {
-  if (Array.isArray(material)) {
-    for (const item of material) {
-      item.dispose();
-    }
-    return;
-  }
-
-  material.dispose();
 }

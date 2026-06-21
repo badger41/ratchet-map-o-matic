@@ -146,6 +146,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         if (!disposed) {
           setFrameStats(stats);
         }
+      },
+      onRuntimeError: (message) => {
+        if (!disposed) {
+          setReady(false);
+          setLastError(message);
+          setStatus(message);
+          setStages((current) => markActiveViewerStageFailed(current, message));
+        }
       }
     });
     rendererRef.current = renderer;
@@ -266,7 +274,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           >
             <Stack gap="md">
               {lastError ? (
-                <Alert color="red" icon={<AlertCircle size={18} />} title="Scene load failed">
+                <Alert color="red" icon={<AlertCircle size={18} />} title="Scene renderer failed">
                   {lastError}
                 </Alert>
               ) : null}
