@@ -48,12 +48,18 @@ import {
 } from './ShrubTypes';
 import { LoadYieldController } from '../ties/tieUtils';
 
+type ShrubGroup = THREE.Group & {
+  isBundleGroup?: boolean;
+  needsUpdate?: boolean;
+};
+
 export class ShrubInstanceController {
-  private group: THREE.Group | null = null;
+  private group: ShrubGroup | null = null;
   private stats: ShrubStats = { ...emptyShrubStats };
   private meshBindings: ShrubInstancedMeshBinding[] = [];
   private directionalLightBinding: ShrubDirectionalLightBinding | null = null;
   private options: ShrubRenderOptions = { ...defaultShrubRenderOptions };
+  private bundleEnabled = false;
 
   async load(
     parent: THREE.Object3D,
@@ -69,11 +75,12 @@ export class ShrubInstanceController {
       exportedClasses: mapPackage.shrubEntries.length
     };
 
-    const group = new THREE.Group();
+    const group = new THREE.BundleGroup() as ShrubGroup;
     group.name = 'shrub_instances';
     group.visible = this.options.visible;
     parent.add(group);
     this.group = group;
+    this.applyBundleMode();
     this.directionalLightBinding = createShrubDirectionalLightBinding(mapPackage.directionalLights);
 
     if (!mapPackage.shrubClassIdsPath || !mapPackage.shrubInstancesPath || mapPackage.shrubEntries.length === 0) {
@@ -133,6 +140,11 @@ export class ShrubInstanceController {
     return this.getStats();
   }
 
+  setBundleEnabled(enabled: boolean): void {
+    this.bundleEnabled = enabled;
+    this.applyBundleMode();
+  }
+
   private applyOptions(options: ShrubRenderOptions): void {
     if (this.group) {
       this.group.visible = options.visible;
@@ -141,6 +153,26 @@ export class ShrubInstanceController {
     for (const binding of this.meshBindings) {
       binding.mesh.visible = options.visible && (!binding.isBillboard || options.billboardsVisible);
       updateShrubMaterialLightingUniforms(binding.material, options);
+    }
+    this.markBundleNeedsUpdate();
+  }
+
+  private applyBundleMode(): void {
+    if (!this.group) {
+      return;
+    }
+
+    this.group.isBundleGroup = this.bundleEnabled;
+    for (const binding of this.meshBindings) {
+      binding.mesh.frustumCulled = !this.bundleEnabled;
+    }
+
+    this.markBundleNeedsUpdate();
+  }
+
+  private markBundleNeedsUpdate(): void {
+    if (this.group?.needsUpdate !== undefined) {
+      this.group.needsUpdate = true;
     }
   }
 
@@ -252,11 +284,12 @@ export class ShrubInstanceController {
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);
     mesh.name = `shrub_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
-    mesh.frustumCulled = true;
+    mesh.frustumCulled = !this.bundleEnabled;
+    mesh.static = true;
+    mesh.matrixAutoUpdate = false;
     mesh.visible = this.options.visible && (!primitive.isBillboard || this.options.billboardsVisible);
 
     if (fullMirrored) {
-      mesh.matrixAutoUpdate = false;
       mesh.matrix.copy(instanceMirrorMatrix);
       mesh.matrixWorldNeedsUpdate = true;
     }

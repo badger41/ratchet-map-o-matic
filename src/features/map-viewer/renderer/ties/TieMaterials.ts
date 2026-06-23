@@ -60,6 +60,12 @@ export function cloneTieMaterial(
       options);
 }
 
+export function cloneTieTextureMaterial(material: THREE.Material | THREE.Material[]): THREE.Material | THREE.Material[] {
+  return Array.isArray(material)
+    ? material.map(createTieTextureMaterial)
+    : createTieTextureMaterial(material);
+}
+
 export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
   updateTieMaterialLightingUniforms(binding.flatMaterial, options, false);
   if (binding.coloredMaterial) {
@@ -69,6 +75,33 @@ export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options:
   binding.mesh.material = options.colorsEnabled && binding.coloredMaterial
     ? binding.coloredMaterial
     : binding.flatMaterial;
+}
+
+function createTieTextureMaterial(source: THREE.Material): THREE.Material {
+  const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
+  const material = new THREE.MeshBasicNodeMaterial({
+    name: `${source.name || 'tie'}_texture_debug`,
+    color: sourceMaterial.color?.clone?.() ?? new THREE.Color(1, 1, 1),
+    map: sourceMaterial.map ?? null,
+    alphaMap: sourceMaterial.alphaMap ?? null,
+    vertexColors: sourceMaterial.vertexColors ?? false,
+    transparent: source.transparent,
+    opacity: source.opacity,
+    alphaTest: source.alphaTest,
+    depthTest: source.depthTest,
+    depthWrite: source.depthWrite,
+    side: THREE.DoubleSide,
+    toneMapped: false
+  });
+  if (material.map) {
+    material.map.colorSpace = THREE.SRGBColorSpace;
+  }
+  if (material.alphaMap) {
+    material.alphaMap.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  configureDlMaterialTransparency(material, resolveDlMaterialInfo(source, 'tie'));
+  return material;
 }
 
 function createTieDisplayMaterial(

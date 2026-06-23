@@ -42,7 +42,8 @@ import {
 } from './TieLighting';
 import {
   applyTieRenderOptions,
-  cloneTieMaterial
+  cloneTieMaterial,
+  cloneTieTextureMaterial
 } from './TieMaterials';
 import {
   dlLightSelectorAttributeName,
@@ -56,17 +57,26 @@ import {
   type TieInstancedMeshBinding,
   type TieLoadProgressCallback,
   type TieMaterialSet,
+  type TieMaterialMode,
   type TiePrimitive
 } from './TieTypes';
 import { LoadYieldController } from './tieUtils';
 
+type TieGroup = THREE.Group & {
+  isBundleGroup?: boolean;
+  needsUpdate?: boolean;
+};
+
 export class TieInstanceController {
-  private group: THREE.Group | null = null;
+  private group: TieGroup | null = null;
   private stats: TieStats = { ...emptyTieStats };
   private meshBindings: TieInstancedMeshBinding[] = [];
   private directionalLightBinding: TieDirectionalLightBinding | null = null;
   private skyboxReflectionTexture: THREE.Texture | null = null;
   private options: TieRenderOptions = { ...defaultTieRenderOptions };
+  private materialMode: TieMaterialMode = 'full';
+  private bundleEnabled = false;
+  private plainMaterial: THREE.MeshBasicNodeMaterial | null = null;
 
   async load(
     parent: THREE.Object3D,
@@ -84,10 +94,11 @@ export class TieInstanceController {
       exportedClasses: mapPackage.tieEntries.length
     };
 
-    const group = new THREE.Group();
+    const group = new THREE.BundleGroup() as TieGroup;
     group.name = 'tie_instances';
     parent.add(group);
     this.group = group;
+    this.applyBundleMode();
     this.directionalLightBinding = createTieDirectionalLightBinding(mapPackage.directionalLights);
 
     if (!mapPackage.tieClassIdsPath || !mapPackage.tieInstancesPath || mapPackage.tieEntries.length === 0) {
@@ -145,6 +156,7 @@ export class TieInstanceController {
       if (binding.coloredMaterial) {
         disposeInactiveMaterial(binding.mesh.material, binding.coloredMaterial, disposedMaterials, disposedTextures);
       }
+      disposeInactiveMaterial(binding.mesh.material, binding.textureMaterial, disposedMaterials, disposedTextures);
     }
 
     this.group.parent?.remove(this.group);
@@ -155,6 +167,8 @@ export class TieInstanceController {
     this.group.clear();
     this.group = null;
     this.meshBindings = [];
+    this.plainMaterial?.dispose();
+    this.plainMaterial = null;
   }
 
   getStats(): TieStats {
@@ -168,10 +182,30 @@ export class TieInstanceController {
     }
 
     for (const binding of this.meshBindings) {
-      applyTieRenderOptions(binding, this.options);
+      this.applyBindingMaterial(binding);
     }
+    this.markBundleNeedsUpdate();
 
     return this.getStats();
+  }
+
+  setVisible(visible: boolean): void {
+    if (this.group) {
+      this.group.visible = visible;
+    }
+  }
+
+  setMaterialMode(mode: TieMaterialMode): void {
+    this.materialMode = mode;
+    for (const binding of this.meshBindings) {
+      this.applyBindingMaterial(binding);
+    }
+    this.markBundleNeedsUpdate();
+  }
+
+  setBundleEnabled(enabled: boolean): void {
+    this.bundleEnabled = enabled;
+    this.applyBundleMode();
   }
 
   private addInstancedPrimitive(
@@ -185,7 +219,7 @@ export class TieInstanceController {
   ): void {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
-    const { ambientBinding, flatMaterial, coloredMaterial } = materialSet;
+    const { ambientBinding, flatMaterial, coloredMaterial, textureMaterial } = materialSet;
     if (ambientBinding) {
       geometry.setAttribute(
         tieAmbientInstanceRowAttributeName,
@@ -204,10 +238,11 @@ export class TieInstanceController {
     );
     mesh.name = `tie_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
-    mesh.frustumCulled = true;
+    mesh.frustumCulled = !this.bundleEnabled;
+    mesh.static = true;
+    mesh.matrixAutoUpdate = false;
 
     if (fullMirrored) {
-      mesh.matrixAutoUpdate = false;
       mesh.matrix.copy(instanceMirrorMatrix);
       mesh.matrixWorldNeedsUpdate = true;
     }
@@ -226,13 +261,16 @@ export class TieInstanceController {
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
     group.add(mesh);
-    this.meshBindings.push({
+    const binding: TieInstancedMeshBinding = {
       mesh,
       records,
       flatMaterial,
       coloredMaterial,
+      textureMaterial,
       ambientBinding
-    });
+    };
+    this.meshBindings.push(binding);
+    this.applyBindingMaterial(binding);
 
     this.stats.batches += 1;
     this.stats.ambientBatches += coloredMaterial ? 1 : 0;
@@ -244,6 +282,52 @@ export class TieInstanceController {
     }
 
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;
+  }
+
+  private applyBindingMaterial(binding: TieInstancedMeshBinding): void {
+    if (this.materialMode === 'plain') {
+      binding.mesh.material = this.getPlainMaterial();
+      return;
+    }
+
+    if (this.materialMode === 'texture') {
+      binding.mesh.material = binding.textureMaterial;
+      return;
+    }
+
+    applyTieRenderOptions(binding, this.options);
+  }
+
+  private getPlainMaterial(): THREE.MeshBasicNodeMaterial {
+    if (!this.plainMaterial) {
+      this.plainMaterial = new THREE.MeshBasicNodeMaterial({
+        name: 'tie_plain_debug_material',
+        color: 0xd8d8d8,
+        side: THREE.DoubleSide,
+        toneMapped: false
+      });
+    }
+
+    return this.plainMaterial;
+  }
+
+  private applyBundleMode(): void {
+    if (!this.group) {
+      return;
+    }
+
+    this.group.isBundleGroup = this.bundleEnabled;
+    for (const binding of this.meshBindings) {
+      binding.mesh.frustumCulled = !this.bundleEnabled;
+    }
+
+    this.markBundleNeedsUpdate();
+  }
+
+  private markBundleNeedsUpdate(): void {
+    if (this.group?.needsUpdate !== undefined) {
+      this.group.needsUpdate = true;
+    }
   }
 
   private createTieMaterialSet(records: PreparedTieRecord[], primitive: TiePrimitive): TieMaterialSet {
@@ -265,6 +349,7 @@ export class TieInstanceController {
           this.skyboxReflectionTexture,
           this.options)
         : null,
+      textureMaterial: cloneTieTextureMaterial(primitive.material),
       ambientBinding
     };
   }

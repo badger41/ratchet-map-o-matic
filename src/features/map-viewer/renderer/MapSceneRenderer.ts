@@ -48,6 +48,7 @@ import { yieldToBrowser } from './RendererTiming';
 import { SkyboxController } from './skybox/SkyboxController';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
+import type { TieMaterialMode } from './ties/TieTypes';
 import { WorldCompositeController } from './WorldCompositeController';
 
 interface MapSceneRendererOptions {
@@ -75,7 +76,17 @@ const statsUpdateIntervalMs = 500;
 export interface MapSceneFrameStats {
   fps: number;
   frameMs: number;
+  submitMs: number;
   frameRateLimit: number;
+  renderPasses: number;
+  drawCalls: number;
+  triangles: number;
+}
+
+interface RendererRenderInfo {
+  frameCalls?: number;
+  drawCalls?: number;
+  triangles?: number;
 }
 
 export class MapSceneRenderer {
@@ -107,10 +118,12 @@ export class MapSceneRenderer {
   private resizeObserver: ResizeObserver | null = null;
   private pendingResizeFrame: number | null = null;
   private currentRoot: THREE.Object3D | null = null;
+  private terrainRoot: THREE.Object3D | null = null;
   private currentPackage: LoadedMapPackage | null = null;
   private worldDisplayLift: number;
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
+  private instanceBundleEnabled = true;
   private animationRenderSuspended = false;
   private rendererUnavailable = false;
   private disposed = false;
@@ -118,6 +131,7 @@ export class MapSceneRenderer {
   private lastFrameTime = performance.now();
   private lastStatsUpdateTime = this.lastFrameTime;
   private frameSampleTotalMs = 0;
+  private submitSampleTotalMs = 0;
   private frameSampleCount = 0;
 
   constructor(options: MapSceneRendererOptions) {
@@ -236,6 +250,7 @@ export class MapSceneRenderer {
     const tfragRoot = gltf.scene;
     tfragRoot.name = 'level_tfrag_lod0';
     root.add(tfragRoot);
+    this.terrainRoot = tfragRoot;
 
     this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Preparing materials' });
     await yieldToBrowser();
@@ -291,6 +306,7 @@ export class MapSceneRenderer {
         });
       }
     );
+    this.tieController.setBundleEnabled(this.instanceBundleEnabled);
     this.onTieStats(tieStats);
     this.onLoadProgress({
       id: 'ties',
@@ -320,6 +336,7 @@ export class MapSceneRenderer {
         });
       }
     );
+    this.shrubController.setBundleEnabled(this.instanceBundleEnabled);
     this.onShrubStats(shrubStats);
     this.onLoadProgress({
       id: 'shrubs',
@@ -410,11 +427,16 @@ export class MapSceneRenderer {
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
     this.lastRenderSubmitTime = 0;
     this.frameSampleTotalMs = 0;
+    this.submitSampleTotalMs = 0;
     this.frameSampleCount = 0;
     this.onFrameStats?.({
       fps: 0,
       frameMs: 0,
-      frameRateLimit: this.frameRateLimit
+      submitMs: 0,
+      frameRateLimit: this.frameRateLimit,
+      renderPasses: 0,
+      drawCalls: 0,
+      triangles: 0
     });
   }
 
@@ -432,9 +454,29 @@ export class MapSceneRenderer {
     return stats;
   }
 
+  setTerrainVisible(visible: boolean): void {
+    if (this.terrainRoot) {
+      this.terrainRoot.visible = visible;
+    }
+  }
+
   setWorldDisplayLift(value: number): void {
     this.worldDisplayLift = resolveWorldDisplayLift(value);
     this.worldComposite.setLift(this.worldDisplayLift);
+  }
+
+  setTieVisible(visible: boolean): void {
+    this.tieController.setVisible(visible);
+  }
+
+  setTieMaterialMode(mode: TieMaterialMode): void {
+    this.tieController.setMaterialMode(mode);
+  }
+
+  setTieBundleEnabled(enabled: boolean): void {
+    this.instanceBundleEnabled = enabled;
+    this.tieController.setBundleEnabled(enabled);
+    this.shrubController.setBundleEnabled(enabled);
   }
 
   setTieRenderOptions(options: TieRenderOptions): TieStats | null {
@@ -499,6 +541,7 @@ export class MapSceneRenderer {
       return;
     }
 
+    const submitStartMs = performance.now();
     const frameMs = time - this.lastFrameTime;
     this.lastFrameTime = time;
     if (frameMs > 0 && frameMs < 250) {
@@ -532,15 +575,24 @@ export class MapSceneRenderer {
       this.renderer.render(this.scene, this.camera);
     }
 
+    this.submitSampleTotalMs += performance.now() - submitStartMs;
+
     if (this.onFrameStats && time - this.lastStatsUpdateTime >= statsUpdateIntervalMs) {
       const averageFrameMs = this.frameSampleTotalMs / Math.max(1, this.frameSampleCount);
+      const averageSubmitMs = this.submitSampleTotalMs / Math.max(1, this.frameSampleCount);
+      const renderInfo = this.renderer.info.render as RendererRenderInfo;
       this.onFrameStats({
         fps: averageFrameMs > 0 ? 1000 / averageFrameMs : 0,
         frameMs: averageFrameMs,
-        frameRateLimit: this.frameRateLimit
+        submitMs: averageSubmitMs,
+        frameRateLimit: this.frameRateLimit,
+        renderPasses: renderInfo.frameCalls ?? 0,
+        drawCalls: renderInfo.drawCalls ?? 0,
+        triangles: renderInfo.triangles ?? 0
       });
       this.lastStatsUpdateTime = time;
       this.frameSampleTotalMs = 0;
+      this.submitSampleTotalMs = 0;
       this.frameSampleCount = 0;
     }
   }
@@ -638,6 +690,7 @@ export class MapSceneRenderer {
   }
 
   private cleanupFailedPackageLoad(root: THREE.Object3D, mapPackage: LoadedMapPackage): void {
+    this.terrainRoot = null;
     runRendererCleanup('shrub controller', () => this.shrubController.dispose());
     runRendererCleanup('tie controller', () => this.tieController.dispose());
     runRendererCleanup('skybox controller', () => this.skyboxController.dispose());
@@ -652,6 +705,7 @@ export class MapSceneRenderer {
   private disposeCurrentRoot(): void {
     const currentPackage = this.currentPackage;
     this.currentPackage = null;
+    this.terrainRoot = null;
     this.tfragController.dispose();
     this.skyboxController.dispose();
     this.tieController.dispose();

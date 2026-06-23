@@ -33,6 +33,7 @@ export interface TieInstancedMeshBinding {
   records: PreparedTieRecord[];
   flatMaterial: THREE.Material | THREE.Material[];
   coloredMaterial: THREE.Material | THREE.Material[] | null;
+  textureMaterial: THREE.Material | THREE.Material[];
   ambientBinding: TieAmbientTextureBinding | null;
 }
 
@@ -75,8 +76,11 @@ export interface TieAmbientTextureBinding {
 export interface TieMaterialSet {
   flatMaterial: THREE.Material | THREE.Material[];
   coloredMaterial: THREE.Material | THREE.Material[] | null;
+  textureMaterial: THREE.Material | THREE.Material[];
   ambientBinding: TieAmbientTextureBinding | null;
 }
+
+export type TieMaterialMode = 'full' | 'texture' | 'plain';
 
 export interface TieDirectionalLightBinding {
   topColors: THREE.DataTexture;

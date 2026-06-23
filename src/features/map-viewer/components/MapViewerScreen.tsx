@@ -2,6 +2,7 @@ import {
   Alert,
   Box,
   Center,
+  Checkbox,
   Group,
   Paper,
   SegmentedControl,
@@ -15,6 +16,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadlockedMapLoadPipeline';
 import {
+  defaultShrubRenderOptions,
+  defaultSkyboxRenderOptions,
+  defaultTieRenderOptions,
   defaultTfragMaterialOptions,
   type ShrubStats,
   type SkyboxStats,
@@ -35,6 +39,7 @@ import {
   type MapSceneFrameStats
 } from '../renderer/MapSceneRenderer';
 import type { CameraVirtualMoveInput } from '../renderer/FpsCameraController';
+import type { TieMaterialMode } from '../renderer/ties/TieTypes';
 import { MapViewerStageList } from './MapViewerStageList';
 import { MobileCameraControls } from './MobileCameraControls';
 
@@ -47,6 +52,12 @@ const frameRateOptions = ['30', '60', '120', '240'].map((value) => ({
   value,
   label: value
 }));
+
+const tieMaterialOptions: Array<{ value: TieMaterialMode; label: string }> = [
+  { value: 'full', label: 'Full' },
+  { value: 'texture', label: 'Texture' },
+  { value: 'plain', label: 'Plain' }
+];
 
 export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -65,10 +76,21 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [lastError, setLastError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
+  const [terrainVisible, setTerrainVisible] = useState(true);
+  const [skyboxVisible, setSkyboxVisible] = useState(true);
+  const [tiesVisible, setTiesVisible] = useState(true);
+  const [shrubsVisible, setShrubsVisible] = useState(true);
+  const [tieMaterialMode, setTieMaterialMode] = useState<TieMaterialMode>('full');
+  const [tieColorsEnabled, setTieColorsEnabled] = useState(true);
+  const [tieBundleEnabled, setTieBundleEnabled] = useState(true);
   const [frameStats, setFrameStats] = useState<MapSceneFrameStats>({
     fps: 0,
     frameMs: 0,
-    frameRateLimit
+    submitMs: 0,
+    frameRateLimit,
+    renderPasses: 0,
+    drawCalls: 0,
+    triangles: 0
   });
   const mobileControlsVisible = useMediaQuery('(pointer: coarse)', false);
 
@@ -102,6 +124,43 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [frameRateLimit]);
 
   useEffect(() => {
+    rendererRef.current?.setTerrainVisible(terrainVisible);
+  }, [terrainVisible]);
+
+  useEffect(() => {
+    rendererRef.current?.setSkyboxRenderOptions({
+      ...defaultSkyboxRenderOptions,
+      visible: skyboxVisible
+    });
+  }, [skyboxVisible]);
+
+  useEffect(() => {
+    rendererRef.current?.setTieVisible(tiesVisible);
+  }, [tiesVisible]);
+
+  useEffect(() => {
+    rendererRef.current?.setTieMaterialMode(tieMaterialMode);
+  }, [tieMaterialMode]);
+
+  useEffect(() => {
+    rendererRef.current?.setTieBundleEnabled(tieBundleEnabled);
+  }, [tieBundleEnabled]);
+
+  useEffect(() => {
+    rendererRef.current?.setTieRenderOptions({
+      ...defaultTieRenderOptions,
+      colorsEnabled: tieColorsEnabled
+    });
+  }, [tieColorsEnabled]);
+
+  useEffect(() => {
+    rendererRef.current?.setShrubRenderOptions({
+      ...defaultShrubRenderOptions,
+      visible: shrubsVisible
+    });
+  }, [shrubsVisible]);
+
+  useEffect(() => {
     const container = viewportRef.current;
     if (!container) {
       return;
@@ -111,6 +170,18 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     const renderer = new MapSceneRenderer({
       container,
       materialOptions: defaultTfragMaterialOptions,
+      skyboxRenderOptions: {
+        ...defaultSkyboxRenderOptions,
+        visible: skyboxVisible
+      },
+      shrubRenderOptions: {
+        ...defaultShrubRenderOptions,
+        visible: shrubsVisible
+      },
+      tieRenderOptions: {
+        ...defaultTieRenderOptions,
+        colorsEnabled: tieColorsEnabled
+      },
       frameRateLimit,
       onStatus: (nextStatus) => {
         if (!disposed) {
@@ -194,6 +265,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         }));
 
         await renderer.loadPackage(loadedPackage);
+        renderer.setTerrainVisible(terrainVisible);
+        renderer.setTieVisible(tiesVisible);
+        renderer.setTieMaterialMode(tieMaterialMode);
+        renderer.setTieBundleEnabled(tieBundleEnabled);
+        renderer.setTieRenderOptions({
+          ...defaultTieRenderOptions,
+          colorsEnabled: tieColorsEnabled
+        });
         if (!disposed) {
           setReady(true);
         }
@@ -307,8 +386,60 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         >
           <Stack gap="xs">
             <Text size="xs" c="dimmed" fw={700}>Scene Debug</Text>
+            <Group gap="xs" wrap="wrap">
+              <Checkbox
+                size="xs"
+                label="Terrain"
+                checked={terrainVisible}
+                onChange={(event) => setTerrainVisible(event.currentTarget.checked)}
+              />
+              <Checkbox
+                size="xs"
+                label="Skybox"
+                checked={skyboxVisible}
+                onChange={(event) => setSkyboxVisible(event.currentTarget.checked)}
+              />
+              <Checkbox
+                size="xs"
+                label="Ties"
+                checked={tiesVisible}
+                onChange={(event) => setTiesVisible(event.currentTarget.checked)}
+              />
+              <Group gap={6} wrap="nowrap">
+                <Text size="xs" c="dimmed" fw={700}>Tie material</Text>
+                <SegmentedControl
+                  size="xs"
+                  value={tieMaterialMode}
+                  data={tieMaterialOptions}
+                  onChange={(value) => setTieMaterialMode(value as TieMaterialMode)}
+                />
+              </Group>
+              <Checkbox
+                size="xs"
+                label="Tie colors"
+                checked={tieColorsEnabled}
+                onChange={(event) => setTieColorsEnabled(event.currentTarget.checked)}
+              />
+              <Checkbox
+                size="xs"
+                label="Instance bundles"
+                checked={tieBundleEnabled}
+                onChange={(event) => setTieBundleEnabled(event.currentTarget.checked)}
+              />
+              <Checkbox
+                size="xs"
+                label="Shrubs"
+                checked={shrubsVisible}
+                onChange={(event) => setShrubsVisible(event.currentTarget.checked)}
+              />
+            </Group>
             <Table withRowBorders={false} verticalSpacing={2}>
               <Table.Tbody>
+                <DebugRow label="Frame ms" value={frameStats.frameMs > 0 ? frameStats.frameMs.toFixed(1) : '-'} />
+                <DebugRow label="Submit ms" value={frameStats.submitMs > 0 ? frameStats.submitMs.toFixed(1) : '-'} />
+                <DebugRow label="Render passes" value={frameStats.renderPasses.toLocaleString()} />
+                <DebugRow label="Draw calls" value={frameStats.drawCalls.toLocaleString()} />
+                <DebugRow label="Frame triangles" value={frameStats.triangles.toLocaleString()} />
                 <DebugRow label="Tfrag meshes" value={tfragStats.meshes.toLocaleString()} />
                 <DebugRow label="Tfrag primitives" value={tfragStats.sourcePrimitives.toLocaleString()} />
                 <DebugRow label="Tfrag triangles" value={tfragStats.triangles.toLocaleString()} />
