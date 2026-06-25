@@ -1,4 +1,4 @@
-import { Alert, Button, Stack } from '@mantine/core';
+import { Alert, Box, Button, Stack } from '@mantine/core';
 import { AlertCircle, RotateCcw } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -36,6 +36,7 @@ export function MapLoader() {
   const [stages, setStages] = useState<MapLoadStageState[]>(() => createMapLoadStages());
   const [result, setResult] = useState<DeadlockedMapLoadResult | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [mapPickerOpen, setMapPickerOpen] = useState(false);
   const selectedMap = useMemo(() => {
     return deadlockedMaps.find((map) => map.id === selectedMapId) ?? defaultDeadlockedMap;
   }, [selectedMapId]);
@@ -53,6 +54,7 @@ export function MapLoader() {
   }, [phase, selectedMap]);
 
   async function viewSelectedMap() {
+    setMapPickerOpen(false);
     setPhase('loading');
     setResult(null);
     setLastError(null);
@@ -74,11 +76,16 @@ export function MapLoader() {
   }
 
   const chooseAnotherMap = useCallback(() => {
+    if (result) {
+      setMapPickerOpen(true);
+      return;
+    }
+
     setPhase('welcome');
     setResult(null);
     setLastError(null);
     setStages(createMapLoadStages());
-  }, []);
+  }, [result]);
 
   if (phase === 'loading') {
     return <MapLoadProgress map={selectedMap} stages={stages} />;
@@ -88,6 +95,30 @@ export function MapLoader() {
     return (
       <Suspense fallback={<MapLoadProgress map={result.map} stages={stages} />}>
         <MapViewerScreen result={result} onChooseAnother={chooseAnotherMap} />
+        {mapPickerOpen ? (
+          <Box
+            pos="fixed"
+            top={56}
+            left={0}
+            right={0}
+            bottom={0}
+            bg="rgba(7, 10, 13, 0.72)"
+            style={{ zIndex: 20, backdropFilter: 'blur(3px)' }}
+          >
+            <WelcomeScreen
+              mapOptions={mapOptions}
+              selectedMap={selectedMap}
+              selectedMapId={selectedMapId}
+              onMapChange={(mapId) => {
+                if (mapId) {
+                  setSelectedMapId(mapId);
+                }
+              }}
+              onView={viewSelectedMap}
+              onClose={() => setMapPickerOpen(false)}
+            />
+          </Box>
+        ) : null}
       </Suspense>
     );
   }

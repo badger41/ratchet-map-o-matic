@@ -88,6 +88,7 @@ interface MapSceneRendererOptions {
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
+const firstFrameSetupStepCount = 7;
 const defaultWorldDisplayLift = 2;
 export const defaultGlowBloomFalloffDistance = 100;
 const glowBloomFullStrengthRatio = 0.25;
@@ -387,54 +388,44 @@ export class MapSceneRenderer {
   }
 
   private async prepareFirstFrame(root: THREE.Object3D): Promise<void> {
-    this.onLoadProgress({
-      id: 'compile',
-      status: 'active',
-      detail: 'Attaching scene',
-      loaded: 1,
-      total: 4
-    });
-    this.onStatus('Attaching scene');
+    this.reportFirstFrameProgress('Attaching scene', 1);
     await yieldToBrowser();
     this.scene.add(root);
     this.currentRoot = root;
 
-    this.onLoadProgress({
-      id: 'compile',
-      status: 'active',
-      detail: 'Framing camera',
-      loaded: 2,
-      total: 4
-    });
-    this.onStatus('Framing camera');
+    this.reportFirstFrameProgress('Framing camera', 2);
     await yieldToBrowser();
     this.frameObject(root);
 
-    const skipPipelineWarmup = shouldSkipGpuPipelineWarmup();
-    this.onLoadProgress({
-      id: 'compile',
-      status: 'active',
-      detail: skipPipelineWarmup ? 'Skipping GPU warmup' : 'Warming GPU pipelines',
-      loaded: 3,
-      total: 4
-    });
-    this.onStatus(skipPipelineWarmup ? 'Skipping GPU warmup' : 'Warming GPU pipelines');
+    this.reportFirstFrameProgress('Drawing preview frame', 3);
     await yieldToBrowser();
+    this.renderWithPipeline(false);
+    await yieldToBrowser();
+
+    const skipPipelineWarmup = shouldSkipGpuPipelineWarmup();
     if (!skipPipelineWarmup) {
       await this.warmupScenePipelines();
+    } else {
+      this.reportFirstFrameProgress('Skipping GPU warmup', 6);
+      await yieldToBrowser();
     }
 
-    this.onLoadProgress({
-      id: 'compile',
-      status: 'active',
-      detail: 'Submitting first frame',
-      loaded: 4,
-      total: 4
-    });
+    this.reportFirstFrameProgress('Submitting first frame', 7);
     await yieldToBrowser();
     this.renderFrame(performance.now());
     this.animationRenderSuspended = false;
     this.lastRenderSubmitTime = 0;
+  }
+
+  private reportFirstFrameProgress(detail: string, loaded: number): void {
+    this.onLoadProgress({
+      id: 'compile',
+      status: 'active',
+      detail,
+      loaded,
+      total: firstFrameSetupStepCount
+    });
+    this.onStatus(detail);
   }
 
   dispose(): void {
@@ -710,19 +701,6 @@ export class MapSceneRenderer {
     pipeline?.renderPipeline.render();
   }
 
-  private warmupRenderPipeline(): void {
-    if (!this.renderer) {
-      return;
-    }
-
-    this.renderWithPipeline(false);
-    if (!this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
-      return;
-    }
-    this.syncBloomFadeRange();
-    this.renderWithPipeline(true);
-  }
-
   private resolveGlowBloomStatus(): string {
     if (!this.renderer || !this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
       return this.glowBloomEnabled ? 'none' : 'off';
@@ -757,11 +735,34 @@ export class MapSceneRenderer {
 
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
     if (this.skyboxController.isVisible()) {
+      this.reportFirstFrameProgress('Compiling skybox materials', 4);
+      await yieldToBrowser();
       await this.renderer.compileAsync(this.skyScene, this.skyCamera);
+      await yieldToBrowser();
+    } else {
+      this.reportFirstFrameProgress('Skipping skybox materials', 4);
+      await yieldToBrowser();
     }
 
+    this.reportFirstFrameProgress('Compiling scene materials', 5);
+    await yieldToBrowser();
     await this.renderer.compileAsync(this.scene, this.camera);
-    this.warmupRenderPipeline();
+    await yieldToBrowser();
+    await this.warmupBloomRenderPipeline();
+  }
+
+  private async warmupBloomRenderPipeline(): Promise<void> {
+    if (!this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
+      this.reportFirstFrameProgress('Skipping bloom pipeline', 6);
+      await yieldToBrowser();
+      return;
+    }
+
+    this.reportFirstFrameProgress('Preparing bloom pipeline', 6);
+    await yieldToBrowser();
+    this.syncBloomFadeRange();
+    this.renderWithPipeline(true);
+    await yieldToBrowser();
   }
 
   private syncBloomFadeRange(): void {

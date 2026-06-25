@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Badge,
   Button,
   Center,
@@ -9,7 +10,7 @@ import {
   Text,
   Title
 } from '@mantine/core';
-import { Play } from 'lucide-react';
+import { Play, X } from 'lucide-react';
 import type { DeadlockedMapDefinition } from '../../../data/deadlockedMaps';
 
 interface WelcomeScreenProps {
@@ -18,6 +19,7 @@ interface WelcomeScreenProps {
   selectedMapId: string;
   onMapChange: (mapId: string | null) => void;
   onView: () => void;
+  onClose?: () => void;
 }
 
 export function WelcomeScreen({
@@ -25,7 +27,8 @@ export function WelcomeScreen({
   selectedMap,
   selectedMapId,
   onMapChange,
-  onView
+  onView,
+  onClose
 }: WelcomeScreenProps) {
   return (
     <Center mih="calc(100vh - 56px)" p="sm">
@@ -43,9 +46,16 @@ export function WelcomeScreen({
               <Title order={2}>Map-O-Matic</Title>
               <Text size="sm" c="dimmed">{selectedMap.label}</Text>
             </Stack>
-            <Badge variant="outline" color="gray">
-              {selectedMap.gameId} level {selectedMap.level.toString().padStart(2, '0')}
-            </Badge>
+            <Group gap="xs">
+              <Badge variant="outline" color="gray">
+                {selectedMap.gameId} level {selectedMap.level.toString().padStart(2, '0')}
+              </Badge>
+              {onClose ? (
+                <ActionIcon variant="subtle" color="gray" aria-label="Close map picker" onClick={onClose}>
+                  <X size={16} />
+                </ActionIcon>
+              ) : null}
+            </Group>
           </Group>
 
           <Select

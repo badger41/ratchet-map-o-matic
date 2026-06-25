@@ -10,51 +10,63 @@ interface MapViewerStageListProps {
 }
 
 export function MapViewerStageList({ stages }: MapViewerStageListProps) {
+  const stage = currentStage(stages);
+  if (!stage) {
+    return null;
+  }
+
+  const color = viewerStageColor(stage.status);
+  const progressText = formatStageProgressText(stage);
+  const detail = progressText && progressText !== stage.detail
+    ? `${stage.detail || 'Working'} - ${progressText}`
+    : stage.detail || progressText || 'Waiting';
+
   return (
-    <Stack gap="sm">
-      {stages.map((stage) => {
-        const color = viewerStageColor(stage.status);
-        const progressText = formatStageProgressText(stage);
-        return (
-          <Paper
-            key={stage.id}
-            p="xs"
-            radius="md"
-            bg="#0d1319"
-            withBorder
-            style={{
-              borderColor: 'rgba(159, 174, 188, 0.16)',
-              minHeight: 74
-            }}
-          >
-            <Group justify="space-between" wrap="nowrap">
-              <Stack gap={2}>
-                <Text size="sm" fw={700}>{stage.label}</Text>
-                <Text size="xs" c="dimmed">
-                  {stage.detail || 'Waiting'}
-                </Text>
-              </Stack>
-              <Badge variant="light" color={color}>
-                {stage.status}
-              </Badge>
-            </Group>
-            <Progress
-              value={viewerStageProgressValue(stage)}
-              color={color}
-              radius="xs"
-              size="xs"
-              transitionDuration={stage.status === 'active' ? 180 : 0}
-            />
-            {progressText ? (
-              <Text size="xs" c="dimmed">
-                {progressText}
-              </Text>
-            ) : null}
-          </Paper>
-        );
-      })}
-    </Stack>
+    <Paper
+      p="xs"
+      radius="md"
+      bg="#0d1319"
+      withBorder
+      style={{ borderColor: 'rgba(159, 174, 188, 0.16)' }}
+    >
+      <Stack gap="xs">
+        <Group justify="space-between" wrap="nowrap">
+          <Stack gap={2}>
+            <Text size="sm" fw={700}>{stage.label}</Text>
+            <Text size="xs" c="dimmed">
+              {detail}
+            </Text>
+          </Stack>
+          <Badge variant="light" color={color}>
+            {stage.status}
+          </Badge>
+        </Group>
+        <Progress
+          value={viewerStageProgressValue(stage)}
+          color={color}
+          radius="xs"
+          size="xs"
+          transitionDuration={stage.status === 'active' ? 180 : 0}
+        />
+      </Stack>
+    </Paper>
   );
+}
+
+function currentStage(stages: MapViewerStageState[]): MapViewerStageState | null {
+  const current = stages.find((stage) => stage.status === 'active')
+    ?? stages.find((stage) => stage.status === 'error');
+  if (current) {
+    return current;
+  }
+
+  for (let index = stages.length - 1; index >= 0; index -= 1) {
+    if (stages[index].status === 'done') {
+      return stages[index];
+    }
+  }
+
+  return stages[0] ?? null;
 }
 
 function formatStageProgressText(stage: MapViewerStageState): string | null {

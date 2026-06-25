@@ -24,6 +24,9 @@ interface MapLoadProgressProps {
 }
 
 export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps) {
+  const stage = currentStage(stages);
+  const color = stage ? stageColor(stage.status) : 'gray';
+
   return (
     <Container size={1180} px="md" py="xl">
       <Stack gap="lg">
@@ -44,50 +47,56 @@ export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps)
           withBorder
           style={{ borderColor: 'rgba(159, 174, 188, 0.22)' }}
         >
-          <Stack gap="md">
-            {stages.map((stage) => (
-              <Paper
-                key={stage.id}
-                p="sm"
-                radius="md"
-                bg="#0d1319"
-                withBorder
-                style={{
-                  borderColor: 'rgba(159, 174, 188, 0.16)',
-                  minHeight: 88
-                }}
-              >
-                <Group justify="space-between" wrap="nowrap">
-                  <Stack gap={2}>
-                    <Text fw={700}>{stage.label}</Text>
-                    <Text size="sm" c="dimmed">
-                      {stage.detail || 'Waiting'}
-                    </Text>
-                  </Stack>
-                  <Badge variant="light" color={stageColor(stage.status)}>
-                    {stage.status}
-                  </Badge>
-                </Group>
-                <Progress
-                  value={stageProgressValue(stage)}
-                  color={stageColor(stage.status)}
-                  radius="xs"
-                  size="sm"
-                  transitionDuration={stage.status === 'active' ? 180 : 0}
-                />
-                {stage.loaded !== null ? (
-                  <Text size="xs" c="dimmed">
-                    {formatByteSize(stage.loaded)}
-                    {stage.total ? ` / ${formatByteSize(stage.total)}` : ''}
+          {stage ? (
+            <Stack gap="xs">
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text fw={700}>{stage.label}</Text>
+                  <Text size="sm" c="dimmed">
+                    {formatStageDetail(stage)}
                   </Text>
-                ) : null}
-              </Paper>
-            ))}
-          </Stack>
+                </Stack>
+                <Badge variant="light" color={color}>
+                  {stage.status}
+                </Badge>
+              </Group>
+              <Progress
+                value={stageProgressValue(stage)}
+                color={color}
+                radius="xs"
+                size="md"
+                transitionDuration={stage.status === 'active' ? 180 : 0}
+              />
+            </Stack>
+          ) : null}
         </Paper>
 
         {children}
       </Stack>
     </Container>
   );
+}
+
+function currentStage(stages: MapLoadStageState[]): MapLoadStageState | null {
+  const current = stages.find((stage) => stage.status === 'active')
+    ?? stages.find((stage) => stage.status === 'error');
+  if (current) {
+    return current;
+  }
+
+  for (let index = stages.length - 1; index >= 0; index -= 1) {
+    if (stages[index].status === 'done') {
+      return stages[index];
+    }
+  }
+
+  return stages[0] ?? null;
+}
+
+function formatStageDetail(stage: MapLoadStageState): string {
+  if (stage.loaded !== null) {
+    return `${formatByteSize(stage.loaded)}${stage.total ? ` / ${formatByteSize(stage.total)}` : ''}`;
+  }
+
+  return stage.detail || 'Waiting';
 }
