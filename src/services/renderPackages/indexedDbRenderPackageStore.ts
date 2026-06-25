@@ -1,4 +1,7 @@
-import type { PackedFileEntry } from '../wasm/ratchetPs2Wasm';
+import type {
+  DlLevelSettings,
+  PackedFileEntry
+} from '../wasm/ratchetPs2Wasm';
 
 const databaseName = 'ratchet-map-o-matic';
 const databaseVersion = 1;
@@ -6,7 +9,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = 'render-pipeline-bloom-v1';
+const renderPackageFormatVersion = 'gameplay-level-settings-v1';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
@@ -20,6 +23,7 @@ export interface IndexedDbRenderPackageMetadata {
   packedByteLength: number;
   entryCount: number;
   entries: PackedFileEntry[];
+  levelSettings?: DlLevelSettings | null;
 }
 
 export interface IndexedDbRenderPackageRecord extends IndexedDbRenderPackageMetadata {
@@ -32,6 +36,7 @@ export interface SaveIndexedDbRenderPackageOptions {
   wadBytes: Uint8Array;
   packedBytes: Uint8Array;
   entries: PackedFileEntry[];
+  levelSettings?: DlLevelSettings | null;
 }
 
 interface IndexedDbRenderPackagePayload {
@@ -76,7 +81,8 @@ export async function saveIndexedDbRenderPackage(
     level: numberValue(rootManifest?.Level),
     packedByteLength: options.packedBytes.byteLength,
     entryCount: entries.length,
-    entries
+    entries,
+    levelSettings: options.levelSettings ?? null
   };
 
   const db = await openDatabase();

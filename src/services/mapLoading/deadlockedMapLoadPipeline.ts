@@ -6,8 +6,13 @@ import {
   toIndexedDbPackageSource,
   type IndexedDbRenderPackageMetadata
 } from '../renderPackages/indexedDbRenderPackageStore';
-import { loadRatchetPs2Wasm } from '../wasm/ratchetPs2Wasm';
+import {
+  loadRatchetPs2Wasm,
+  type DlLevelSettings,
+  type RatchetPs2WasmModule
+} from '../wasm/ratchetPs2Wasm';
 import { fetchWadBytes } from '../wads/fetchWadBytes';
+import { extractDlLevelSettingsGameplayCore } from './extractDlGameplayCore';
 
 export type MapLoadStageId = 'download' | 'convert' | 'store';
 export type MapLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
@@ -34,6 +39,7 @@ export interface DeadlockedMapLoadResult {
   entryCount: number;
   cachedPackage: IndexedDbRenderPackageMetadata | null;
   packageSource: string;
+  levelSettings: DlLevelSettings | null;
   durationMs: number;
 }
 
@@ -112,6 +118,7 @@ export async function loadDeadlockedMapRenderPackage(
       entryCount: existingPackage.entryCount,
       cachedPackage: existingPackage,
       packageSource: toIndexedDbPackageSource(existingPackage.id),
+      levelSettings: existingPackage.levelSettings ?? null,
       durationMs: performance.now() - startedAt
     };
   }
@@ -143,19 +150,29 @@ export async function loadDeadlockedMapRenderPackage(
   onStageUpdate?.({
     id: 'convert',
     status: 'active',
-    detail: 'Preparing converter',
+    detail: 'Loading WASM runtime',
     loaded: null,
     total: null
   });
   await yieldToBrowser();
   const wasm = await loadRatchetPs2Wasm();
   const apiVersion = await wasm.getApiVersion();
+
   onStageUpdate?.({
     id: 'convert',
     status: 'active',
-    detail: `Exporting render assets with API ${apiVersion}`,
-    loaded: null,
-    total: null
+    detail: 'Parsing gameplay settings',
+    loaded: 1,
+    total: 3
+  });
+  const levelSettings = await parseLevelSettings(wasm, wadBytes);
+
+  onStageUpdate?.({
+    id: 'convert',
+    status: 'active',
+    detail: 'Exporting render assets',
+    loaded: 2,
+    total: 3
   });
   await yieldToBrowser();
   const renderPackage = await wasm.buildDlLevelWadRenderPackage(wadBytes);
@@ -183,7 +200,8 @@ export async function loadDeadlockedMapRenderPackage(
     sourceUrl,
     wadBytes,
     packedBytes: renderPackage.packedBytes,
-    entries: renderPackage.entries
+    entries: renderPackage.entries,
+    levelSettings
   });
   onStageUpdate?.({
     id: 'store',
@@ -202,8 +220,24 @@ export async function loadDeadlockedMapRenderPackage(
     entryCount: renderPackage.entries.length,
     cachedPackage,
     packageSource: toIndexedDbPackageSource(cachedPackage.id),
+    levelSettings,
     durationMs: performance.now() - startedAt
   };
+}
+
+async function parseLevelSettings(wasm: RatchetPs2WasmModule, wadBytes: Uint8Array): Promise<DlLevelSettings | null> {
+  try {
+    const levelSettingsCore = extractDlLevelSettingsGameplayCore(wadBytes);
+    if (!levelSettingsCore) {
+      return null;
+    }
+
+    return (await wasm.parseDlGameplayCore(levelSettingsCore)).blocks
+      .find((block) => block.levelSettings)?.levelSettings ?? null;
+  } catch (error) {
+    console.warn('Failed to parse DL gameplay LevelSettings.', error);
+    return null;
+  }
 }
 
 async function loadLooseViewerPackage(
@@ -244,6 +278,7 @@ async function loadLooseViewerPackage(
     entryCount: 0,
     cachedPackage: null,
     packageSource: sourceUrl,
+    levelSettings: null,
     durationMs: performance.now() - startedAt
   };
 }

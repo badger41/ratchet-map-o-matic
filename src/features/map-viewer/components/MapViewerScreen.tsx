@@ -200,6 +200,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         ...defaultTieRenderOptions,
         colorsEnabled: tieColorsEnabled
       },
+      levelSettings: result.levelSettings,
       glowBloomEnabled,
       glowBloomFalloffDistance,
       frameRateLimit,
@@ -315,7 +316,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       rendererRef.current = null;
       renderer.dispose();
     };
-  }, [result.packageSource]);
+  }, [result.packageSource, result.levelSettings]);
 
   return (
     <Box

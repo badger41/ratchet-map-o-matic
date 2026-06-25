@@ -94,6 +94,10 @@ function currentStage(stages: MapLoadStageState[]): MapLoadStageState | null {
 }
 
 function formatStageDetail(stage: MapLoadStageState): string {
+  if (stage.id === 'convert' && stage.detail) {
+    return stage.detail;
+  }
+
   if (stage.loaded !== null) {
     return `${formatByteSize(stage.loaded)}${stage.total ? ` / ${formatByteSize(stage.total)}` : ''}`;
   }

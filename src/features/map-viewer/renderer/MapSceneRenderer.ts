@@ -33,6 +33,10 @@ import {
   type TfragMaterialOptions,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
+import type {
+  DlLevelSettings,
+  DlRgb96
+} from '../../../services/wasm/ratchetPs2Wasm';
 import {
   createInitialSceneCameraFrame
 } from './camera/SceneCameraFraming';
@@ -72,6 +76,7 @@ interface MapSceneRendererOptions {
   skyboxRenderOptions?: SkyboxRenderOptions;
   tieRenderOptions?: TieRenderOptions;
   shrubRenderOptions?: ShrubRenderOptions;
+  levelSettings?: DlLevelSettings | null;
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
   frameRateLimit?: number;
@@ -90,8 +95,23 @@ const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
 const firstFrameSetupStepCount = 7;
 const defaultWorldDisplayLift = 2;
+const dlWorldPositionScale = 1 / 1024;
+const dlFogDistanceScale = dlWorldPositionScale * 1.5;
 export const defaultGlowBloomFalloffDistance = 100;
 const glowBloomFullStrengthRatio = 0.25;
+
+interface MapSceneEnvironment {
+  backgroundColor: THREE.Color;
+  fog: MapSceneFog | null;
+}
+
+interface MapSceneFog {
+  color: THREE.Color;
+  nearDistance: number;
+  farDistance: number;
+  nearIntensity: number;
+  farIntensity: number;
+}
 
 export interface MapSceneFrameStats {
   fps: number;
@@ -145,6 +165,7 @@ export class MapSceneRenderer {
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
   private shrubRenderOptions: ShrubRenderOptions;
+  private readonly sceneEnvironment: MapSceneEnvironment;
   private renderer: WebGPURenderer | null = null;
   private baseRenderPipeline: MapRenderPipeline | null = null;
   private bloomRenderPipeline: MapRenderPipeline | null = null;
@@ -187,6 +208,7 @@ export class MapSceneRenderer {
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
+    this.sceneEnvironment = resolveMapSceneEnvironment(options.levelSettings ?? null);
     this.glowBloomEnabled = options.glowBloomEnabled ?? true;
     this.glowBloomFalloffDistance = resolveGlowBloomFalloffDistance(options.glowBloomFalloffDistance);
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
@@ -197,6 +219,7 @@ export class MapSceneRenderer {
     await assertWebGpuAvailable();
 
     this.scene.background = null;
+    this.skyScene.background = this.sceneEnvironment.backgroundColor;
 
     const renderer = new WebGPURenderer({
       antialias: false,
@@ -669,7 +692,8 @@ export class MapSceneRenderer {
     const skyColor = skyPass.getTextureNode('output');
     const lift = uniform(this.worldDisplayLift);
     const sceneWithLift = createWorldLiftNode(sceneColor, lift);
-    const sceneOverSky = mix(skyColor, sceneWithLift, sceneColor.a);
+    const sceneWithFog = createFoggedSceneNode(sceneWithLift, scenePass, this.sceneEnvironment.fog);
+    const sceneOverSky = mix(skyColor, sceneWithFog, sceneColor.a);
     const bloomPass = includeBloom
       ? tightBloom(scenePass.getTextureNode('emissive'), 0.45, 0, 0)
       : null;
@@ -886,4 +910,83 @@ function createWorldLiftNode(sceneColor: PassTextureNode, lift: UniformNode<'flo
   const liftedLumaNode = lumaNode.mul(lift).clamp(0, 1);
   const ratioNode = liftedLumaNode.div(max(lumaNode, float(0.001)));
   return vec4(colorNode.mul(ratioNode).clamp(0, 1), sceneColor.a);
+}
+
+function createFoggedSceneNode(sceneColor: ReturnType<typeof createWorldLiftNode>, scenePass: PassNode, fog: MapSceneFog | null) {
+  if (!fog) {
+    return sceneColor;
+  }
+
+  const distance = scenePass.getViewZNode().negate();
+  const distanceMix = distance
+    .sub(float(fog.nearDistance))
+    .div(float(fog.farDistance - fog.nearDistance))
+    .clamp(0, 1);
+  const fogAmount = mix(float(fog.nearIntensity), float(fog.farIntensity), distanceMix).clamp(0, 1);
+  const fogColor = vec3(fog.color.r, fog.color.g, fog.color.b);
+  return vec4(mix(sceneColor.rgb, fogColor, fogAmount), sceneColor.a);
+}
+
+function resolveMapSceneEnvironment(levelSettings: DlLevelSettings | null): MapSceneEnvironment {
+  if (!levelSettings) {
+    return {
+      backgroundColor: new THREE.Color(canvasClearColor),
+      fog: null
+    };
+  }
+
+  return {
+    backgroundColor: colorFromDlRgb96(levelSettings.backgroundColor),
+    fog: resolveMapSceneFog(levelSettings)
+  };
+}
+
+function resolveMapSceneFog(levelSettings: DlLevelSettings): MapSceneFog | null {
+  const rawNearDistance = finiteNumber(levelSettings.fogNearDistance);
+  const rawFarDistance = finiteNumber(levelSettings.fogFarDistance);
+  const nearIntensity = fogAmountFromDlIntensity(levelSettings.fogNearIntensity);
+  const farIntensity = fogAmountFromDlIntensity(levelSettings.fogFarIntensity);
+  if (
+    rawNearDistance === null ||
+    rawFarDistance === null ||
+    rawFarDistance <= rawNearDistance ||
+    Math.max(nearIntensity, farIntensity) <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    color: colorFromDlRgb96(levelSettings.fogColor),
+    nearDistance: rawNearDistance * dlFogDistanceScale,
+    farDistance: rawFarDistance * dlFogDistanceScale,
+    nearIntensity,
+    farIntensity
+  };
+}
+
+function colorFromDlRgb96(color: DlRgb96): THREE.Color {
+  return new THREE.Color().setRGB(
+    normalizeColorChannel(color.red),
+    normalizeColorChannel(color.green),
+    normalizeColorChannel(color.blue),
+    THREE.SRGBColorSpace
+  );
+}
+
+function normalizeColorChannel(value: number): number {
+  const numeric = finiteNumber(value) ?? 0;
+  return clamp01(numeric > 1 ? numeric / 255 : numeric);
+}
+
+function fogAmountFromDlIntensity(value: number): number {
+  const visibility = clamp01((finiteNumber(value) ?? 255) / 255);
+  return 1 - visibility;
+}
+
+function finiteNumber(value: number): number | null {
+  return Number.isFinite(value) ? value : null;
+}
+
+function clamp01(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
 }

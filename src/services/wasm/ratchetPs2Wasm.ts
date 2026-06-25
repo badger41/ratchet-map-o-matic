@@ -10,15 +10,39 @@ export interface PackedFilePackageResult {
   entries: PackedFileEntry[];
 }
 
+export interface DlRgb96 {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+export interface DlLevelSettings {
+  backgroundColor: DlRgb96;
+  fogColor: DlRgb96;
+  fogNearDistance: number;
+  fogFarDistance: number;
+  fogNearIntensity: number;
+  fogFarIntensity: number;
+}
+
+export interface DlGameplayBlock {
+  levelSettings: DlLevelSettings | null;
+}
+
+export interface DlGameplayBlocks {
+  blocks: DlGameplayBlock[];
+}
+
 export interface RatchetPs2WasmModule {
   initializeRatchetPs2Wasm(options?: { assetBaseUrl?: string }): Promise<void>;
   getApiVersion(): Promise<string>;
   unpackDlLevelWad(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  parseDlGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
   buildDlLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = 'render-pipeline-bloom-v1';
+const ratchetPs2WasmAssetVersion = 'gameplay-level-settings-v1';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {
@@ -41,6 +65,7 @@ async function initializeRatchetPs2WasmModule(): Promise<RatchetPs2WasmModule> {
 }
 
 function resolveRatchetPs2WasmAssetBaseUrl(): string {
-  const viteBaseUrl = new URL(import.meta.env.BASE_URL, window.location.href);
+  const baseHref = globalThis.location?.href ?? import.meta.url;
+  const viteBaseUrl = new URL(import.meta.env.BASE_URL, baseHref);
   return new URL('ratchetps2/', viteBaseUrl).toString();
 }
