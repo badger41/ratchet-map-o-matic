@@ -68,7 +68,7 @@ export const ps2ToGltfBasisMatrix = new THREE.Matrix4().set(
 export const gltfToPs2BasisMatrix = ps2ToGltfBasisMatrix.clone().invert();
 
 export const shrubAmbientAttributeName = 'shrubAmbientColor';
-export const dlLightSelectorAttributeName = 'dlLightSelector';
+export const lightSelectorAttributeName = 'modelLightSelector';
 export const shrubDirectionalLightSlotCount = 16;
 export const shrubDirectionalLightReferenceIntensity = 2;
 export const shrubDirectionalLightFloor = 0.28;

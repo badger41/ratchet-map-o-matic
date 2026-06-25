@@ -36,6 +36,7 @@ interface BakeContext {
 }
 
 const selectorAttributeNames = [
+  'modelLightSelector',
   'dlLightSelector',
   '_DL_LIGHT_SELECTOR',
   '_dl_light_selector',
@@ -44,6 +45,7 @@ const selectorAttributeNames = [
 ];
 
 const baseColorAttributeNames = [
+  'modelLightBaseColor',
   'dlLightBaseColor',
   '_DL_LIGHT_BASE_COLOR',
   '_dl_light_base_color',
@@ -52,6 +54,7 @@ const baseColorAttributeNames = [
 ];
 
 const lightNormalAttributeNames = [
+  'modelLightNormal',
   'dlLightNormal',
   '_DL_LIGHT_NORMAL',
   '_dl_light_normal',
@@ -60,6 +63,7 @@ const lightNormalAttributeNames = [
 ];
 
 const postScaleAttributeNames = [
+  'modelLightPostScale',
   'dlLightPostScale',
   '_DL_LIGHT_POST_SCALE',
   '_dl_light_post_scale',
@@ -69,7 +73,7 @@ const postScaleAttributeNames = [
 
 const sourceCacheColorUserDataKey = 'mapOMaticSourceTfragCacheColor';
 
-export class DlTfragMaterialController {
+export class TfragMaterialController {
   private prepared: PreparedTfrag[] = [];
   private materialRebakes = 0;
 
@@ -409,7 +413,7 @@ function createTfragDisplayMaterial(sourceMaterial: THREE.Material | THREE.Mater
   const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
   const source = firstMaterial as Partial<THREE.MeshBasicMaterial> | null;
   const material = new THREE.MeshBasicNodeMaterial({
-    name: `${firstMaterial?.name ?? 'tfrag'}_dl_vertex_lit`,
+    name: `${firstMaterial?.name ?? 'tfrag'}_vertex_lit`,
     map: source?.map ?? null,
     vertexColors: true,
     transparent: firstMaterial?.transparent ?? false,

@@ -3,6 +3,7 @@ import {
   findIndexedDbRenderPackageBySourceUrl,
   hasViewerRenderPackageEntries,
   saveIndexedDbRenderPackage,
+  toIndexedDbPackageSource,
   type IndexedDbRenderPackageMetadata
 } from '../renderPackages/indexedDbRenderPackageStore';
 import { loadRatchetPs2Wasm } from '../wasm/ratchetPs2Wasm';
@@ -31,7 +32,8 @@ export interface DeadlockedMapLoadResult {
   wadByteLength: number;
   packedByteLength: number;
   entryCount: number;
-  cachedPackage: IndexedDbRenderPackageMetadata;
+  cachedPackage: IndexedDbRenderPackageMetadata | null;
+  packageSource: string;
   durationMs: number;
 }
 
@@ -42,6 +44,10 @@ export const mapLoadStageDefinitions: MapLoadStageDefinition[] = [
 ];
 
 export async function preloadDeadlockedMapConverter(map: DeadlockedMapDefinition): Promise<void> {
+  if (map.viewerPackageSource) {
+    return;
+  }
+
   const existingPackage = await findCachedPackage(map.wadUrl);
   if (existingPackage) {
     return;
@@ -59,6 +65,10 @@ export async function loadDeadlockedMapRenderPackage(
   onStageUpdate?: (update: MapLoadStageUpdate) => void
 ): Promise<DeadlockedMapLoadResult> {
   const startedAt = performance.now();
+  if (map.viewerPackageSource) {
+    return loadLooseViewerPackage(map, startedAt, onStageUpdate);
+  }
+
   const sourceUrl = map.wadUrl;
 
   onStageUpdate?.({
@@ -101,6 +111,7 @@ export async function loadDeadlockedMapRenderPackage(
       packedByteLength: existingPackage.packedByteLength,
       entryCount: existingPackage.entryCount,
       cachedPackage: existingPackage,
+      packageSource: toIndexedDbPackageSource(existingPackage.id),
       durationMs: performance.now() - startedAt
     };
   }
@@ -190,6 +201,49 @@ export async function loadDeadlockedMapRenderPackage(
     packedByteLength: renderPackage.packedBytes.byteLength,
     entryCount: renderPackage.entries.length,
     cachedPackage,
+    packageSource: toIndexedDbPackageSource(cachedPackage.id),
+    durationMs: performance.now() - startedAt
+  };
+}
+
+async function loadLooseViewerPackage(
+  map: DeadlockedMapDefinition,
+  startedAt: number,
+  onStageUpdate?: (update: MapLoadStageUpdate) => void
+): Promise<DeadlockedMapLoadResult> {
+  const sourceUrl = map.viewerPackageSource ?? '';
+
+  onStageUpdate?.({
+    id: 'download',
+    status: 'done',
+    detail: 'Using loose export',
+    loaded: null,
+    total: null
+  });
+  onStageUpdate?.({
+    id: 'convert',
+    status: 'done',
+    detail: 'Skipped',
+    loaded: null,
+    total: null
+  });
+  onStageUpdate?.({
+    id: 'store',
+    status: 'done',
+    detail: 'Skipped',
+    loaded: null,
+    total: null
+  });
+
+  return {
+    map,
+    sourceUrl,
+    apiVersion: 'loose',
+    wadByteLength: 0,
+    packedByteLength: 0,
+    entryCount: 0,
+    cachedPackage: null,
+    packageSource: sourceUrl,
     durationMs: performance.now() - startedAt
   };
 }

@@ -26,7 +26,7 @@ import type {
   Vec4
 } from '../../../../services/mapPackages/mapPackageTypes';
 import {
-  dlLightSelectorAttributeName,
+  lightSelectorAttributeName,
   tieDirectionalLightFloor,
   tieDirectionalLightSlotCount,
   type PreparedTieRecord,
@@ -77,7 +77,7 @@ export function disposeTieDirectionalLightBinding(binding: TieDirectionalLightBi
   binding.inverseDirections.dispose();
 }
 
-export function createDlLightSelectorInstanceAttribute(records: PreparedTieRecord[]): THREE.InstancedBufferAttribute {
+export function createLightSelectorInstanceAttribute(records: PreparedTieRecord[]): THREE.InstancedBufferAttribute {
   const selectors = new Float32Array(records.length);
   for (let index = 0; index < records.length; index += 1) {
     const selector = Number(records[index].source.lightSelector);
@@ -196,7 +196,7 @@ export function resolveTieMaterialDebugMode(value: TieMaterialDebugMode | undefi
 }
 
 function createTieDirectionalSelectorNode(lightingUniforms: TieLightingUniforms): Node<'float'> {
-  const instanceSelector = floor(max(attribute<'float'>(dlLightSelectorAttributeName, 'float'), float(0)).add(float(0.5)));
+  const instanceSelector = floor(max(attribute<'float'>(lightSelectorAttributeName, 'float'), float(0)).add(float(0.5)));
   return floor(mix(instanceSelector, lightingUniforms.directionalOverrideSlot, lightingUniforms.directionalOverrideEnabled));
 }
 

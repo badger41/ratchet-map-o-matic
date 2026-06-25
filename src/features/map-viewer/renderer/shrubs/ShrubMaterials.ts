@@ -10,10 +10,10 @@ import {
 import type Node from 'three/src/nodes/core/Node.js';
 import type { ShrubRenderOptions } from '../../../../services/mapPackages/mapPackageTypes';
 import {
-  configureDlMaterialTransparency,
-  createDlOpacityNode,
-  resolveDlMaterialInfo
-} from '../dl-materials/DlMaterialNodes';
+  configureModelMaterialTransparency,
+  createModelOpacityNode,
+  resolveModelMaterialInfo
+} from '../model-materials/ModelMaterialNodes';
 import {
   createShrubDirectionalLightNode,
   createShrubLightingUniforms
@@ -44,7 +44,7 @@ function createShrubDisplayMaterial(
   options: ShrubRenderOptions
 ): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
-  const dlMaterialInfo = resolveDlMaterialInfo(source, 'shrub');
+  const modelMaterialInfo = resolveModelMaterialInfo(source, 'shrub');
   const uniforms = createShrubLightingUniforms(options);
   const material = new THREE.MeshBasicNodeMaterial({
     name: `${source.name || 'shrub'}_map_omatic_lit`,
@@ -66,7 +66,7 @@ function createShrubDisplayMaterial(
     ...source.userData,
     mapOmaticShrubMaterial: true,
     mapOmaticShrubDirectionalLightMaterial: directionalLightBinding !== null,
-    mapOmaticDlMaterialInfo: dlMaterialInfo,
+    mapOmaticModelMaterialInfo: modelMaterialInfo,
     [shrubLightingUniformsUserDataKey]: uniforms
   };
 
@@ -78,8 +78,8 @@ function createShrubDisplayMaterial(
     material.alphaMap.colorSpace = THREE.SRGBColorSpace;
   }
 
-  configureDlMaterialTransparency(material, dlMaterialInfo);
-  material.opacityNode = createDlOpacityNode(material, dlMaterialInfo);
+  configureModelMaterialTransparency(material, modelMaterialInfo);
+  material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
   material.colorNode = createShrubColorNode(material, directionalLightBinding, uniforms);
   return material;
 }

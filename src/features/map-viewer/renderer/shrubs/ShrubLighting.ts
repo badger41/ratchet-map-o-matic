@@ -24,7 +24,7 @@ import type {
   Vec4
 } from '../../../../services/mapPackages/mapPackageTypes';
 import {
-  dlLightSelectorAttributeName,
+  lightSelectorAttributeName,
   shrubDirectionalLightSlotCount,
   shrubLightingUniformsUserDataKey,
   type PreparedShrubRecord,
@@ -75,7 +75,7 @@ export function disposeShrubDirectionalLightBinding(binding: ShrubDirectionalLig
   binding.inverseDirections.dispose();
 }
 
-export function createDlLightSelectorInstanceAttribute(records: PreparedShrubRecord[]): THREE.InstancedBufferAttribute {
+export function createLightSelectorInstanceAttribute(records: PreparedShrubRecord[]): THREE.InstancedBufferAttribute {
   const selectors = new Float32Array(records.length);
   for (let index = 0; index < records.length; index += 1) {
     const selector = Number(records[index].source.lightSelector);
@@ -132,7 +132,7 @@ export function updateShrubMaterialLightingUniforms(
 }
 
 export function createShrubDirectionalLightNode(binding: ShrubDirectionalLightBinding): Node<'vec4'> {
-  const selector = floor(max(attribute<'float'>(dlLightSelectorAttributeName, 'float'), float(0)).add(float(0.5)));
+  const selector = floor(max(attribute<'float'>(lightSelectorAttributeName, 'float'), float(0)).add(float(0.5)));
   const primarySlot = mod(selector, float(binding.slotCount));
   const secondarySlot = mod(floor(selector.div(float(16))), float(binding.slotCount));
   const blendAmount = max(float(0), floor(selector.div(float(256))).div(float(256))).min(float(1));

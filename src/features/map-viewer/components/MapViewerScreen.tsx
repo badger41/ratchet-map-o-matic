@@ -26,7 +26,6 @@ import {
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import { loadViewerPackageSource } from '../../../services/mapPackages/viewerPackageSource';
-import { toIndexedDbPackageSource } from '../../../services/renderPackages/indexedDbRenderPackageStore';
 import { formatByteSize } from '../../../shared/format';
 import {
   applyViewerStageUpdate,
@@ -35,6 +34,7 @@ import {
   type MapViewerStageState
 } from '../mapViewerState';
 import {
+  defaultGlowBloomFalloffDistance,
   MapSceneRenderer,
   type MapSceneFrameStats
 } from '../renderer/MapSceneRenderer';
@@ -49,6 +49,11 @@ interface MapViewerScreenProps {
 }
 
 const frameRateOptions = ['30', '60', '120', '240'].map((value) => ({
+  value,
+  label: value
+}));
+
+const glowBloomDistanceOptions = ['100', '250', '500', '1000', '2000'].map((value) => ({
   value,
   label: value
 }));
@@ -83,6 +88,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [tieMaterialMode, setTieMaterialMode] = useState<TieMaterialMode>('full');
   const [tieColorsEnabled, setTieColorsEnabled] = useState(true);
   const [tieBundleEnabled, setTieBundleEnabled] = useState(true);
+  const [glowBloomEnabled, setGlowBloomEnabled] = useState(true);
+  const [glowBloomFalloffDistance, setGlowBloomFalloffDistance] = useState(defaultGlowBloomFalloffDistance);
   const [frameStats, setFrameStats] = useState<MapSceneFrameStats>({
     fps: 0,
     frameMs: 0,
@@ -90,7 +97,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     frameRateLimit,
     renderPasses: 0,
     drawCalls: 0,
-    triangles: 0
+    triangles: 0,
+    bloomStatus: 'off',
+    bloomMs: 0,
+    bloomSources: 0
   });
   const mobileControlsVisible = useMediaQuery('(pointer: coarse)', false);
 
@@ -147,6 +157,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [tieBundleEnabled]);
 
   useEffect(() => {
+    rendererRef.current?.setGlowBloomEnabled(glowBloomEnabled);
+  }, [glowBloomEnabled]);
+
+  useEffect(() => {
+    rendererRef.current?.setGlowBloomFalloffDistance(glowBloomFalloffDistance);
+  }, [glowBloomFalloffDistance]);
+
+  useEffect(() => {
     rendererRef.current?.setTieRenderOptions({
       ...defaultTieRenderOptions,
       colorsEnabled: tieColorsEnabled
@@ -182,6 +200,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         ...defaultTieRenderOptions,
         colorsEnabled: tieColorsEnabled
       },
+      glowBloomEnabled,
+      glowBloomFalloffDistance,
       frameRateLimit,
       onStatus: (nextStatus) => {
         if (!disposed) {
@@ -249,10 +269,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         setStages((current) => applyViewerStageUpdate(current, {
           id: 'manifest',
           status: 'active',
-          detail: 'Opening IndexedDB package'
+          detail: 'Opening package'
         }));
         setStatus('Reading package manifests');
-        const loadedPackage = await loadViewerPackageSource(toIndexedDbPackageSource(result.cachedPackage.id));
+        const loadedPackage = await loadViewerPackageSource(result.packageSource);
         if (disposed) {
           loadedPackage.assetPackage.dispose();
           return;
@@ -269,6 +289,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         renderer.setTieVisible(tiesVisible);
         renderer.setTieMaterialMode(tieMaterialMode);
         renderer.setTieBundleEnabled(tieBundleEnabled);
+        renderer.setGlowBloomEnabled(glowBloomEnabled);
+        renderer.setGlowBloomFalloffDistance(glowBloomFalloffDistance);
         renderer.setTieRenderOptions({
           ...defaultTieRenderOptions,
           colorsEnabled: tieColorsEnabled
@@ -293,7 +315,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       rendererRef.current = null;
       renderer.dispose();
     };
-  }, [result.cachedPackage.id]);
+  }, [result.packageSource]);
 
   return (
     <Box
@@ -428,6 +450,21 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
               />
               <Checkbox
                 size="xs"
+                label="Glow bloom"
+                checked={glowBloomEnabled}
+                onChange={(event) => setGlowBloomEnabled(event.currentTarget.checked)}
+              />
+              <Group gap={6} wrap="nowrap">
+                <Text size="xs" c="dimmed" fw={700}>Glow range</Text>
+                <SegmentedControl
+                  size="xs"
+                  value={String(glowBloomFalloffDistance)}
+                  data={glowBloomDistanceOptions}
+                  onChange={(value) => setGlowBloomFalloffDistance(Number(value))}
+                />
+              </Group>
+              <Checkbox
+                size="xs"
                 label="Shrubs"
                 checked={shrubsVisible}
                 onChange={(event) => setShrubsVisible(event.currentTarget.checked)}
@@ -440,6 +477,9 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 <DebugRow label="Render passes" value={frameStats.renderPasses.toLocaleString()} />
                 <DebugRow label="Draw calls" value={frameStats.drawCalls.toLocaleString()} />
                 <DebugRow label="Frame triangles" value={frameStats.triangles.toLocaleString()} />
+                <DebugRow label="Bloom status" value={frameStats.bloomStatus} />
+                <DebugRow label="Bloom CPU ms" value={frameStats.bloomMs.toFixed(2)} />
+                <DebugRow label="Bloom sources" value={frameStats.bloomSources.toLocaleString()} />
                 <DebugRow label="Tfrag meshes" value={tfragStats.meshes.toLocaleString()} />
                 <DebugRow label="Tfrag primitives" value={tfragStats.sourcePrimitives.toLocaleString()} />
                 <DebugRow label="Tfrag triangles" value={tfragStats.triangles.toLocaleString()} />
@@ -466,7 +506,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 <DebugRow label="Directional Lights" value={tfragStats.directionalLightRecords.toLocaleString()} />
                 <DebugRow label="Material Rebakes" value={tfragStats.materialRebakes.toLocaleString()} />
                 <DebugRow label="Render Package" value={formatByteSize(result.packedByteLength)} />
-                <DebugRow label="Cache Key" value={result.cachedPackage.id} />
+                <DebugRow label="Package Source" value={result.cachedPackage?.id ?? result.packageSource} />
               </Table.Tbody>
             </Table>
           </Stack>

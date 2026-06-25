@@ -25,12 +25,12 @@ import {
 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
 
-export type DlMaterialFamily =
+export type ModelMaterialFamily =
   | 'tie'
   | 'shrub';
 
-export interface DlMaterialInfo {
-  family: DlMaterialFamily;
+export interface ModelMaterialInfo {
+  family: ModelMaterialFamily;
   alphaUsage: string | null;
   alphaMode: string | null;
   hasTextureAlpha: boolean;
@@ -67,11 +67,11 @@ export interface DlMaterialInfo {
   preserveTieMultipass: boolean;
 }
 
-export interface DlMaterialFeatureOptions {
-  shine?: DlShineOptions;
+export interface ModelMaterialFeatureOptions {
+  shine?: ModelShineOptions;
 }
 
-export interface DlShineOptions {
+export interface ModelShineOptions {
   tintNode?: Node<'vec3'> | null;
   skyboxTexture?: THREE.Texture | null;
   shineScaleNode?: Node<'float'> | null;
@@ -80,18 +80,18 @@ export interface DlShineOptions {
   useSecondUvReflection?: boolean;
 }
 
-const dlFullOpacityAlphaByte = 128;
-const dlDefaultAlphaCutoff = 0.06;
-const dlReflectiveMaskFocusPower = 0.55;
-const dlReflectiveEnvironmentStrength = 1.35;
-const dlReflectiveMaxBlend = 0.58;
-const dlReflectivePreviewBaseColor = new THREE.Color(0.035, 0.045, 0.06);
-const dlReflectiveBleedColor = new THREE.Color(1, 1, 1);
-const dlReflectivePreviewTextureRgbScale = 0.2;
-const dlTieTextureMatrixPassMask = 0x01;
-const dlTieEnvironmentPassMask = 0x06;
+const modelFullOpacityAlphaByte = 128;
+const modelDefaultAlphaCutoff = 0.06;
+const modelReflectiveMaskFocusPower = 0.55;
+const modelReflectiveEnvironmentStrength = 1.35;
+const modelReflectiveMaxBlend = 0.58;
+const modelReflectivePreviewBaseColor = new THREE.Color(0.035, 0.045, 0.06);
+const modelReflectiveBleedColor = new THREE.Color(1, 1, 1);
+const modelReflectivePreviewTextureRgbScale = 0.2;
+const tieTextureMatrixPassMask = 0x01;
+const tieEnvironmentPassMask = 0x06;
 
-export function resolveDlMaterialInfo(source: THREE.Material, family: DlMaterialFamily): DlMaterialInfo {
+export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMaterialFamily): ModelMaterialInfo {
   const alphaUsage = readStringExtra(source, alphaExtraNames(family, 'TextureAlphaUsage'));
   const alphaMode = readStringExtra(source, alphaExtraNames(family, 'TextureAlphaMode'))
     ?? readStringExtra(source, alphaExtraNames(family, 'TextureGltfAlphaMode'))
@@ -116,7 +116,7 @@ export function resolveDlMaterialInfo(source: THREE.Material, family: DlMaterial
     ? readNumberExtra(
       source,
       ['TieEnvironmentPassBits', 'DlTieEnvironmentPassBits'],
-      passFlags & dlTieEnvironmentPassMask)
+      passFlags & tieEnvironmentPassMask)
     : 0;
   const secondPassMode = family === 'tie'
     ? readStringExtra(source, ['TieSecondPassMode', 'DlTieSecondPassMode'])
@@ -128,14 +128,23 @@ export function resolveDlMaterialInfo(source: THREE.Material, family: DlMaterial
   const multipassUvSize = family === 'tie'
     ? readNumberExtra(source, ['TieMultipassUvSize', 'DlTieMultipassUvSize'], 0)
     : 0;
+  const materialEmissiveTint = family === 'tie'
+    ? readMaterialEmissiveTint(source)
+    : null;
+  const materialEmissiveStrength = family === 'tie'
+    ? readMaterialEmissiveStrength(source)
+    : null;
+  const ps2GlowTint = family === 'tie'
+    ? readPs2GlowTint(readStringExtra(source, ['TieGlowRgba', 'DlTieGlowRgba']))
+    : null;
   const usesGlowEmission = family === 'tie'
-    ? readBooleanExtra(source, ['TieUsesGlowEmission', 'DlTieUsesGlowEmission']) === true
+    ? readBooleanExtra(source, ['TieUsesGlowEmission', 'DlTieUsesGlowEmission']) === true || materialEmissiveTint !== null
     : false;
   const glowEmissionStrength = family === 'tie'
-    ? readNumberExtra(source, ['TieGlowEmissionStrength', 'DlTieGlowEmissionStrength'], 1.5)
+    ? readNumberExtra(source, ['TieGlowEmissionStrength', 'DlTieGlowEmissionStrength'], materialEmissiveStrength ?? 1.5)
     : 0;
   const glowTint = family === 'tie'
-    ? readPs2GlowTint(readStringExtra(source, ['TieGlowRgba', 'DlTieGlowRgba']))
+    ? ps2GlowTint ?? materialEmissiveTint ?? new THREE.Color(1, 1, 1)
     : new THREE.Color(1, 1, 1);
   const normalizedAlphaMode = normalizeAlphaMode(alphaMode);
   const materialRole = family === 'tie'
@@ -147,7 +156,7 @@ export function resolveDlMaterialInfo(source: THREE.Material, family: DlMaterial
   const reflectivePreviewBaseColor = readColorExtra(
     source,
     ['TieReflectivePreviewBaseColorFactor', 'DlTieReflectivePreviewBaseColorFactor'],
-    dlReflectivePreviewBaseColor);
+    modelReflectivePreviewBaseColor);
 
   return {
     family,
@@ -197,23 +206,23 @@ export function resolveDlMaterialInfo(source: THREE.Material, family: DlMaterial
     reflectivePreviewTextureRgbScale: readNumberExtra(
       source,
       ['TieReflectivePreviewTextureRgbScale', 'DlTieReflectivePreviewTextureRgbScale'],
-      dlReflectivePreviewTextureRgbScale),
+      modelReflectivePreviewTextureRgbScale),
     reflectiveMaskFocusPower: readNumberExtra(
       source,
       ['TieReflectiveMaskFocusPower', 'DlTieReflectiveMaskFocusPower'],
-      dlReflectiveMaskFocusPower),
+      modelReflectiveMaskFocusPower),
     reflectiveEnvironmentStrength: readNumberExtra(
       source,
       ['TieReflectiveEnvironmentStrength', 'DlTieReflectiveEnvironmentStrength'],
-      dlReflectiveEnvironmentStrength),
+      modelReflectiveEnvironmentStrength),
     reflectiveMaxBlend: readNumberExtra(
       source,
       ['TieReflectiveMaxBlend', 'DlTieReflectiveMaxBlend'],
-      dlReflectiveMaxBlend),
+      modelReflectiveMaxBlend),
     reflectiveBleedColor: readColorExtra(
       source,
       ['TieReflectiveBleedColorFactor', 'DlTieReflectiveBleedColorFactor'],
-      dlReflectiveBleedColor),
+      modelReflectiveBleedColor),
     reflectiveBleedAlpha: readNumberExtra(
       source,
       ['TieReflectiveBleedAlpha', 'DlTieReflectiveBleedAlpha'],
@@ -222,12 +231,12 @@ export function resolveDlMaterialInfo(source: THREE.Material, family: DlMaterial
   };
 }
 
-export function configureDlMaterialTransparency(
+export function configureModelMaterialTransparency(
   material: THREE.Material,
-  info: DlMaterialInfo,
+  info: ModelMaterialInfo,
   options: { alphaCutoff?: number } = {}
 ): void {
-  const alphaCutoff = options.alphaCutoff ?? dlDefaultAlphaCutoff;
+  const alphaCutoff = options.alphaCutoff ?? modelDefaultAlphaCutoff;
   material.opacity = 1;
   material.side = THREE.DoubleSide;
   material.alphaHash = false;
@@ -250,9 +259,9 @@ export function configureDlMaterialTransparency(
   material.forceSinglePass = false;
 }
 
-export function createDlOpacityNode(
+export function createModelOpacityNode(
   material: THREE.MeshBasicNodeMaterial,
-  info: DlMaterialInfo
+  info: ModelMaterialInfo
 ): Node<'float'> | null {
   if (!info.usesOpacityAlpha || !material.map) {
     return null;
@@ -263,26 +272,26 @@ export function createDlOpacityNode(
     .clamp(0, 1);
 }
 
-export function applyDlMaterialFeatureColorNode(
+export function applyModelMaterialFeatureColorNode(
   material: THREE.MeshBasicNodeMaterial,
-  info: DlMaterialInfo,
+  info: ModelMaterialInfo,
   baseColorNode: Node<'vec3'>,
   litColorNode: Node<'vec3'>,
-  options: DlMaterialFeatureOptions = {}
+  options: ModelMaterialFeatureOptions = {}
 ): Node<'vec3'> {
   let colorNode = litColorNode;
 
   if (info.usesGlowEmission) {
-    colorNode = colorNode.add(createDlGlowNode(info, baseColorNode));
+    colorNode = createModelGlowNode(info, baseColorNode);
   }
 
   if (info.usesReflectiveMask) {
-    return createDlReflectionSecondPassNode(material, info, baseColorNode, colorNode, options.shine);
+    return createModelReflectionSecondPassNode(material, info, baseColorNode, colorNode, options.shine);
   } else if (info.family === 'tie' && info.passFlags !== 0 && !info.usesGlowEmission) {
-    colorNode = colorNode.add(createDlShineNode(material, info, options.shine));
+    colorNode = colorNode.add(createModelShineNode(material, info, options.shine));
   }
 
-  return applyDlMaterialDebugMode(
+  return applyModelMaterialDebugMode(
     colorNode,
     baseColorNode,
     litColorNode,
@@ -292,16 +301,18 @@ export function applyDlMaterialFeatureColorNode(
   );
 }
 
-function createDlGlowNode(info: DlMaterialInfo, baseColorNode: Node<'vec3'>): Node<'vec3'> {
+function createModelGlowNode(
+  info: ModelMaterialInfo,
+  baseColorNode: Node<'vec3'>
+): Node<'vec3'> {
   return baseColorNode
-    .mul(vec3(info.glowTint.r, info.glowTint.g, info.glowTint.b))
-    .mul(float(Math.max(0, info.glowEmissionStrength)));
+    .mul(vec3(info.glowTint.r, info.glowTint.g, info.glowTint.b));
 }
 
-function createDlShineNode(
+function createModelShineNode(
   material: THREE.MeshBasicNodeMaterial,
-  info: DlMaterialInfo,
-  options: DlShineOptions = {}
+  info: ModelMaterialInfo,
+  options: ModelShineOptions = {}
 ): Node<'vec3'> {
   const mask = float(1);
   const viewDirection = normalize(cameraPosition.sub(positionWorld));
@@ -316,7 +327,7 @@ function createDlShineNode(
   );
   const lightTint = mix(lightTintSource, lightTintSource.div(lightTintPeak), float(0.72));
   const skyboxReflection = options.skyboxTexture
-    ? createDlSkyboxReflectionNode(options.skyboxTexture, viewDirection, normal)
+    ? createSkyboxReflectionNode(options.skyboxTexture, viewDirection, normal)
     : vec3(1, 1, 1);
   const reflectionScale = options.skyboxReflectionScaleNode ?? float(options.skyboxTexture ? 1 : 0);
   const reflectionMix = clamp(reflectionScale.mul(float(0.72)), float(0), float(1));
@@ -343,14 +354,14 @@ function createDlShineNode(
     .mul(shineScale);
 }
 
-function createDlReflectionSecondPassNode(
+function createModelReflectionSecondPassNode(
   material: THREE.MeshBasicNodeMaterial,
-  info: DlMaterialInfo,
+  info: ModelMaterialInfo,
   baseColorNode: Node<'vec3'>,
   litColorNode: Node<'vec3'>,
-  options: DlShineOptions = {}
+  options: ModelShineOptions = {}
 ): Node<'vec3'> {
-  const mask = createDlReflectiveMaskNode(material, info.reflectiveMaskFocusPower);
+  const mask = createReflectiveMaskNode(material, info.reflectiveMaskFocusPower);
   const viewDirection = normalize(cameraPosition.sub(positionWorld));
   const normal = normalize(normalWorld);
   const viewFacing = max(dot(normal, viewDirection), float(0));
@@ -396,7 +407,7 @@ function createDlReflectionSecondPassNode(
     vec3(2, 2, 2)
   );
   const skyboxReflection = options.skyboxTexture
-    ? createDlReflectiveSkyboxReflectionNode(options.skyboxTexture, info, viewDirection, normal, options)
+    ? createReflectiveSkyboxReflectionNode(options.skyboxTexture, info, viewDirection, normal, options)
     : vec3(1, 1, 1);
   const reflectionSignal = clamp(
     skyboxReflection.mul(float(3.6)).add(vec3(0.018, 0.018, 0.018)),
@@ -457,7 +468,7 @@ function createDlReflectionSecondPassNode(
     vec3(1, 1, 1)
   );
 
-  return applyDlMaterialDebugMode(
+  return applyModelMaterialDebugMode(
     finalColor,
     baseColorNode,
     litColorNode,
@@ -467,7 +478,7 @@ function createDlReflectionSecondPassNode(
   );
 }
 
-function applyDlMaterialDebugMode(
+function applyModelMaterialDebugMode(
   normalColor: Node<'vec3'>,
   baseColor: Node<'vec3'>,
   litColor: Node<'vec3'>,
@@ -497,7 +508,7 @@ function applyDlMaterialDebugMode(
     .add(maskColor.mul(maskWeight));
 }
 
-function createDlSkyboxReflectionNode(
+function createSkyboxReflectionNode(
   textureSource: THREE.Texture,
   viewDirection: Node<'vec3'>,
   normal: Node<'vec3'>
@@ -511,30 +522,30 @@ function createDlSkyboxReflectionNode(
     vec2(0, 0),
     vec2(1, 1)
   );
-  return createDlSkyboxUvReflectionNode(textureSource, reflectedUv);
+  return createSkyboxUvReflectionNode(textureSource, reflectedUv);
 }
 
-function createDlReflectiveSkyboxReflectionNode(
+function createReflectiveSkyboxReflectionNode(
   textureSource: THREE.Texture,
-  info: DlMaterialInfo,
+  info: ModelMaterialInfo,
   viewDirection: Node<'vec3'>,
   normal: Node<'vec3'>,
-  options: DlShineOptions
+  options: ModelShineOptions
 ): Node<'vec3'> {
-  if (usesDlGeneratedEnvPassReflection(info)) {
-    return createDlSkyboxGeneratedEnvPassReflectionNode(textureSource, viewDirection, normal, options);
+  if (usesGeneratedEnvPassReflection(info)) {
+    return createSkyboxGeneratedEnvPassReflectionNode(textureSource, viewDirection, normal, options);
   }
 
   return options.useSecondUvReflection === true
-    ? createDlSkyboxSecondUvReflectionNode(textureSource, uv(1), viewDirection, normal)
-    : createDlSkyboxReflectionNode(textureSource, viewDirection, normal);
+    ? createSkyboxSecondUvReflectionNode(textureSource, uv(1), viewDirection, normal)
+    : createSkyboxReflectionNode(textureSource, viewDirection, normal);
 }
 
-function createDlSkyboxGeneratedEnvPassReflectionNode(
+function createSkyboxGeneratedEnvPassReflectionNode(
   textureSource: THREE.Texture,
   viewDirection: Node<'vec3'>,
   normal: Node<'vec3'>,
-  options: DlShineOptions
+  options: ModelShineOptions
 ): Node<'vec3'> {
   // DL retail assembly separates this from ordinary UV projection:
   // FUN_00593d90 masks pass bits at 0x00594244/0x00594248 and branches to
@@ -571,11 +582,11 @@ function createDlSkyboxGeneratedEnvPassReflectionNode(
   const generatedUv = vec2(
     sphereX.mul(distanceZoom).add(float(0.5)),
     sphereY.mul(distanceZoom).add(float(0.5))
-  ).toVarying('dlGeneratedEnvPassUv');
-  return createDlSkyboxUvReflectionNode(textureSource, generatedUv);
+  ).toVarying('modelGeneratedEnvPassUv');
+  return createSkyboxUvReflectionNode(textureSource, generatedUv);
 }
 
-function createDlSkyboxSecondUvReflectionNode(
+function createSkyboxSecondUvReflectionNode(
   textureSource: THREE.Texture,
   baseUv: Node<'vec2'>,
   viewDirection: Node<'vec3'>,
@@ -605,17 +616,17 @@ function createDlSkyboxSecondUvReflectionNode(
   );
   const uvMaskGate = float(1)
     .sub(sourceUvMask.x.mul(sourceUvMask.x).add(sourceUvMask.y.mul(sourceUvMask.y)).clamp(0, 0.18));
-  return createDlSkyboxUvReflectionNode(textureSource, transformedUv, uGate.mul(vGate).mul(faceGate).mul(uvMaskGate));
+  return createSkyboxUvReflectionNode(textureSource, transformedUv, uGate.mul(vGate).mul(faceGate).mul(uvMaskGate));
 }
 
-function createDlSkyboxUvReflectionNode(
+function createSkyboxUvReflectionNode(
   textureSource: THREE.Texture,
   reflectionUv: Node<'vec2'>,
   opacityGate: Node<'float'> | null = null
 ): Node<'vec3'> {
   const shellSample = texture(textureSource, reflectionUv);
   const shellAlpha = shellSample.a
-    .div(float(dlFullOpacityAlphaByte / 255))
+    .div(float(modelFullOpacityAlphaByte / 255))
     .mul(opacityGate ?? float(1))
     .clamp(0, 1);
   return mix(
@@ -625,7 +636,7 @@ function createDlSkyboxUvReflectionNode(
   );
 }
 
-function createDlReflectiveMaskNode(
+function createReflectiveMaskNode(
   material: THREE.MeshBasicNodeMaterial,
   focusPower: number
 ): Node<'float'> {
@@ -634,13 +645,13 @@ function createDlReflectiveMaskNode(
   }
 
   const normalizedAlpha = texture(material.map, uv()).a
-    .div(float(dlFullOpacityAlphaByte / 255))
+    .div(float(modelFullOpacityAlphaByte / 255))
     .clamp(0, 1);
   return pow(normalizedAlpha, float(Math.max(1.05, Math.min(1.65, focusPower * 1.15))));
 }
 
 function inferTieSecondPassMode(passFlags: number, environmentPassBits: number): string {
-  const envBits = environmentPassBits || (passFlags & dlTieEnvironmentPassMask);
+  const envBits = environmentPassBits || (passFlags & tieEnvironmentPassMask);
   if (envBits !== 0) {
     return envBits === 0x02
       ? 'GeneratedEnvPass'
@@ -649,43 +660,61 @@ function inferTieSecondPassMode(passFlags: number, environmentPassBits: number):
         : 'GeneratedEnvPassMixed';
   }
 
-  return (passFlags & dlTieTextureMatrixPassMask) !== 0 ? 'TextureMatrix' : 'None';
+  return (passFlags & tieTextureMatrixPassMask) !== 0 ? 'TextureMatrix' : 'None';
 }
 
-function usesDlGeneratedEnvPassReflection(info: DlMaterialInfo): boolean {
+function usesGeneratedEnvPassReflection(info: ModelMaterialInfo): boolean {
   return info.family === 'tie'
     && (info.passEnvironmentModeBits !== 0
-      || (info.passFlags & dlTieEnvironmentPassMask) !== 0
+      || (info.passFlags & tieEnvironmentPassMask) !== 0
       || info.secondPassMode === 'GeneratedEnvPass'
       || info.secondPassMode === 'GeneratedEnvPassAlt'
       || info.secondPassMode === 'GeneratedEnvPassMixed');
 }
 
-function readFullOpacityAlpha(source: THREE.Material, family: DlMaterialFamily): number {
-  const value = readNumberExtra(source, alphaExtraNames(family, 'TextureFullOpacityAlpha'), dlFullOpacityAlphaByte);
+function readFullOpacityAlpha(source: THREE.Material, family: ModelMaterialFamily): number {
+  const value = readNumberExtra(source, alphaExtraNames(family, 'TextureFullOpacityAlpha'), modelFullOpacityAlphaByte);
   const normalized = value > 1 ? value / 255 : value;
   return THREE.MathUtils.clamp(normalized, 1 / 255, 1);
 }
 
-function readPs2GlowTint(value: string | null): THREE.Color {
+function readPs2GlowTint(value: string | null): THREE.Color | null {
   if (!value) {
-    return new THREE.Color(1, 1, 1);
+    return null;
   }
 
   const match = value.match(/^#?([0-9a-f]{6})([0-9a-f]{2})?$/i);
   if (!match) {
-    return new THREE.Color(1, 1, 1);
+    return null;
   }
 
   const rgb = Number.parseInt(match[1], 16);
+  const r = (rgb >> 16) & 0xff;
+  const g = (rgb >> 8) & 0xff;
+  const b = rgb & 0xff;
+  const max = Math.max(r, g, b);
   return new THREE.Color(
-    THREE.MathUtils.clamp(((rgb >> 16) & 0xff) / dlFullOpacityAlphaByte, 0, 2),
-    THREE.MathUtils.clamp(((rgb >> 8) & 0xff) / dlFullOpacityAlphaByte, 0, 2),
-    THREE.MathUtils.clamp((rgb & 0xff) / dlFullOpacityAlphaByte, 0, 2)
+    r === max ? 1 : r / 255,
+    g === max ? 1 : g / 255,
+    b === max ? 1 : b / 255
   );
 }
 
-function alphaExtraNames(family: DlMaterialFamily, suffix: string): string[] {
+function readMaterialEmissiveTint(source: THREE.Material): THREE.Color | null {
+  const emissive = (source as Partial<THREE.MeshStandardMaterial>).emissive;
+  if (!(emissive instanceof THREE.Color) || (emissive.r <= 0 && emissive.g <= 0 && emissive.b <= 0)) {
+    return null;
+  }
+
+  return emissive.clone();
+}
+
+function readMaterialEmissiveStrength(source: THREE.Material): number | null {
+  const strength = (source as Partial<THREE.MeshStandardMaterial>).emissiveIntensity;
+  return typeof strength === 'number' && Number.isFinite(strength) ? strength : null;
+}
+
+function alphaExtraNames(family: ModelMaterialFamily, suffix: string): string[] {
   const prefix = family === 'tie' ? 'Tie' : 'Shrub';
   const legacyPrefix = family === 'tie' ? 'DlTie' : 'DlShrub';
   return [`${prefix}${suffix}`, `${legacyPrefix}${suffix}`];

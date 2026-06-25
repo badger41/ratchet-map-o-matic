@@ -2,6 +2,22 @@ import * as THREE from 'three/webgpu';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
+  dot,
+  emissive,
+  float,
+  max,
+  mix,
+  mrt,
+  output,
+  pass,
+  uniform,
+  vec3,
+  vec4
+} from 'three/tsl';
+import type BloomNode from 'three/addons/tsl/display/BloomNode.js';
+import type PassNode from 'three/src/nodes/display/PassNode.js';
+import type UniformNode from 'three/src/nodes/core/UniformNode.js';
+import {
   defaultShrubRenderOptions,
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
@@ -20,7 +36,7 @@ import {
 import {
   createInitialSceneCameraFrame
 } from './camera/SceneCameraFraming';
-import { DlTfragMaterialController } from './DlTfragMaterial';
+import { TfragMaterialController } from './TfragMaterialController';
 import {
   FpsCameraController,
   type CameraVirtualMoveInput
@@ -37,19 +53,18 @@ import {
   disposeObject3D,
   runRendererCleanup
 } from './RendererDisposal';
-import {
-  defaultWorldDisplayLift,
-  frameIntervalForLimit,
-  resolveFrameRateLimit,
-  resolveWorldDisplayLift,
-  shouldUseWorldComposite
-} from './RendererSettings';
 import { yieldToBrowser } from './RendererTiming';
 import { SkyboxController } from './skybox/SkyboxController';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
+import {
+  setTieBloomDistanceFadeRange
+} from './ties/TieMaterials';
 import type { TieMaterialMode } from './ties/TieTypes';
-import { WorldCompositeController } from './WorldCompositeController';
+import {
+  tightBloom,
+  tightBloomVersion
+} from './TightBloomNode';
 
 interface MapSceneRendererOptions {
   container: HTMLElement;
@@ -57,7 +72,8 @@ interface MapSceneRendererOptions {
   skyboxRenderOptions?: SkyboxRenderOptions;
   tieRenderOptions?: TieRenderOptions;
   shrubRenderOptions?: ShrubRenderOptions;
-  worldDisplayLift?: number;
+  glowBloomEnabled?: boolean;
+  glowBloomFalloffDistance?: number;
   frameRateLimit?: number;
   onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
   onStatus: (status: string) => void;
@@ -72,6 +88,9 @@ interface MapSceneRendererOptions {
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
+const defaultWorldDisplayLift = 2;
+export const defaultGlowBloomFalloffDistance = 100;
+const glowBloomFullStrengthRatio = 0.25;
 
 export interface MapSceneFrameStats {
   fps: number;
@@ -81,6 +100,9 @@ export interface MapSceneFrameStats {
   renderPasses: number;
   drawCalls: number;
   triangles: number;
+  bloomStatus: string;
+  bloomMs: number;
+  bloomSources: number;
 }
 
 interface RendererRenderInfo {
@@ -88,6 +110,16 @@ interface RendererRenderInfo {
   drawCalls?: number;
   triangles?: number;
 }
+
+type PassTextureNode = ReturnType<PassNode['getTextureNode']>;
+
+type MapRenderPipeline = {
+  renderPipeline: THREE.RenderPipeline;
+  skyPass: PassNode;
+  scenePass: PassNode;
+  bloomNode: BloomNode | null;
+  bloomVersion: string;
+};
 
 export class MapSceneRenderer {
   private readonly container: HTMLElement;
@@ -104,25 +136,29 @@ export class MapSceneRenderer {
   private readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 50000);
   private readonly skyCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 50000);
   private readonly loader = new GLTFLoader();
-  private readonly tfragController = new DlTfragMaterialController();
+  private readonly tfragController = new TfragMaterialController();
   private readonly skyboxController = new SkyboxController();
   private readonly tieController = new TieInstanceController();
   private readonly shrubController = new ShrubInstanceController();
-  private readonly worldComposite = new WorldCompositeController();
   private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
   private shrubRenderOptions: ShrubRenderOptions;
   private renderer: WebGPURenderer | null = null;
+  private baseRenderPipeline: MapRenderPipeline | null = null;
+  private bloomRenderPipeline: MapRenderPipeline | null = null;
   private controls: FpsCameraController | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private pendingResizeFrame: number | null = null;
   private currentRoot: THREE.Object3D | null = null;
   private terrainRoot: THREE.Object3D | null = null;
+  private sceneBoundsSphere: THREE.Sphere | null = null;
   private currentPackage: LoadedMapPackage | null = null;
-  private worldDisplayLift: number;
+  private readonly worldDisplayLift = defaultWorldDisplayLift;
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
+  private glowBloomEnabled: boolean;
+  private glowBloomFalloffDistance: number;
   private instanceBundleEnabled = true;
   private animationRenderSuspended = false;
   private rendererUnavailable = false;
@@ -132,7 +168,9 @@ export class MapSceneRenderer {
   private lastStatsUpdateTime = this.lastFrameTime;
   private frameSampleTotalMs = 0;
   private submitSampleTotalMs = 0;
+  private bloomSampleTotalMs = 0;
   private frameSampleCount = 0;
+  private lastBloomStatus = 'off';
 
   constructor(options: MapSceneRendererOptions) {
     this.container = options.container;
@@ -148,8 +186,8 @@ export class MapSceneRenderer {
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
-    this.worldDisplayLift = resolveWorldDisplayLift(options.worldDisplayLift ?? defaultWorldDisplayLift);
-    this.worldComposite.setLift(this.worldDisplayLift);
+    this.glowBloomEnabled = options.glowBloomEnabled ?? true;
+    this.glowBloomFalloffDistance = resolveGlowBloomFalloffDistance(options.glowBloomFalloffDistance);
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
   }
@@ -417,7 +455,7 @@ export class MapSceneRenderer {
     this.skyboxController.dispose();
     this.tieController.dispose();
     this.shrubController.dispose();
-    this.worldComposite.dispose();
+    this.disposeRenderPipelines();
     this.renderer?.dispose();
     this.container.replaceChildren();
   }
@@ -436,7 +474,10 @@ export class MapSceneRenderer {
       frameRateLimit: this.frameRateLimit,
       renderPasses: 0,
       drawCalls: 0,
-      triangles: 0
+      triangles: 0,
+      bloomStatus: 'off',
+      bloomMs: 0,
+      bloomSources: 0
     });
   }
 
@@ -460,11 +501,6 @@ export class MapSceneRenderer {
     }
   }
 
-  setWorldDisplayLift(value: number): void {
-    this.worldDisplayLift = resolveWorldDisplayLift(value);
-    this.worldComposite.setLift(this.worldDisplayLift);
-  }
-
   setTieVisible(visible: boolean): void {
     this.tieController.setVisible(visible);
   }
@@ -477,6 +513,16 @@ export class MapSceneRenderer {
     this.instanceBundleEnabled = enabled;
     this.tieController.setBundleEnabled(enabled);
     this.shrubController.setBundleEnabled(enabled);
+  }
+
+  setGlowBloomEnabled(enabled: boolean): void {
+    this.glowBloomEnabled = enabled;
+    this.lastRenderSubmitTime = 0;
+  }
+
+  setGlowBloomFalloffDistance(distance: number): void {
+    this.glowBloomFalloffDistance = resolveGlowBloomFalloffDistance(distance);
+    this.lastRenderSubmitTime = 0;
   }
 
   setTieRenderOptions(options: TieRenderOptions): TieStats | null {
@@ -552,28 +598,14 @@ export class MapSceneRenderer {
     this.controls?.update(frameMs / 1000);
     this.skyboxController.update(time / 1000);
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
-    const useWorldComposite = shouldUseWorldComposite(this.worldDisplayLift);
-    if (useWorldComposite) {
-      this.ensureWorldComposite();
+    const bloomStartMs = performance.now();
+    this.lastBloomStatus = this.resolveGlowBloomStatus();
+    const includeBloom = this.lastBloomStatus === 'rendered';
+    if (includeBloom) {
+      this.syncBloomFadeRange();
     }
-
-    this.renderer.setRenderTarget(null);
-    this.renderer.setClearColor(canvasClearColor, canvasClearAlpha);
-    this.renderer.clear(true, true, true);
-    if (this.skyboxController.isVisible()) {
-      this.renderer.render(this.skyScene, this.skyCamera);
-      this.renderer.clearDepth();
-    }
-
-    if (useWorldComposite && this.worldComposite.prepareWorldTarget(this.renderer)) {
-      this.renderer.render(this.scene, this.camera);
-      this.renderer.setRenderTarget(null);
-      this.renderer.setClearColor(canvasClearColor, canvasClearAlpha);
-      this.renderer.clearDepth();
-      this.worldComposite.renderComposite(this.renderer);
-    } else {
-      this.renderer.render(this.scene, this.camera);
-    }
+    this.renderWithPipeline(includeBloom);
+    this.bloomSampleTotalMs += performance.now() - bloomStartMs;
 
     this.submitSampleTotalMs += performance.now() - submitStartMs;
 
@@ -588,11 +620,15 @@ export class MapSceneRenderer {
         frameRateLimit: this.frameRateLimit,
         renderPasses: renderInfo.frameCalls ?? 0,
         drawCalls: renderInfo.drawCalls ?? 0,
-        triangles: renderInfo.triangles ?? 0
+        triangles: renderInfo.triangles ?? 0,
+        bloomStatus: this.lastBloomStatus,
+        bloomMs: this.bloomSampleTotalMs / Math.max(1, this.frameSampleCount),
+        bloomSources: this.tieController.getGlowBloomSourceCount()
       });
       this.lastStatsUpdateTime = time;
       this.frameSampleTotalMs = 0;
       this.submitSampleTotalMs = 0;
+      this.bloomSampleTotalMs = 0;
       this.frameSampleCount = 0;
     }
   }
@@ -610,9 +646,6 @@ export class MapSceneRenderer {
       this.skyCamera.aspect = width / height;
       this.skyCamera.updateProjectionMatrix();
       this.renderer.setSize(width, height, false);
-      if (shouldUseWorldComposite(this.worldDisplayLift)) {
-        this.worldComposite.resize(this.renderer, width, height);
-      }
 
       this.lastRenderSubmitTime = 0;
       this.renderFrame(performance.now());
@@ -621,18 +654,93 @@ export class MapSceneRenderer {
     }
   }
 
-  private ensureWorldComposite(): void {
+  private ensureRenderPipeline(includeBloom: boolean): MapRenderPipeline | null {
+    if (!this.renderer) {
+      return null;
+    }
+
+    const currentPipeline = includeBloom ? this.bloomRenderPipeline : this.baseRenderPipeline;
+    if (currentPipeline && (!includeBloom || currentPipeline.bloomVersion === tightBloomVersion)) {
+      return currentPipeline;
+    }
+    this.disposeRenderPipeline(includeBloom);
+
+    const skyPass = pass(this.skyScene, this.skyCamera);
+    const scenePass = pass(this.scene, this.camera);
+    if (includeBloom) {
+      scenePass.setMRT(mrt({
+        output,
+        emissive
+      }));
+    }
+
+    const sceneColor = scenePass.getTextureNode('output');
+    const skyColor = skyPass.getTextureNode('output');
+    const lift = uniform(this.worldDisplayLift);
+    const sceneWithLift = createWorldLiftNode(sceneColor, lift);
+    const sceneOverSky = mix(skyColor, sceneWithLift, sceneColor.a);
+    const bloomPass = includeBloom
+      ? tightBloom(scenePass.getTextureNode('emissive'), 0.45, 0, 0)
+      : null;
+    const binding: MapRenderPipeline = {
+      renderPipeline: new THREE.RenderPipeline(this.renderer, bloomPass ? sceneOverSky.add(bloomPass) : sceneOverSky),
+      skyPass,
+      scenePass,
+      bloomNode: bloomPass,
+      bloomVersion: includeBloom ? tightBloomVersion : ''
+    };
+
+    if (includeBloom) {
+      this.bloomRenderPipeline = binding;
+    } else {
+      this.baseRenderPipeline = binding;
+    }
+    return binding;
+  }
+
+  private renderWithPipeline(includeBloom: boolean): void {
     if (!this.renderer) {
       return;
     }
 
-    const width = Math.max(1, this.container.clientWidth);
-    const height = Math.max(1, this.container.clientHeight);
-    this.worldComposite.ensure(this.renderer, width, height);
+    const pipeline = this.ensureRenderPipeline(includeBloom);
+    this.renderer.setRenderTarget(null);
+    this.renderer.setClearColor(canvasClearColor, 0);
+    this.renderer.clear(true, true, true);
+    pipeline?.renderPipeline.render();
+  }
+
+  private warmupRenderPipeline(): void {
+    if (!this.renderer) {
+      return;
+    }
+
+    this.renderWithPipeline(false);
+    if (!this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
+      return;
+    }
+    this.syncBloomFadeRange();
+    this.renderWithPipeline(true);
+  }
+
+  private resolveGlowBloomStatus(): string {
+    if (!this.renderer || !this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
+      return this.glowBloomEnabled ? 'none' : 'off';
+    }
+
+    if (!this.cameraCanReachSceneBloom()) {
+      return 'scene-range';
+    }
+    if (!this.tieController.hasGlowBloomSourceNear(this.camera.position, this.glowBloomFalloffDistance)) {
+      return 'source-range';
+    }
+
+    return 'rendered';
   }
 
   private frameObject(root: THREE.Object3D): void {
     const frame = createInitialSceneCameraFrame(root);
+    this.sceneBoundsSphere = frame.bounds.getBoundingSphere(new THREE.Sphere());
     this.camera.near = frame.near;
     this.camera.far = frame.far;
     this.camera.updateProjectionMatrix();
@@ -652,23 +760,40 @@ export class MapSceneRenderer {
       await this.renderer.compileAsync(this.skyScene, this.skyCamera);
     }
 
-    if (shouldUseWorldComposite(this.worldDisplayLift)) {
-      this.ensureWorldComposite();
-      const previousRenderTarget = this.renderer.getRenderTarget();
-      try {
-        if (this.worldComposite.renderTarget) {
-          this.renderer.setRenderTarget(this.worldComposite.renderTarget);
-        }
-        await this.renderer.compileAsync(this.scene, this.camera);
-      } finally {
-        this.renderer.setRenderTarget(previousRenderTarget);
-      }
+    await this.renderer.compileAsync(this.scene, this.camera);
+    this.warmupRenderPipeline();
+  }
 
-      await this.worldComposite.compile(this.renderer);
-      return;
+  private syncBloomFadeRange(): void {
+    const bloomFar = Math.max(this.camera.near, this.glowBloomFalloffDistance);
+    setTieBloomDistanceFadeRange(bloomFar * glowBloomFullStrengthRatio, bloomFar);
+  }
+
+  private cameraCanReachSceneBloom(): boolean {
+    if (!this.sceneBoundsSphere) {
+      return true;
     }
 
-    await this.renderer.compileAsync(this.scene, this.camera);
+    const distanceToScene = Math.max(0, this.camera.position.distanceTo(this.sceneBoundsSphere.center) - this.sceneBoundsSphere.radius);
+    return distanceToScene <= this.glowBloomFalloffDistance;
+  }
+
+  private disposeRenderPipelines(): void {
+    this.disposeRenderPipeline(false);
+    this.disposeRenderPipeline(true);
+  }
+
+  private disposeRenderPipeline(includeBloom: boolean): void {
+    const pipeline = includeBloom ? this.bloomRenderPipeline : this.baseRenderPipeline;
+    pipeline?.renderPipeline.dispose();
+    pipeline?.skyPass.dispose();
+    pipeline?.scenePass.dispose();
+    (pipeline?.bloomNode as (BloomNode & { dispose?: () => void }) | null)?.dispose?.();
+    if (includeBloom) {
+      this.bloomRenderPipeline = null;
+    } else {
+      this.baseRenderPipeline = null;
+    }
   }
 
   private handleDeviceLost(info: RendererDeviceLostInfo): void {
@@ -691,6 +816,7 @@ export class MapSceneRenderer {
 
   private cleanupFailedPackageLoad(root: THREE.Object3D, mapPackage: LoadedMapPackage): void {
     this.terrainRoot = null;
+    this.sceneBoundsSphere = null;
     runRendererCleanup('shrub controller', () => this.shrubController.dispose());
     runRendererCleanup('tie controller', () => this.tieController.dispose());
     runRendererCleanup('skybox controller', () => this.skyboxController.dispose());
@@ -706,6 +832,7 @@ export class MapSceneRenderer {
     const currentPackage = this.currentPackage;
     this.currentPackage = null;
     this.terrainRoot = null;
+    this.sceneBoundsSphere = null;
     this.tfragController.dispose();
     this.skyboxController.dispose();
     this.tieController.dispose();
@@ -720,4 +847,42 @@ export class MapSceneRenderer {
     disposeObject3D(this.currentRoot);
     this.currentRoot = null;
   }
+}
+
+function resolveGlowBloomFalloffDistance(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value)
+    ? Math.max(0, value)
+    : defaultGlowBloomFalloffDistance;
+}
+
+function resolveFrameRateLimit(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 120;
+  }
+
+  if (value <= 30) {
+    return 30;
+  }
+
+  if (value <= 60) {
+    return 60;
+  }
+
+  if (value <= 120) {
+    return 120;
+  }
+
+  return 240;
+}
+
+function frameIntervalForLimit(limit: number): number {
+  return 1000 / limit;
+}
+
+function createWorldLiftNode(sceneColor: PassTextureNode, lift: UniformNode<'float', number>) {
+  const colorNode = sceneColor.rgb;
+  const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
+  const liftedLumaNode = lumaNode.mul(lift).clamp(0, 1);
+  const ratioNode = liftedLumaNode.div(max(lumaNode, float(0.001)));
+  return vec4(colorNode.mul(ratioNode).clamp(0, 1), sceneColor.a);
 }

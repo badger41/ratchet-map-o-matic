@@ -2,7 +2,10 @@ import * as THREE from 'three/webgpu';
 import {
   float,
   max,
+  positionView,
+  smoothstep,
   texture,
+  uniform,
   uv,
   vec3
 } from 'three/tsl';
@@ -11,13 +14,13 @@ import type {
   TieRenderOptions
 } from '../../../../services/mapPackages/mapPackageTypes';
 import {
-  applyDlMaterialFeatureColorNode,
-  configureDlMaterialTransparency,
-  createDlOpacityNode,
-  resolveDlMaterialInfo,
-  type DlMaterialFeatureOptions,
-  type DlMaterialInfo
-} from '../dl-materials/DlMaterialNodes';
+  applyModelMaterialFeatureColorNode,
+  configureModelMaterialTransparency,
+  createModelOpacityNode,
+  resolveModelMaterialInfo,
+  type ModelMaterialFeatureOptions,
+  type ModelMaterialInfo
+} from '../model-materials/ModelMaterialNodes';
 import { createTieAmbientRawColorNode } from './TieAmbient';
 import {
   createTieDirectionalColorNode,
@@ -26,7 +29,7 @@ import {
   updateTieMaterialLightingUniforms
 } from './TieLighting';
 import {
-  dlTieEnvironmentPassMask,
+  tieEnvironmentPassMask,
   tieAmbientRawIntensityScale,
   tieDirectionalLightFloor,
   type TieAmbientTextureBinding,
@@ -34,6 +37,18 @@ import {
   type TieInstancedMeshBinding,
   type TieLightingUniforms
 } from './TieTypes';
+
+type MeshBasicWithEmissiveNode = THREE.MeshBasicNodeMaterial & {
+  emissiveNode: Node<'vec3'> | null;
+};
+
+const tieBloomFadeStart = uniform(0);
+const tieBloomFadeEnd = uniform(1);
+
+export function setTieBloomDistanceFadeRange(start: number, end: number): void {
+  tieBloomFadeStart.value = Math.max(0, start);
+  tieBloomFadeEnd.value = Math.max(tieBloomFadeStart.value + 0.001, end);
+}
 
 export function cloneTieMaterial(
   material: THREE.Material | THREE.Material[],
@@ -66,6 +81,12 @@ export function cloneTieTextureMaterial(material: THREE.Material | THREE.Materia
     : createTieTextureMaterial(material);
 }
 
+export function tieMaterialUsesGlowEmission(material: THREE.Material | THREE.Material[]): boolean {
+  return Array.isArray(material)
+    ? material.some((item) => resolveModelMaterialInfo(item, 'tie').usesGlowEmission)
+    : resolveModelMaterialInfo(material, 'tie').usesGlowEmission;
+}
+
 export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
   updateTieMaterialLightingUniforms(binding.flatMaterial, options, false);
   if (binding.coloredMaterial) {
@@ -79,6 +100,7 @@ export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options:
 
 function createTieTextureMaterial(source: THREE.Material): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
+  const modelMaterialInfo = resolveModelMaterialInfo(source, 'tie');
   const material = new THREE.MeshBasicNodeMaterial({
     name: `${source.name || 'tie'}_texture_debug`,
     color: sourceMaterial.color?.clone?.() ?? new THREE.Color(1, 1, 1),
@@ -100,8 +122,16 @@ function createTieTextureMaterial(source: THREE.Material): THREE.Material {
     material.alphaMap.colorSpace = THREE.SRGBColorSpace;
   }
 
-  configureDlMaterialTransparency(material, resolveDlMaterialInfo(source, 'tie'));
+  configureModelMaterialTransparency(material, modelMaterialInfo);
+  if (modelMaterialInfo.usesGlowEmission) {
+    material.colorNode = createTieBaseColorNode(material)
+      .mul(vec3(modelMaterialInfo.glowTint.r, modelMaterialInfo.glowTint.g, modelMaterialInfo.glowTint.b));
+  }
   return material;
+}
+
+function createTieBloomDistanceFadeNode() {
+  return float(1).sub(smoothstep(tieBloomFadeStart, tieBloomFadeEnd, positionView.z.negate()));
 }
 
 function createTieDisplayMaterial(
@@ -113,9 +143,9 @@ function createTieDisplayMaterial(
   options: TieRenderOptions
 ): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
-  const dlMaterialInfo = resolveDlMaterialInfo(source, 'tie');
-  const hasSecondUvReflection = hasTieSecondUvReflection(geometry, dlMaterialInfo);
-  const reflectionTexture = resolveTieReflectionTexture(source, dlMaterialInfo, skyboxReflectionTexture);
+  const modelMaterialInfo = resolveModelMaterialInfo(source, 'tie');
+  const hasSecondUvReflection = hasTieSecondUvReflection(geometry, modelMaterialInfo);
+  const reflectionTexture = resolveTieReflectionTexture(source, modelMaterialInfo, skyboxReflectionTexture);
   const material = new THREE.MeshBasicNodeMaterial({
     name: `${source.name || 'tie'}_map_omatic_unlit`,
     color: sourceMaterial.color?.clone?.() ?? new THREE.Color(1, 1, 1),
@@ -138,10 +168,10 @@ function createTieDisplayMaterial(
     mapOmaticTieAmbientMaterial: ambientBinding !== null,
     mapOmaticTieAmbientTexture: ambientBinding?.texture ?? null,
     mapOmaticTieDirectionalLightMaterial: directionalLightBinding !== null,
-    mapOmaticTiePreserveMultipassMaterial: dlMaterialInfo.preserveTieMultipass,
+    mapOmaticTiePreserveMultipassMaterial: modelMaterialInfo.preserveTieMultipass,
     mapOmaticTieSecondUvReflectionMaterial: hasSecondUvReflection,
     mapOmaticTieReflectionTexture: reflectionTexture,
-    mapOmaticDlMaterialInfo: dlMaterialInfo,
+    mapOmaticModelMaterialInfo: modelMaterialInfo,
     mapOmaticSourceMaterialType: source.type
   };
 
@@ -153,12 +183,19 @@ function createTieDisplayMaterial(
     material.alphaMap.colorSpace = THREE.SRGBColorSpace;
   }
 
-  configureDlMaterialTransparency(material, dlMaterialInfo);
-  material.opacityNode = createDlOpacityNode(material, dlMaterialInfo);
+  configureModelMaterialTransparency(material, modelMaterialInfo);
+  material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
+  if (modelMaterialInfo.usesGlowEmission) {
+    const glowColorNode = createTieBaseColorNode(material)
+      .mul(vec3(modelMaterialInfo.glowTint.r, modelMaterialInfo.glowTint.g, modelMaterialInfo.glowTint.b));
+    const bloomFadeNode = createTieBloomDistanceFadeNode();
+    material.colorNode = glowColorNode.mul(float(1).sub(bloomFadeNode));
+    (material as MeshBasicWithEmissiveNode).emissiveNode = glowColorNode.mul(bloomFadeNode);
+    return material;
+  }
 
-  const needsFeatureColorNode = dlMaterialInfo.usesGlowEmission
-    || dlMaterialInfo.usesReflectiveMask
-    || dlMaterialInfo.passFlags !== 0;
+  const needsFeatureColorNode = modelMaterialInfo.usesReflectiveMask
+    || modelMaterialInfo.passFlags !== 0;
   if (ambientBinding || directionalLightBinding || needsFeatureColorNode) {
     const lightingUniforms = createTieLightingUniforms(
       options,
@@ -173,7 +210,7 @@ function createTieDisplayMaterial(
       reflectionTexture,
       lightingUniforms,
       hasSecondUvReflection,
-      dlMaterialInfo);
+      modelMaterialInfo);
   }
 
   return material;
@@ -181,10 +218,10 @@ function createTieDisplayMaterial(
 
 function resolveTieReflectionTexture(
   source: THREE.Material,
-  dlMaterialInfo: DlMaterialInfo,
+  modelMaterialInfo: ModelMaterialInfo,
   fallbackTexture: THREE.Texture | null
 ): THREE.Texture | null {
-  if (!dlMaterialInfo.usesReflectiveMask || dlMaterialInfo.reflectiveEnvironmentSource !== 'TieTexture') {
+  if (!modelMaterialInfo.usesReflectiveMask || modelMaterialInfo.reflectiveEnvironmentSource !== 'TieTexture') {
     return fallbackTexture;
   }
 
@@ -208,7 +245,7 @@ function createTieColorNode(
   skyboxReflectionTexture: THREE.Texture | null,
   lightingUniforms: TieLightingUniforms,
   hasSecondUvReflection: boolean,
-  dlMaterialInfo: DlMaterialInfo
+  modelMaterialInfo: ModelMaterialInfo
 ): Node<'vec3'> {
   const baseColorNode = createTieBaseColorNode(material);
   const directionalLightNode = directionalLightBinding
@@ -259,9 +296,9 @@ function createTieColorNode(
       .add(rawAmbientColorNode.mul(lightingUniforms.rawByteScale));
   }
 
-  return applyDlMaterialFeatureColorNode(
+  return applyModelMaterialFeatureColorNode(
     material,
-    dlMaterialInfo,
+    modelMaterialInfo,
     baseColorNode,
     litColorNode,
     createTieMaterialFeatureOptions(
@@ -284,12 +321,12 @@ function createTieBaseColorNode(material: THREE.MeshBasicNodeMaterial): Node<'ve
 
 function hasTieSecondUvReflection(
   geometry: THREE.BufferGeometry,
-  dlMaterialInfo: DlMaterialInfo
+  modelMaterialInfo: ModelMaterialInfo
 ): boolean {
-  if (!dlMaterialInfo.usesReflectiveMask) {
+  if (!modelMaterialInfo.usesReflectiveMask) {
     return false;
   }
-  if (usesTieGeneratedEnvPassReflection(dlMaterialInfo)) {
+  if (usesTieGeneratedEnvPassReflection(modelMaterialInfo)) {
     return false;
   }
 
@@ -298,13 +335,13 @@ function hasTieSecondUvReflection(
   return Boolean(position && uv1 && uv1.itemSize >= 2 && uv1.count === position.count);
 }
 
-function usesTieGeneratedEnvPassReflection(dlMaterialInfo: DlMaterialInfo): boolean {
-  return dlMaterialInfo.family === 'tie'
-    && (dlMaterialInfo.passEnvironmentModeBits !== 0
-      || (dlMaterialInfo.passFlags & dlTieEnvironmentPassMask) !== 0
-      || dlMaterialInfo.secondPassMode === 'GeneratedEnvPass'
-      || dlMaterialInfo.secondPassMode === 'GeneratedEnvPassAlt'
-      || dlMaterialInfo.secondPassMode === 'GeneratedEnvPassMixed');
+function usesTieGeneratedEnvPassReflection(modelMaterialInfo: ModelMaterialInfo): boolean {
+  return modelMaterialInfo.family === 'tie'
+    && (modelMaterialInfo.passEnvironmentModeBits !== 0
+      || (modelMaterialInfo.passFlags & tieEnvironmentPassMask) !== 0
+      || modelMaterialInfo.secondPassMode === 'GeneratedEnvPass'
+      || modelMaterialInfo.secondPassMode === 'GeneratedEnvPassAlt'
+      || modelMaterialInfo.secondPassMode === 'GeneratedEnvPassMixed');
 }
 
 function applyTieColorStrength(colorNode: Node<'vec3'>, colorStrength: Node<'float'>): Node<'vec3'> {
@@ -317,7 +354,7 @@ function createTieMaterialFeatureOptions(
   skyboxReflectionTexture: THREE.Texture | null,
   lightingUniforms: TieLightingUniforms,
   hasSecondUvReflection: boolean
-): DlMaterialFeatureOptions {
+): ModelMaterialFeatureOptions {
   return {
     shine: {
       tintNode,

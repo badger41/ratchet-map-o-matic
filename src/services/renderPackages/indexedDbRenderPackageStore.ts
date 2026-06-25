@@ -6,9 +6,11 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
+const renderPackageFormatVersion = 'render-pipeline-bloom-v1';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
+  cacheVersion?: string;
   label: string;
   sourceUrl: string;
   createdAt: number;
@@ -60,11 +62,12 @@ export async function saveIndexedDbRenderPackage(
     entries,
     'manifest.json'
   );
-  const id = `dl-render:${await sha256Hex(options.wadBytes)}`;
+  const id = `render-package:${await sha256Hex(options.wadBytes)}`;
   const existing = await getMetadata(id);
   const now = Date.now();
   const metadata: IndexedDbRenderPackageMetadata = {
     id,
+    cacheVersion: renderPackageFormatVersion,
     label: options.label,
     sourceUrl,
     createdAt: existing?.createdAt ?? now,
@@ -100,6 +103,7 @@ export async function findIndexedDbRenderPackageBySourceUrl(
   return (
     records.find((record) => {
       return (
+        record.cacheVersion === renderPackageFormatVersion &&
         normalizeSourceUrl(record.sourceUrl) === normalizedSourceUrl &&
         hasViewerRenderPackageEntries(record.entries)
       );

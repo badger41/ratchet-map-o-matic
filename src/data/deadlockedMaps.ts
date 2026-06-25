@@ -9,6 +9,7 @@ export interface DeadlockedMapDefinition {
   name: string;
   label: string;
   wadUrl: string;
+  viewerPackageSource?: string;
 }
 
 export const deadlockedMaps: DeadlockedMapDefinition[] = [
@@ -156,6 +157,16 @@ export const deadlockedMaps: DeadlockedMapDefinition[] = [
     label: '44 - MP: Sarathos Swamp',
     wadUrl: 'https://box.rac-horizon.com/downloads/vanilla_wads/dl/level44.wad'
   },
+  ...(import.meta.env.DEV ? [{
+    id: 'dev-dl-level44-loose',
+    gameId: 'DL' as const,
+    category: 'MP' as const,
+    level: 44,
+    name: 'Sarathos Swamp Loose Export',
+    label: 'Dev - 44: Sarathos Swamp loose export',
+    wadUrl: 'https://box.rac-horizon.com/downloads/vanilla_wads/dl/level44.wad',
+    viewerPackageSource: '/@fs/run/media/system/data/Projects/ratchet-ps2-cli/test-assets/extractions/level44_iso_world01/manifest.json'
+  }] : []),
   {
     id: 'dl-mp-dark-cathedral',
     gameId: 'DL',

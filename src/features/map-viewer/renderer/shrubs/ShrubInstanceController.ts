@@ -26,7 +26,7 @@ import {
 } from './ShrubData';
 import { disposeObject3D } from './shrubDisposal';
 import {
-  createDlLightSelectorInstanceAttribute,
+  createLightSelectorInstanceAttribute,
   createShrubAmbientColorInstanceAttribute,
   createShrubDirectionalLightBinding,
   disposeShrubDirectionalLightBinding,
@@ -34,7 +34,7 @@ import {
 } from './ShrubLighting';
 import { cloneShrubMaterial } from './ShrubMaterials';
 import {
-  dlLightSelectorAttributeName,
+  lightSelectorAttributeName,
   emptyShrubStats,
   instanceMirrorMatrix,
   shrubAmbientAttributeName,
@@ -278,7 +278,7 @@ export class ShrubInstanceController {
   ): void {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
-    geometry.setAttribute(dlLightSelectorAttributeName, createDlLightSelectorInstanceAttribute(records));
+    geometry.setAttribute(lightSelectorAttributeName, createLightSelectorInstanceAttribute(records));
     geometry.setAttribute(shrubAmbientAttributeName, createShrubAmbientColorInstanceAttribute(records));
 
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);

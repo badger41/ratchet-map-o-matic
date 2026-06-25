@@ -36,17 +36,18 @@ import {
   disposeObject3D
 } from './tieDisposal';
 import {
-  createDlLightSelectorInstanceAttribute,
+  createLightSelectorInstanceAttribute,
   createTieDirectionalLightBinding,
   disposeTieDirectionalLightBinding
 } from './TieLighting';
 import {
   applyTieRenderOptions,
   cloneTieMaterial,
-  cloneTieTextureMaterial
+  cloneTieTextureMaterial,
+  tieMaterialUsesGlowEmission
 } from './TieMaterials';
 import {
-  dlLightSelectorAttributeName,
+  lightSelectorAttributeName,
   emptyTieStats,
   instanceMirrorMatrix,
   tieAmbientInstanceRowAttributeName,
@@ -77,6 +78,8 @@ export class TieInstanceController {
   private materialMode: TieMaterialMode = 'full';
   private bundleEnabled = false;
   private plainMaterial: THREE.MeshBasicNodeMaterial | null = null;
+  private hasGlowBloom = false;
+  private glowBloomCenters: number[] = [];
 
   async load(
     parent: THREE.Object3D,
@@ -89,6 +92,8 @@ export class TieInstanceController {
     this.dispose();
     this.options = { ...defaultTieRenderOptions, ...options };
     this.skyboxReflectionTexture = skyboxReflectionTexture;
+    this.hasGlowBloom = false;
+    this.glowBloomCenters = [];
     this.stats = {
       ...emptyTieStats,
       exportedClasses: mapPackage.tieEntries.length
@@ -143,6 +148,9 @@ export class TieInstanceController {
     this.skyboxReflectionTexture = null;
 
     if (!this.group) {
+      this.meshBindings = [];
+      this.hasGlowBloom = false;
+      this.glowBloomCenters = [];
       if (directionalLightBinding) {
         disposeTieDirectionalLightBinding(directionalLightBinding);
       }
@@ -167,8 +175,10 @@ export class TieInstanceController {
     this.group.clear();
     this.group = null;
     this.meshBindings = [];
+    this.glowBloomCenters = [];
     this.plainMaterial?.dispose();
     this.plainMaterial = null;
+    this.hasGlowBloom = false;
   }
 
   getStats(): TieStats {
@@ -208,6 +218,30 @@ export class TieInstanceController {
     this.applyBundleMode();
   }
 
+  hasGlowBloomSources(): boolean {
+    return this.hasGlowBloom;
+  }
+
+  getGlowBloomSourceCount(): number {
+    return this.glowBloomCenters.length / 4;
+  }
+
+  hasGlowBloomSourceNear(position: THREE.Vector3, distance: number): boolean {
+    const centers = this.glowBloomCenters;
+    for (let index = 0; index < centers.length; index += 4) {
+      const radius = centers[index + 3];
+      const maxDistance = distance + radius;
+      const dx = centers[index] - position.x;
+      const dy = centers[index + 1] - position.y;
+      const dz = centers[index + 2] - position.z;
+      if ((dx * dx) + (dy * dy) + (dz * dz) <= maxDistance * maxDistance) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private addInstancedPrimitive(
     group: THREE.Group,
     classId: number,
@@ -220,6 +254,7 @@ export class TieInstanceController {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
     const { ambientBinding, flatMaterial, coloredMaterial, textureMaterial } = materialSet;
+    const usesGlowBloom = tieMaterialUsesGlowEmission(primitive.material);
     if (ambientBinding) {
       geometry.setAttribute(
         tieAmbientInstanceRowAttributeName,
@@ -228,7 +263,7 @@ export class TieInstanceController {
     }
 
     if (!primitive.isGlowOverlay && this.directionalLightBinding) {
-      geometry.setAttribute(dlLightSelectorAttributeName, createDlLightSelectorInstanceAttribute(records));
+      geometry.setAttribute(lightSelectorAttributeName, createLightSelectorInstanceAttribute(records));
     }
 
     const mesh = new THREE.InstancedMesh(
@@ -241,6 +276,9 @@ export class TieInstanceController {
     mesh.frustumCulled = !this.bundleEnabled;
     mesh.static = true;
     mesh.matrixAutoUpdate = false;
+    if (usesGlowBloom) {
+      this.hasGlowBloom = true;
+    }
 
     if (fullMirrored) {
       mesh.matrix.copy(instanceMirrorMatrix);
@@ -248,6 +286,8 @@ export class TieInstanceController {
     }
 
     const composeMatrix = new THREE.Matrix4();
+    const bloomSphere = usesGlowBloom ? resolveGeometryBoundingSphere(geometry) : null;
+    const bloomCenter = new THREE.Vector3();
     for (let index = 0; index < records.length; index += 1) {
       composeMatrix.multiplyMatrices(records[index].instanceMatrix, primitive.matrixWorld);
       if (fullMirrored) {
@@ -255,6 +295,15 @@ export class TieInstanceController {
       }
 
       mesh.setMatrixAt(index, composeMatrix);
+      if (bloomSphere) {
+        bloomCenter.copy(bloomSphere.center).applyMatrix4(composeMatrix);
+        this.glowBloomCenters.push(
+          bloomCenter.x,
+          bloomCenter.y,
+          bloomCenter.z,
+          bloomSphere.radius * composeMatrix.getMaxScaleOnAxis()
+        );
+      }
     }
 
     mesh.instanceMatrix.needsUpdate = true;
@@ -453,4 +502,12 @@ export class TieInstanceController {
       disposeObject3D(source);
     }
   }
+}
+
+function resolveGeometryBoundingSphere(geometry: THREE.BufferGeometry): THREE.Sphere | null {
+  if (!geometry.boundingSphere) {
+    geometry.computeBoundingSphere();
+  }
+
+  return geometry.boundingSphere;
 }

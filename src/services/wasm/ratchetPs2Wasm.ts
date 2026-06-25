@@ -18,6 +18,7 @@ export interface RatchetPs2WasmModule {
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
+const ratchetPs2WasmAssetVersion = 'render-pipeline-bloom-v1';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {
@@ -33,6 +34,7 @@ export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
 async function initializeRatchetPs2WasmModule(): Promise<RatchetPs2WasmModule> {
   const assetBaseUrl = resolveRatchetPs2WasmAssetBaseUrl();
   const moduleUrl = new URL('ratchetps2-wasm.js', assetBaseUrl);
+  moduleUrl.searchParams.set('v', ratchetPs2WasmAssetVersion);
   const wasm = await import(/* @vite-ignore */ moduleUrl.toString()) as RatchetPs2WasmModule;
   await wasm.initializeRatchetPs2Wasm({ assetBaseUrl });
   return wasm;
