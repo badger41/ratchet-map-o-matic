@@ -27,7 +27,6 @@ import type {
 } from '../../../../services/mapPackages/mapPackageTypes';
 import {
   lightSelectorAttributeName,
-  tieDirectionalLightFloor,
   tieDirectionalLightSlotCount,
   type PreparedTieRecord,
   type TieDirectionalLightBinding,
@@ -97,10 +96,14 @@ export function createTieLightingUniforms(
   return {
     ambientScale: uniform(scales.ambient),
     directionalScale: uniform(scales.directional),
+    exposureScale: uniform(resolveTieExposure(options)),
     rawColorScale: uniform(scales.rawColor),
     rawByteScale: uniform(scales.rawBytes),
     rawDirectionalScale: uniform(scales.rawDirectional),
     rawDirectionalColorScale: uniform(scales.rawDirectionalColor),
+    directionalColorStrength: uniform(resolveTieDirectionalColorStrength(options)),
+    directionalFrontScale: uniform(resolveTieDirectionalFrontIntensity(options)),
+    directionalBackScale: uniform(resolveTieDirectionalBackIntensity(options)),
     colorStrength: uniform(resolveTieColorStrength(options)),
     blendAdditiveScale: uniform(blendScales.additive),
     blendTintedWorldScale: uniform(blendScales.tintedWorld),
@@ -136,10 +139,14 @@ export function updateTieMaterialLightingUniforms(
   const blendScales = resolveTieBlendScales(options, hasAmbient, hasDirectional);
   uniforms.ambientScale.value = scales.ambient;
   uniforms.directionalScale.value = scales.directional;
+  uniforms.exposureScale.value = resolveTieExposure(options);
   uniforms.rawColorScale.value = scales.rawColor;
   uniforms.rawByteScale.value = scales.rawBytes;
   uniforms.rawDirectionalScale.value = scales.rawDirectional;
   uniforms.rawDirectionalColorScale.value = scales.rawDirectionalColor;
+  uniforms.directionalColorStrength.value = resolveTieDirectionalColorStrength(options);
+  uniforms.directionalFrontScale.value = resolveTieDirectionalFrontIntensity(options);
+  uniforms.directionalBackScale.value = resolveTieDirectionalBackIntensity(options);
   uniforms.colorStrength.value = resolveTieColorStrength(options);
   uniforms.blendAdditiveScale.value = blendScales.additive;
   uniforms.blendTintedWorldScale.value = blendScales.tintedWorld;
@@ -161,8 +168,8 @@ export function createTieDirectionalLightNode(
   const secondarySlot = mod(floor(selector.div(float(16))), float(binding.slotCount));
   const blendAmount = clamp(floor(selector.div(float(256))).div(float(256)), 0, 1);
   const normal = normalize(normalWorld);
-  const primary = createTieDirectionalSlotLightNode(binding, primarySlot, normal);
-  const secondary = createTieDirectionalSlotLightNode(binding, secondarySlot, normal);
+  const primary = createTieDirectionalSlotLightNode(binding, primarySlot, normal, lightingUniforms);
+  const secondary = createTieDirectionalSlotLightNode(binding, secondarySlot, normal, lightingUniforms);
   return vertexStage(mix(primary, secondary, blendAmount));
 }
 
@@ -203,7 +210,8 @@ function createTieDirectionalSelectorNode(lightingUniforms: TieLightingUniforms)
 function createTieDirectionalSlotLightNode(
   binding: TieDirectionalLightBinding,
   slot: Node<'float'>,
-  normal: Node<'vec3'>
+  normal: Node<'vec3'>,
+  lightingUniforms: TieLightingUniforms
 ): Node<'vec3'> {
   const lightUv = vec2(slot.add(float(0.5)).div(float(binding.slotCount)), float(0.5));
   const topColor = texture(binding.topColors, lightUv);
@@ -215,7 +223,8 @@ function createTieDirectionalSlotLightNode(
   const topDot = max(topDotRaw, topDotRaw.mul(topColor.a));
   const inverseDot = max(inverseDotRaw, inverseDotRaw.mul(inverseColor.a));
   return max(
-    topColor.rgb.mul(topDot).add(inverseColor.rgb.mul(inverseDot)),
+    topColor.rgb.mul(topDot).mul(lightingUniforms.directionalFrontScale)
+      .add(inverseColor.rgb.mul(inverseDot).mul(lightingUniforms.directionalBackScale)),
     vec3(0, 0, 0)
   );
 }
@@ -347,6 +356,22 @@ function normalizeTieBlendMode(value: TieBlendMode | undefined): TieBlendMode {
 
 function resolveTieColorStrength(options: TieRenderOptions): number {
   return Number.isFinite(options.colorStrength) ? Math.max(0, options.colorStrength) : 1;
+}
+
+function resolveTieDirectionalFrontIntensity(options: TieRenderOptions): number {
+  return Number.isFinite(options.directionalFrontIntensity) ? Math.max(0, options.directionalFrontIntensity) : 0.75;
+}
+
+function resolveTieDirectionalColorStrength(options: TieRenderOptions): number {
+  return Number.isFinite(options.directionalColorStrength) ? Math.max(0, options.directionalColorStrength) : 1;
+}
+
+function resolveTieDirectionalBackIntensity(options: TieRenderOptions): number {
+  return Number.isFinite(options.directionalBackIntensity) ? Math.max(0, options.directionalBackIntensity) : 1;
+}
+
+function resolveTieExposure(options: TieRenderOptions): number {
+  return Number.isFinite(options.exposure) ? Math.max(0, options.exposure) : 1;
 }
 
 function resolveTieShineIntensity(options: TieRenderOptions): number {

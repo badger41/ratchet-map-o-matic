@@ -2,7 +2,6 @@ import * as THREE from 'three/webgpu';
 import {
   attribute,
   float,
-  mix,
   texture,
   uv,
   vec3
@@ -15,14 +14,18 @@ import {
   resolveModelMaterialInfo
 } from '../model-materials/ModelMaterialNodes';
 import {
+  applyModelDisplayModulateNode,
+  applyShrubFogNode,
+  applyShrubDisplayLiftNode,
+  applyModelColorStrengthNode
+} from '../ModelFog';
+import {
   createShrubDirectionalLightNode,
   createShrubLightingUniforms
 } from './ShrubLighting';
 import {
   shrubAmbientAttributeName,
   shrubAmbientTintScale,
-  shrubDirectionalLightFloor,
-  shrubDirectionalLightReferenceIntensity,
   shrubLightingUniformsUserDataKey,
   type ShrubDirectionalLightBinding,
   type ShrubLightingUniforms
@@ -94,32 +97,25 @@ function createShrubColorNode(
     ? texture(material.map, uv()).rgb.mul(materialColorNode)
     : materialColorNode;
   const rawAmbientNode = attribute<'vec3'>(shrubAmbientAttributeName, 'vec3');
-  const ambientNode = rawAmbientNode.mul(uniforms.ambientScale);
+  const ambientTermNode = rawAmbientNode
+    .mul(float(shrubAmbientTintScale))
+    .mul(uniforms.ambientScale);
   const directionalLightNode = directionalLightBinding
-    ? createShrubDirectionalLightNode(directionalLightBinding)
+    ? createShrubDirectionalLightNode(directionalLightBinding, uniforms)
     : null;
-  const directionalValidNode = directionalLightNode ? directionalLightNode.a : float(0);
   const directionalTermNode = directionalLightNode
-    ? mix(
-      vec3(1, 1, 1),
-      directionalLightNode.rgb
-        .mul(uniforms.directionalScale)
-        .div(float(shrubDirectionalLightReferenceIntensity))
-        .add(vec3(shrubDirectionalLightFloor, shrubDirectionalLightFloor, shrubDirectionalLightFloor))
-        .clamp(0, 1),
-      directionalLightNode.a
-    )
-    : vec3(1, 1, 1);
-  const instanceTintNode = mix(
-    vec3(1, 1, 1),
-    rawAmbientNode.mul(float(shrubAmbientTintScale)),
-    directionalValidNode
-  );
-  const ambientLitNode = baseColorNode.mul(ambientNode);
-  const additiveLitNode = baseColorNode.mul(directionalTermNode).add(ambientLitNode);
-  const modulateLitNode = baseColorNode.mul(directionalTermNode).mul(instanceTintNode).add(ambientLitNode);
+    ? applyModelColorStrengthNode(directionalLightNode.rgb, uniforms.directionalColorStrength)
+      .mul(uniforms.directionalScale)
+      .mul(float(0.5))
+    : vec3(0, 0, 0);
+  const ambientLitNode = baseColorNode.mul(ambientTermNode);
+  const directionalLitNode = baseColorNode.mul(directionalTermNode);
+  const additiveLitNode = directionalLitNode.add(ambientLitNode);
+  const combinedLightTermNode = ambientTermNode.add(directionalTermNode).clamp(0, 1);
+  const modulateLitNode = applyModelDisplayModulateNode(baseColorNode, combinedLightTermNode);
 
-  return additiveLitNode.mul(uniforms.blendAdditiveScale)
+  const litColorNode = additiveLitNode.mul(uniforms.blendAdditiveScale)
     .add(modulateLitNode.mul(uniforms.blendModulateScale))
     .saturate();
+  return applyShrubFogNode(applyShrubDisplayLiftNode(litColorNode.mul(uniforms.exposureScale).saturate()));
 }

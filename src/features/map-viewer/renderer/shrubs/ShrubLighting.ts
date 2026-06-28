@@ -7,7 +7,7 @@ import {
   max,
   mix,
   mod,
-  normalWorld,
+  normalWorldGeometry,
   normalize,
   texture,
   uniform,
@@ -103,6 +103,10 @@ export function createShrubLightingUniforms(options: ShrubRenderOptions): ShrubL
   return {
     ambientScale: uniform(resolveShrubAmbientIntensity(options)),
     directionalScale: uniform(resolveShrubDirectionalIntensity(options)),
+    exposureScale: uniform(resolveShrubExposure(options)),
+    directionalColorStrength: uniform(resolveShrubDirectionalColorStrength(options)),
+    directionalFrontScale: uniform(resolveShrubDirectionalFrontIntensity(options)),
+    directionalBackScale: uniform(resolveShrubDirectionalBackIntensity(options)),
     blendAdditiveScale: uniform(blendScales.additive),
     blendModulateScale: uniform(blendScales.modulate)
   };
@@ -127,18 +131,22 @@ export function updateShrubMaterialLightingUniforms(
   const blendScales = resolveShrubBlendScales(options);
   uniforms.ambientScale.value = resolveShrubAmbientIntensity(options);
   uniforms.directionalScale.value = resolveShrubDirectionalIntensity(options);
+  uniforms.exposureScale.value = resolveShrubExposure(options);
+  uniforms.directionalColorStrength.value = resolveShrubDirectionalColorStrength(options);
+  uniforms.directionalFrontScale.value = resolveShrubDirectionalFrontIntensity(options);
+  uniforms.directionalBackScale.value = resolveShrubDirectionalBackIntensity(options);
   uniforms.blendAdditiveScale.value = blendScales.additive;
   uniforms.blendModulateScale.value = blendScales.modulate;
 }
 
-export function createShrubDirectionalLightNode(binding: ShrubDirectionalLightBinding): Node<'vec4'> {
+export function createShrubDirectionalLightNode(binding: ShrubDirectionalLightBinding, lightingUniforms: ShrubLightingUniforms): Node<'vec4'> {
   const selector = floor(max(attribute<'float'>(lightSelectorAttributeName, 'float'), float(0)).add(float(0.5)));
   const primarySlot = mod(selector, float(binding.slotCount));
   const secondarySlot = mod(floor(selector.div(float(16))), float(binding.slotCount));
   const blendAmount = max(float(0), floor(selector.div(float(256))).div(float(256))).min(float(1));
-  const normal = normalize(normalWorld);
-  const primary = createShrubDirectionalSlotLightNode(binding, primarySlot, normal);
-  const secondary = createShrubDirectionalSlotLightNode(binding, secondarySlot, normal);
+  const normal = normalize(normalWorldGeometry);
+  const primary = createShrubDirectionalSlotLightNode(binding, primarySlot, normal, lightingUniforms);
+  const secondary = createShrubDirectionalSlotLightNode(binding, secondarySlot, normal, lightingUniforms);
   const effectiveBlend = blendAmount.mul(secondary.a);
   return vertexStage(vec4(mix(primary.rgb, secondary.rgb, effectiveBlend), primary.a));
 }
@@ -146,7 +154,8 @@ export function createShrubDirectionalLightNode(binding: ShrubDirectionalLightBi
 function createShrubDirectionalSlotLightNode(
   binding: ShrubDirectionalLightBinding,
   slot: Node<'float'>,
-  normal: Node<'vec3'>
+  normal: Node<'vec3'>,
+  lightingUniforms: ShrubLightingUniforms
 ): Node<'vec4'> {
   const lightUv = vec2(slot.add(float(0.5)).div(float(binding.slotCount)), float(0.5));
   const topColor = texture(binding.topColors, lightUv);
@@ -161,7 +170,8 @@ function createShrubDirectionalSlotLightNode(
   const topDot = max(topDotRaw, topDotRaw.mul(topColor.a));
   const inverseDot = max(inverseDotRaw, inverseDotRaw.mul(inverseColor.a));
   const light = max(
-    topColor.rgb.mul(topDot).add(inverseColor.rgb.mul(inverseDot)),
+    topColor.rgb.mul(topDot).mul(lightingUniforms.directionalFrontScale)
+      .add(inverseColor.rgb.mul(inverseDot).mul(lightingUniforms.directionalBackScale)),
     vec3(0, 0, 0)
   );
   return vec4(light, valid);
@@ -185,6 +195,22 @@ function resolveShrubAmbientIntensity(options: ShrubRenderOptions): number {
 
 function resolveShrubDirectionalIntensity(options: ShrubRenderOptions): number {
   return Number.isFinite(options.directionalIntensity) ? Math.max(0, options.directionalIntensity) : 1;
+}
+
+function resolveShrubDirectionalColorStrength(options: ShrubRenderOptions): number {
+  return Number.isFinite(options.directionalColorStrength) ? Math.max(0, options.directionalColorStrength) : 1;
+}
+
+function resolveShrubExposure(options: ShrubRenderOptions): number {
+  return Number.isFinite(options.exposure) ? Math.max(0, options.exposure) : 1;
+}
+
+function resolveShrubDirectionalFrontIntensity(options: ShrubRenderOptions): number {
+  return Number.isFinite(options.directionalFrontIntensity) ? Math.max(0, options.directionalFrontIntensity) : 0.75;
+}
+
+function resolveShrubDirectionalBackIntensity(options: ShrubRenderOptions): number {
+  return Number.isFinite(options.directionalBackIntensity) ? Math.max(0, options.directionalBackIntensity) : 1;
 }
 
 function createShrubLightTexture(data: Float32Array, name: string): THREE.DataTexture {

@@ -40,10 +40,14 @@ export interface TieInstancedMeshBinding {
 export interface TieLightingUniforms {
   ambientScale: UniformNode<'float', number>;
   directionalScale: UniformNode<'float', number>;
+  exposureScale: UniformNode<'float', number>;
   rawColorScale: UniformNode<'float', number>;
   rawByteScale: UniformNode<'float', number>;
   rawDirectionalScale: UniformNode<'float', number>;
   rawDirectionalColorScale: UniformNode<'float', number>;
+  directionalColorStrength: UniformNode<'float', number>;
+  directionalFrontScale: UniformNode<'float', number>;
+  directionalBackScale: UniformNode<'float', number>;
   colorStrength: UniformNode<'float', number>;
   blendAdditiveScale: UniformNode<'float', number>;
   blendTintedWorldScale: UniformNode<'float', number>;
@@ -133,7 +137,6 @@ export const tieAmbientRawIntensityScale = 255 / tieAmbientPs2NeutralByte;
 export const tieEnvironmentPassMask = 0x06;
 export const lightSelectorAttributeName = 'modelLightSelector';
 export const tieDirectionalLightSlotCount = 16;
-export const tieDirectionalLightFloor = 0.28;
 export const tieClassLoadConcurrency = 2;
 export const tieLoadFrameBudgetMs = 6;
 export const tieInstanceChunkCellSize = 2400;

@@ -209,6 +209,8 @@ export interface ShrubStats {
 export interface TfragMaterialOptions {
   diagnosticMode: DiagnosticMode;
   lightIntensity: number;
+  directionalFrontIntensity: number;
+  directionalBackIntensity: number;
   exposure: number;
   cacheMix: number;
   ditherStrength: number;
@@ -248,6 +250,10 @@ export interface TieRenderOptions {
   colorStrength: number;
   ambientIntensity: number;
   directionalIntensity: number;
+  directionalColorStrength: number;
+  exposure: number;
+  directionalFrontIntensity: number;
+  directionalBackIntensity: number;
   shineIntensity: number;
   reflectionIntensity: number;
   materialDebugMode: TieMaterialDebugMode;
@@ -260,6 +266,10 @@ export interface ShrubRenderOptions {
   blendMode: ShrubBlendMode;
   ambientIntensity: number;
   directionalIntensity: number;
+  directionalColorStrength: number;
+  exposure: number;
+  directionalFrontIntensity: number;
+  directionalBackIntensity: number;
 }
 
 export interface SkyboxRenderOptions {
@@ -272,8 +282,10 @@ export interface SkyboxRenderOptions {
 
 export const defaultTfragMaterialOptions: TfragMaterialOptions = {
   diagnosticMode: 'runtime',
-  exposure: 1,
+  exposure: 0.9,
   lightIntensity: 1,
+  directionalFrontIntensity: 0.8,
+  directionalBackIntensity: 1,
   cacheMix: 0,
   ditherStrength: 0,
   postScaleEnabled: true
@@ -284,8 +296,12 @@ export const defaultTieRenderOptions: TieRenderOptions = {
   lightingMode: 'combined',
   blendMode: 'modulate',
   colorStrength: 1,
-  ambientIntensity: 1,
+  ambientIntensity: 1.01,
   directionalIntensity: 1,
+  directionalColorStrength: 1,
+  exposure: 1,
+  directionalFrontIntensity: 0.8,
+  directionalBackIntensity: 1,
   shineIntensity: 1.35,
   reflectionIntensity: 1,
   materialDebugMode: 'normal',
@@ -296,8 +312,12 @@ export const defaultShrubRenderOptions: ShrubRenderOptions = {
   visible: true,
   billboardsVisible: false,
   blendMode: 'modulate',
-  ambientIntensity: 0.35,
-  directionalIntensity: 1
+  ambientIntensity: 1,
+  directionalIntensity: 1,
+  directionalColorStrength: 1,
+  exposure: 1,
+  directionalFrontIntensity: 0.8,
+  directionalBackIntensity: 1
 };
 
 export const defaultSkyboxRenderOptions: SkyboxRenderOptions = {

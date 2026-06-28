@@ -31,6 +31,10 @@ export interface ShrubInstancedMeshBinding {
 export interface ShrubLightingUniforms {
   ambientScale: UniformNode<'float', number>;
   directionalScale: UniformNode<'float', number>;
+  exposureScale: UniformNode<'float', number>;
+  directionalColorStrength: UniformNode<'float', number>;
+  directionalFrontScale: UniformNode<'float', number>;
+  directionalBackScale: UniformNode<'float', number>;
   blendAdditiveScale: UniformNode<'float', number>;
   blendModulateScale: UniformNode<'float', number>;
 }
@@ -70,8 +74,6 @@ export const gltfToPs2BasisMatrix = ps2ToGltfBasisMatrix.clone().invert();
 export const shrubAmbientAttributeName = 'shrubAmbientColor';
 export const lightSelectorAttributeName = 'modelLightSelector';
 export const shrubDirectionalLightSlotCount = 16;
-export const shrubDirectionalLightReferenceIntensity = 2;
-export const shrubDirectionalLightFloor = 0.28;
 export const shrubAmbientTintScale = 255 / 128;
 export const shrubClassLoadConcurrency = 2;
 export const shrubLoadFrameBudgetMs = 6;

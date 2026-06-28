@@ -1,6 +1,7 @@
 import {
   Alert,
   Box,
+  Button,
   Center,
   Checkbox,
   Group,
@@ -35,7 +36,9 @@ import {
 } from '../mapViewerState';
 import {
   defaultGlowBloomFalloffDistance,
+  defaultMapSceneDebugTuning,
   MapSceneRenderer,
+  type MapSceneDebugTuning,
   type MapSceneFrameStats
 } from '../renderer/MapSceneRenderer';
 import type { CameraVirtualMoveInput } from '../renderer/FpsCameraController';
@@ -64,6 +67,9 @@ const tieMaterialOptions: Array<{ value: TieMaterialMode; label: string }> = [
   { value: 'plain', label: 'Plain' }
 ];
 
+const lightingDebugStorageKey = 'map-viewer-lighting-debug-tuning-v4';
+const lightingDebugStep = 0.05;
+
 export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<MapSceneRenderer | null>(null);
@@ -90,6 +96,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [tieBundleEnabled, setTieBundleEnabled] = useState(true);
   const [glowBloomEnabled, setGlowBloomEnabled] = useState(true);
   const [glowBloomFalloffDistance, setGlowBloomFalloffDistance] = useState(defaultGlowBloomFalloffDistance);
+  const [debugTuning, setDebugTuning] = useState<MapSceneDebugTuning>(readStoredDebugTuning);
   const [frameStats, setFrameStats] = useState<MapSceneFrameStats>({
     fps: 0,
     frameMs: 0,
@@ -106,6 +113,17 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
 
   const handleMobileMoveInputChange = useCallback((input: CameraVirtualMoveInput) => {
     rendererRef.current?.setVirtualMoveInput(input);
+  }, []);
+
+  const setDebugTuningValue = useCallback(<K extends keyof MapSceneDebugTuning,>(key: K, value: MapSceneDebugTuning[K]) => {
+    setDebugTuning((current) => ({
+      ...current,
+      [key]: value
+    }));
+  }, []);
+
+  const resetDebugTuning = useCallback(() => {
+    setDebugTuning({ ...defaultMapSceneDebugTuning });
   }, []);
 
   useEffect(() => {
@@ -165,6 +183,12 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [glowBloomFalloffDistance]);
 
   useEffect(() => {
+    rendererRef.current?.setDebugTuning(debugTuning);
+    const timeoutId = window.setTimeout(() => writeStoredDebugTuning(debugTuning), 150);
+    return () => window.clearTimeout(timeoutId);
+  }, [debugTuning]);
+
+  useEffect(() => {
     rendererRef.current?.setTieRenderOptions({
       ...defaultTieRenderOptions,
       colorsEnabled: tieColorsEnabled
@@ -204,6 +228,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       glowBloomEnabled,
       glowBloomFalloffDistance,
       frameRateLimit,
+      debugTuning,
       onStatus: (nextStatus) => {
         if (!disposed) {
           setStatus(nextStatus);
@@ -404,7 +429,9 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           style={{
             zIndex: 2,
             borderColor: 'rgba(159, 174, 188, 0.22)',
-            backdropFilter: 'blur(10px)'
+            backdropFilter: 'blur(10px)',
+            maxHeight: 'calc(100dvh - 120px)',
+            overflowY: 'auto'
           }}
         >
           <Stack gap="xs">
@@ -513,6 +540,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           </Stack>
         </Paper>
       ) : null}
+
+      {debugPanelsVisible && ready ? (
+        <LightingDebugPanel
+          debugTuning={debugTuning}
+          onChange={setDebugTuningValue}
+          onReset={resetDebugTuning}
+        />
+      ) : null}
     </Box>
   );
 }
@@ -533,6 +568,117 @@ function formatShrubLoadedClasses(stats: ShrubStats | null): string {
   return `${stats.loadedClasses.toLocaleString()} / ${stats.classIds.toLocaleString()}`;
 }
 
+function LightingDebugPanel({
+  debugTuning,
+  onChange,
+  onReset
+}: {
+  debugTuning: MapSceneDebugTuning;
+  onChange: <K extends keyof MapSceneDebugTuning>(key: K, value: MapSceneDebugTuning[K]) => void;
+  onReset: () => void;
+}) {
+  return (
+    <Paper
+      pos="absolute"
+      top={{ base: 90, sm: 96 }}
+      right={{ base: 10, sm: 16 }}
+      left={{ base: 10, sm: 'auto' }}
+      w={{ base: 'auto', sm: 'min(520px, calc(100vw - 32px))' }}
+      p="sm"
+      radius="md"
+      bg="rgba(17, 24, 32, 0.88)"
+      withBorder
+      style={{
+        zIndex: 2,
+        borderColor: 'rgba(159, 174, 188, 0.22)',
+        backdropFilter: 'blur(10px)',
+        maxHeight: 'calc(100dvh - 112px)',
+        overflowY: 'auto'
+      }}
+    >
+      <Stack gap="xs">
+        <Group gap="xs" justify="space-between" wrap="nowrap">
+          <Text size="xs" c="dimmed" fw={700}>Lighting Debug</Text>
+          <Button size="compact-xs" variant="subtle" onClick={onReset}>
+            Reset
+          </Button>
+        </Group>
+        <Text size="xs" c="dimmed" fw={700}>Scene</Text>
+        <Group gap="xs" align="end">
+          <DebugSlider label="Front light" value={debugTuning.directionalFrontScale} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('directionalFrontScale', value)} />
+          <DebugSlider label="Back light" value={debugTuning.directionalBackScale} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('directionalBackScale', value)} />
+          <DebugSlider label="Light color" value={debugTuning.directionalColorStrength} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('directionalColorStrength', value)} />
+          <DebugSlider label="All exposure" value={debugTuning.sceneExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('sceneExposure', value)} />
+          <DebugSlider label="World lift" value={debugTuning.worldDisplayLift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('worldDisplayLift', value)} />
+          <DebugSlider label="Scene haze" value={debugTuning.sceneHazeStrength} min={0} max={0.5} step={lightingDebugStep} onChange={(value) => onChange('sceneHazeStrength', value)} />
+        </Group>
+        <Text size="xs" c="dimmed" fw={700}>Meshes</Text>
+        <Group gap="xs" align="end">
+          <DebugSlider label="Tfrag exposure" value={debugTuning.tfragExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('tfragExposure', value)} />
+          <DebugSlider label="Tfrag lift" value={debugTuning.tfragUplift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('tfragUplift', value)} />
+          <DebugSlider label="Tie exposure" value={debugTuning.tieExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('tieExposure', value)} />
+          <DebugSlider label="Tie ambient" value={debugTuning.tieAmbientScale} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('tieAmbientScale', value)} />
+          <DebugSlider label="Tie lift" value={debugTuning.tieUplift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('tieUplift', value)} />
+          <DebugSlider label="Shrub exposure" value={debugTuning.shrubExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('shrubExposure', value)} />
+          <DebugSlider label="Shrub lift" value={debugTuning.shrubUplift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('shrubUplift', value)} />
+        </Group>
+        <Text size="xs" c="dimmed" fw={700}>Fog</Text>
+        <Group gap="xs" wrap="wrap">
+          <Checkbox
+            size="xs"
+            label="Tfrag fog"
+            checked={debugTuning.tfragFogEnabled}
+            onChange={(event) => onChange('tfragFogEnabled', event.currentTarget.checked)}
+          />
+          <Checkbox
+            size="xs"
+            label="Tie fog"
+            checked={debugTuning.tieFogEnabled}
+            onChange={(event) => onChange('tieFogEnabled', event.currentTarget.checked)}
+          />
+          <Checkbox
+            size="xs"
+            label="Shrub fog"
+            checked={debugTuning.shrubFogEnabled}
+            onChange={(event) => onChange('shrubFogEnabled', event.currentTarget.checked)}
+          />
+        </Group>
+        <Group gap="xs" align="end">
+          <DebugSlider label="Near strength" value={debugTuning.fogNearIntensityScale} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogNearIntensityScale', value)} />
+          <DebugSlider label="Near distance" value={debugTuning.fogNearDistanceScale} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogNearDistanceScale', value)} />
+          <DebugSlider label="Far strength" value={debugTuning.fogFarIntensityScale} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogFarIntensityScale', value)} />
+          <DebugSlider label="Far distance" value={debugTuning.fogFarDistanceScale} min={0.1} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogFarDistanceScale', value)} />
+          <DebugSlider label="Mesh fog color" value={debugTuning.fogMeshColorStrength} min={0} max={6} step={lightingDebugStep} onChange={(value) => onChange('fogMeshColorStrength', value)} />
+          <DebugSlider label="Fog cap" value={debugTuning.fogModulationMaxAmount} min={0} max={1} step={lightingDebugStep} onChange={(value) => onChange('fogModulationMaxAmount', value)} />
+        </Group>
+      </Stack>
+    </Paper>
+  );
+}
+
+function readStoredDebugTuning(): MapSceneDebugTuning {
+  if (typeof window === 'undefined') {
+    return { ...defaultMapSceneDebugTuning };
+  }
+
+  try {
+    const stored = window.localStorage.getItem(lightingDebugStorageKey);
+    return stored
+      ? { ...defaultMapSceneDebugTuning, ...(JSON.parse(stored) as Partial<MapSceneDebugTuning>) }
+      : { ...defaultMapSceneDebugTuning };
+  } catch {
+    return { ...defaultMapSceneDebugTuning };
+  }
+}
+
+function writeStoredDebugTuning(tuning: MapSceneDebugTuning): void {
+  try {
+    window.localStorage.setItem(lightingDebugStorageKey, JSON.stringify(tuning));
+  } catch {
+    // Debug tuning persistence is optional.
+  }
+}
+
 function DebugRow({ label, value }: { label: string; value: string }) {
   return (
     <Table.Tr>
@@ -548,4 +694,54 @@ function DebugRow({ label, value }: { label: string; value: string }) {
       </Table.Td>
     </Table.Tr>
   );
+}
+
+function DebugSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <Stack gap={2} style={{ flex: '1 1 150px', minWidth: 150 }}>
+      <Group gap={6} justify="space-between" wrap="nowrap">
+        <Text size="xs" c="dimmed" fw={700}>
+          {label}
+        </Text>
+        <Text size="xs" fw={700}>
+          {formatDebugSliderValue(value, step)}
+        </Text>
+      </Group>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        style={{ width: '100%' }}
+      />
+    </Stack>
+  );
+}
+
+function formatDebugSliderValue(value: number, step: number): string {
+  if (step < 0.01) {
+    return value.toFixed(3);
+  }
+
+  if (step < 0.1) {
+    return value.toFixed(2);
+  }
+
+  return value.toFixed(1);
 }

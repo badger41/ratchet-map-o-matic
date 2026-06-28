@@ -44,7 +44,8 @@ import {
   applyTieRenderOptions,
   cloneTieMaterial,
   cloneTieTextureMaterial,
-  tieMaterialUsesGlowEmission
+  tieMaterialUsesGlowEmission,
+  updateTieRenderOptionUniforms
 } from './TieMaterials';
 import {
   lightSelectorAttributeName,
@@ -197,6 +198,17 @@ export class TieInstanceController {
     this.markBundleNeedsUpdate();
 
     return this.getStats();
+  }
+
+  updateLightingOptions(options: TieRenderOptions): void {
+    this.options = { ...defaultTieRenderOptions, ...options };
+    if (!this.group) {
+      return;
+    }
+
+    for (const binding of this.meshBindings) {
+      updateTieRenderOptionUniforms(binding, this.options);
+    }
   }
 
   setVisible(visible: boolean): void {

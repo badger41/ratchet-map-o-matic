@@ -3,5 +3,7 @@ dist/
 .vite/
 .wasm-release/
 public/ratchetps2/
+public/ratchetps2
 src/vendor/ratchetps2-wasm/
 *.local
+docs/map-viewer/

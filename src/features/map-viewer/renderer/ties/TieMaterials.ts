@@ -21,6 +21,12 @@ import {
   type ModelMaterialFeatureOptions,
   type ModelMaterialInfo
 } from '../model-materials/ModelMaterialNodes';
+import {
+  applyTieFogNode,
+  applyTieDisplayLiftNode,
+  applyModelDisplayModulateNode,
+  applyModelColorStrengthNode
+} from '../ModelFog';
 import { createTieAmbientRawColorNode } from './TieAmbient';
 import {
   createTieDirectionalColorNode,
@@ -31,7 +37,6 @@ import {
 import {
   tieEnvironmentPassMask,
   tieAmbientRawIntensityScale,
-  tieDirectionalLightFloor,
   type TieAmbientTextureBinding,
   type TieDirectionalLightBinding,
   type TieInstancedMeshBinding,
@@ -87,12 +92,15 @@ export function tieMaterialUsesGlowEmission(material: THREE.Material | THREE.Mat
     : resolveModelMaterialInfo(material, 'tie').usesGlowEmission;
 }
 
-export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
+export function updateTieRenderOptionUniforms(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
   updateTieMaterialLightingUniforms(binding.flatMaterial, options, false);
   if (binding.coloredMaterial) {
     updateTieMaterialLightingUniforms(binding.coloredMaterial, options, true);
   }
+}
 
+export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
+  updateTieRenderOptionUniforms(binding, options);
   binding.mesh.material = options.colorsEnabled && binding.coloredMaterial
     ? binding.coloredMaterial
     : binding.flatMaterial;
@@ -255,9 +263,9 @@ function createTieColorNode(
     ? createTieDirectionalColorNode(directionalLightBinding, lightingUniforms)
     : null;
   const directionalTermNode = directionalLightNode
-    ? directionalLightNode.mul(lightingUniforms.directionalScale)
-      .add(vec3(tieDirectionalLightFloor, tieDirectionalLightFloor, tieDirectionalLightFloor)
-        .mul(lightingUniforms.directionalScale))
+    ? applyModelColorStrengthNode(directionalLightNode, lightingUniforms.directionalColorStrength)
+      .mul(lightingUniforms.directionalScale)
+      .mul(float(0.5))
     : vec3(0, 0, 0);
   const directionalLitNode = directionalLightNode
     ? baseColorNode.mul(directionalTermNode)
@@ -280,9 +288,10 @@ function createTieColorNode(
       lightingUniforms.colorStrength
     ).mul(lightingUniforms.ambientScale);
     const ambientLitNode = baseColorNode.mul(ambientTermNode);
+    const combinedLightTermNode = ambientTermNode.add(directionalTermNode).clamp(0, 1);
     const additiveLitNode = directionalLitNode.add(ambientLitNode);
     const tintedWorldLitNode = baseColorNode.mul(ambientTermNode).mul(vec3(1, 1, 1).add(directionalTermNode));
-    const modulateLitNode = baseColorNode.mul(ambientTermNode).mul(directionalTermNode);
+    const modulateLitNode = applyModelDisplayModulateNode(baseColorNode, combinedLightTermNode);
     const maxLightLitNode = baseColorNode.mul(max(ambientTermNode, directionalTermNode));
     const blendedLitNode = additiveLitNode.mul(lightingUniforms.blendAdditiveScale)
       .add(tintedWorldLitNode.mul(lightingUniforms.blendTintedWorldScale))
@@ -296,7 +305,7 @@ function createTieColorNode(
       .add(rawAmbientColorNode.mul(lightingUniforms.rawByteScale));
   }
 
-  return applyModelMaterialFeatureColorNode(
+  const featureColorNode = applyModelMaterialFeatureColorNode(
     material,
     modelMaterialInfo,
     baseColorNode,
@@ -308,6 +317,7 @@ function createTieColorNode(
       skyboxReflectionTexture,
       lightingUniforms,
       hasSecondUvReflection));
+  return applyTieFogNode(applyTieDisplayLiftNode(featureColorNode.mul(lightingUniforms.exposureScale).clamp(0, 1)));
 }
 
 function createTieBaseColorNode(material: THREE.MeshBasicNodeMaterial): Node<'vec3'> {

@@ -140,6 +140,17 @@ export class ShrubInstanceController {
     return this.getStats();
   }
 
+  updateLightingOptions(options: ShrubRenderOptions): void {
+    this.options = { ...defaultShrubRenderOptions, ...options };
+    if (!this.group) {
+      return;
+    }
+
+    for (const binding of this.meshBindings) {
+      updateShrubMaterialLightingUniforms(binding.material, this.options);
+    }
+  }
+
   setBundleEnabled(enabled: boolean): void {
     this.bundleEnabled = enabled;
     this.applyBundleMode();
