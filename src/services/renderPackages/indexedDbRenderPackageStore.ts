@@ -1,4 +1,5 @@
 import type {
+  DlMobyInstances,
   DlLevelSettings,
   PackedFileEntry
 } from '../wasm/ratchetPs2Wasm';
@@ -9,7 +10,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'tie-glow-export-v2';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'moby-render-v1';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
@@ -24,6 +25,7 @@ export interface IndexedDbRenderPackageMetadata {
   entryCount: number;
   entries: PackedFileEntry[];
   levelSettings?: DlLevelSettings | null;
+  mobyInstances?: DlMobyInstances | null;
 }
 
 export interface IndexedDbRenderPackageRecord extends IndexedDbRenderPackageMetadata {
@@ -37,6 +39,7 @@ export interface SaveIndexedDbRenderPackageOptions {
   packedBytes: Uint8Array;
   entries: PackedFileEntry[];
   levelSettings?: DlLevelSettings | null;
+  mobyInstances?: DlMobyInstances | null;
 }
 
 interface IndexedDbRenderPackagePayload {
@@ -82,7 +85,8 @@ export async function saveIndexedDbRenderPackage(
     packedByteLength: options.packedBytes.byteLength,
     entryCount: entries.length,
     entries,
-    levelSettings: options.levelSettings ?? null
+    levelSettings: options.levelSettings ?? null,
+    mobyInstances: options.mobyInstances ?? null
   };
 
   const db = await openDatabase();

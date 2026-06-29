@@ -24,6 +24,7 @@ import {
   defaultTfragMaterialOptions,
   type LoadedMapPackage,
   type MapSceneLoadStageUpdate,
+  type MobyStats,
   type ShrubRenderOptions,
   type ShrubStats,
   type SkyboxRenderOptions,
@@ -34,6 +35,7 @@ import {
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import type {
+  DlMobyInstances,
   DlLevelSettings,
   DlRgb96
 } from '../../../services/wasm/ratchetPs2Wasm';
@@ -58,6 +60,7 @@ import {
   runRendererCleanup
 } from './RendererDisposal';
 import { yieldToBrowser } from './RendererTiming';
+import { MobyInstanceController } from './mobys/MobyInstanceController';
 import { SkyboxController } from './skybox/SkyboxController';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
@@ -84,6 +87,7 @@ interface MapSceneRendererOptions {
   tieRenderOptions?: TieRenderOptions;
   shrubRenderOptions?: ShrubRenderOptions;
   levelSettings?: DlLevelSettings | null;
+  mobyInstances?: DlMobyInstances | null;
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
   frameRateLimit?: number;
@@ -96,6 +100,7 @@ interface MapSceneRendererOptions {
   onSkyboxStats: (stats: SkyboxStats) => void;
   onTieStats: (stats: TieStats) => void;
   onShrubStats: (stats: ShrubStats) => void;
+  onMobyStats: (stats: MobyStats) => void;
   onFrameStats?: (stats: MapSceneFrameStats) => void;
   onRuntimeError?: (message: string) => void;
 }
@@ -200,6 +205,7 @@ export class MapSceneRenderer {
   private readonly onSkyboxStats: (stats: SkyboxStats) => void;
   private readonly onTieStats: (stats: TieStats) => void;
   private readonly onShrubStats: (stats: ShrubStats) => void;
+  private readonly onMobyStats: (stats: MobyStats) => void;
   private readonly onFrameStats?: (stats: MapSceneFrameStats) => void;
   private readonly onRuntimeError?: (message: string) => void;
   private readonly scene = new THREE.Scene();
@@ -211,11 +217,13 @@ export class MapSceneRenderer {
   private readonly skyboxController = new SkyboxController();
   private readonly tieController = new TieInstanceController();
   private readonly shrubController = new ShrubInstanceController();
+  private readonly mobyController = new MobyInstanceController();
   private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
   private shrubRenderOptions: ShrubRenderOptions;
   private readonly sceneEnvironment: MapSceneEnvironment;
+  private readonly mobyInstances: DlMobyInstances | null;
   private readonly lightingDebugEnabled: boolean;
   private debugTuning: MapSceneDebugTuning;
   private renderer: WebGPURenderer | null = null;
@@ -256,6 +264,7 @@ export class MapSceneRenderer {
     this.onSkyboxStats = options.onSkyboxStats;
     this.onTieStats = options.onTieStats;
     this.onShrubStats = options.onShrubStats;
+    this.onMobyStats = options.onMobyStats;
     this.onFrameStats = options.onFrameStats;
     this.onRuntimeError = options.onRuntimeError;
     this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
@@ -263,6 +272,7 @@ export class MapSceneRenderer {
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
     this.sceneEnvironment = resolveMapSceneEnvironment(options.levelSettings ?? null);
+    this.mobyInstances = options.mobyInstances ?? null;
     this.lightingDebugEnabled = options.lightingDebugEnabled ?? false;
     this.debugTuning = resolveMapSceneDebugTuning(this.lightingDebugEnabled ? options.debugTuning : undefined);
     setModelFog(this.sceneEnvironment.fog);
@@ -343,6 +353,7 @@ export class MapSceneRenderer {
       const skyboxStats = await this.loadSkybox(mapPackage);
       const tieStats = await this.loadTies(root, mapPackage, modelDisplayOptions);
       const shrubStats = await this.loadShrubs(root, mapPackage, modelDisplayOptions);
+      const mobyStats = await this.loadMobys(root, mapPackage, modelDisplayOptions);
 
       await this.prepareFirstFrame(root);
       this.onLoadProgress({
@@ -354,7 +365,8 @@ export class MapSceneRenderer {
         `${tfragStats.triangles.toLocaleString()} terrain triangles`,
         skyboxStats.loaded ? `${skyboxStats.shells.toLocaleString()} skybox shells` : null,
         tieStats.renderedInstances > 0 ? `${tieStats.renderedInstances.toLocaleString()} tie instances` : null,
-        shrubStats.renderedInstances > 0 ? `${shrubStats.renderedInstances.toLocaleString()} shrub instances` : null
+        shrubStats.renderedInstances > 0 ? `${shrubStats.renderedInstances.toLocaleString()} shrub instances` : null,
+        mobyStats.renderedInstances > 0 ? `${mobyStats.renderedInstances.toLocaleString()} moby instances` : null
       ].filter(Boolean).join(', '));
       return tfragStats;
     } catch (error: unknown) {
@@ -489,6 +501,42 @@ export class MapSceneRenderer {
     return shrubStats;
   }
 
+  private async loadMobys(
+    root: THREE.Object3D,
+    mapPackage: LoadedMapPackage,
+    modelDisplayOptions: ModelDisplayNodeOptions
+  ): Promise<MobyStats> {
+    this.onLoadProgress({ id: 'mobys', status: 'active', detail: 'Preparing instances' });
+    this.onStatus('Loading moby instances');
+    const mobyStats = await this.mobyController.load(
+      root,
+      mapPackage,
+      this.loader,
+      this.mobyInstances,
+      this.resolveShrubRenderOptions(),
+      modelDisplayOptions,
+      (loaded, total) => {
+        this.onLoadProgress({
+          id: 'mobys',
+          status: 'active',
+          detail: `${loaded.toLocaleString()} / ${total.toLocaleString()} classes`,
+          loaded,
+          total
+        });
+      }
+    );
+    this.mobyController.setBundleEnabled(this.instanceBundleEnabled);
+    this.onMobyStats(mobyStats);
+    this.onLoadProgress({
+      id: 'mobys',
+      status: 'done',
+      detail: mobyStats.renderedInstances > 0
+        ? `${mobyStats.renderedInstances.toLocaleString()} instances`
+        : 'No mobys'
+    });
+    return mobyStats;
+  }
+
   private async prepareFirstFrame(root: THREE.Object3D): Promise<void> {
     this.reportFirstFrameProgress('Attaching scene', 1);
     await yieldToBrowser();
@@ -548,6 +596,7 @@ export class MapSceneRenderer {
     this.skyboxController.dispose();
     this.tieController.dispose();
     this.shrubController.dispose();
+    this.mobyController.dispose();
     this.disposeRenderPipelines();
     this.renderer?.dispose();
     this.container.replaceChildren();
@@ -604,6 +653,10 @@ export class MapSceneRenderer {
     this.tieController.setVisible(visible);
   }
 
+  setMobyVisible(visible: boolean): void {
+    this.mobyController.setVisible(visible);
+  }
+
   setTieMaterialMode(mode: TieMaterialMode): void {
     this.tieController.setMaterialMode(mode);
   }
@@ -612,6 +665,7 @@ export class MapSceneRenderer {
     this.instanceBundleEnabled = enabled;
     this.tieController.setBundleEnabled(enabled);
     this.shrubController.setBundleEnabled(enabled);
+    this.mobyController.setBundleEnabled(enabled);
   }
 
   setGlowBloomEnabled(enabled: boolean): void {
@@ -643,6 +697,7 @@ export class MapSceneRenderer {
 
     this.tieController.updateLightingOptions(this.resolveTieRenderOptions());
     this.shrubController.updateLightingOptions(this.resolveShrubRenderOptions());
+    this.mobyController.updateLightingOptions(this.resolveShrubRenderOptions());
 
     this.lastRenderSubmitTime = 0;
   }
@@ -660,6 +715,7 @@ export class MapSceneRenderer {
   setShrubRenderOptions(options: ShrubRenderOptions): ShrubStats | null {
     this.shrubRenderOptions = options;
     const stats = this.shrubController.setOptions(this.resolveShrubRenderOptions());
+    this.mobyController.updateLightingOptions(this.resolveShrubRenderOptions());
     if (stats) {
       this.onShrubStats(stats);
     }

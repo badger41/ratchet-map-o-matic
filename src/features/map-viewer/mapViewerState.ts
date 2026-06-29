@@ -22,6 +22,7 @@ export const mapViewerStageDefinitions: MapViewerStageDefinition[] = [
   { id: 'skybox', label: 'Load skybox' },
   { id: 'ties', label: 'Load ties' },
   { id: 'shrubs', label: 'Load shrubs' },
+  { id: 'mobys', label: 'Load mobys' },
   { id: 'compile', label: 'Scene setup' }
 ];
 

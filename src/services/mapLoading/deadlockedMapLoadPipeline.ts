@@ -8,11 +8,12 @@ import {
 } from '../renderPackages/indexedDbRenderPackageStore';
 import {
   loadRatchetPs2Wasm,
+  type DlMobyInstances,
   type DlLevelSettings,
   type RatchetPs2WasmModule
 } from '../wasm/ratchetPs2Wasm';
 import { fetchWadBytes } from '../wads/fetchWadBytes';
-import { extractDlLevelSettingsGameplayCore } from './extractDlGameplayCore';
+import { extractDlGameplayCore } from './extractDlGameplayCore';
 
 export type MapLoadStageId = 'download' | 'convert' | 'store';
 export type MapLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
@@ -40,7 +41,13 @@ export interface DeadlockedMapLoadResult {
   cachedPackage: IndexedDbRenderPackageMetadata | null;
   packageSource: string;
   levelSettings: DlLevelSettings | null;
+  mobyInstances: DlMobyInstances | null;
   durationMs: number;
+}
+
+interface DeadlockedGameplayData {
+  levelSettings: DlLevelSettings | null;
+  mobyInstances: DlMobyInstances | null;
 }
 
 export const mapLoadStageDefinitions: MapLoadStageDefinition[] = [
@@ -119,6 +126,7 @@ export async function loadDeadlockedMapRenderPackage(
       cachedPackage: existingPackage,
       packageSource: toIndexedDbPackageSource(existingPackage.id),
       levelSettings: existingPackage.levelSettings ?? null,
+      mobyInstances: existingPackage.mobyInstances ?? null,
       durationMs: performance.now() - startedAt
     };
   }
@@ -161,11 +169,11 @@ export async function loadDeadlockedMapRenderPackage(
   onStageUpdate?.({
     id: 'convert',
     status: 'active',
-    detail: 'Parsing gameplay settings',
+    detail: 'Parsing gameplay data',
     loaded: 1,
     total: 3
   });
-  const levelSettings = await parseLevelSettings(wasm, wadBytes);
+  const gameplayData = await parseWadGameplayData(wasm, wadBytes);
 
   onStageUpdate?.({
     id: 'convert',
@@ -201,7 +209,8 @@ export async function loadDeadlockedMapRenderPackage(
     wadBytes,
     packedBytes: renderPackage.packedBytes,
     entries: renderPackage.entries,
-    levelSettings
+    levelSettings: gameplayData.levelSettings,
+    mobyInstances: gameplayData.mobyInstances
   });
   onStageUpdate?.({
     id: 'store',
@@ -220,24 +229,55 @@ export async function loadDeadlockedMapRenderPackage(
     entryCount: renderPackage.entries.length,
     cachedPackage,
     packageSource: toIndexedDbPackageSource(cachedPackage.id),
-    levelSettings,
+    levelSettings: gameplayData.levelSettings,
+    mobyInstances: gameplayData.mobyInstances,
     durationMs: performance.now() - startedAt
   };
 }
 
-async function parseLevelSettings(wasm: RatchetPs2WasmModule, wadBytes: Uint8Array): Promise<DlLevelSettings | null> {
+async function parseWadGameplayData(wasm: RatchetPs2WasmModule, wadBytes: Uint8Array): Promise<DeadlockedGameplayData> {
   try {
-    const levelSettingsCore = extractDlLevelSettingsGameplayCore(wadBytes);
-    if (!levelSettingsCore) {
-      return null;
+    const gameplayCore = extractDlGameplayCore(wadBytes);
+    if (!gameplayCore) {
+      return emptyGameplayData();
     }
 
-    return (await wasm.parseDlGameplayCore(levelSettingsCore)).blocks
-      .find((block) => block.levelSettings)?.levelSettings ?? null;
+    return parseGameplayCore(wasm, gameplayCore);
   } catch (error) {
-    console.warn('Failed to parse DL gameplay LevelSettings.', error);
-    return null;
+    console.warn('Failed to parse DL gameplay data.', error);
+    return emptyGameplayData();
   }
+}
+
+async function parseLooseGameplayData(manifestUrl: string): Promise<DeadlockedGameplayData> {
+  try {
+    const gameplayCoreUrl = new URL('gameplay/gameplay_core.bin', new URL(manifestUrl, window.location.href));
+    const response = await fetch(gameplayCoreUrl);
+    if (!response.ok) {
+      return emptyGameplayData();
+    }
+
+    const wasm = await loadRatchetPs2Wasm();
+    return parseGameplayCore(wasm, new Uint8Array(await response.arrayBuffer()));
+  } catch (error) {
+    console.warn('Failed to parse loose DL gameplay data.', error);
+    return emptyGameplayData();
+  }
+}
+
+async function parseGameplayCore(wasm: RatchetPs2WasmModule, gameplayCore: Uint8Array): Promise<DeadlockedGameplayData> {
+  const blocks = (await wasm.parseDlGameplayCore(gameplayCore)).blocks;
+  return {
+    levelSettings: blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
+    mobyInstances: blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null
+  };
+}
+
+function emptyGameplayData(): DeadlockedGameplayData {
+  return {
+    levelSettings: null,
+    mobyInstances: null
+  };
 }
 
 async function loadLooseViewerPackage(
@@ -256,8 +296,16 @@ async function loadLooseViewerPackage(
   });
   onStageUpdate?.({
     id: 'convert',
+    status: 'active',
+    detail: 'Parsing gameplay data',
+    loaded: null,
+    total: null
+  });
+  const gameplayData = await parseLooseGameplayData(sourceUrl);
+  onStageUpdate?.({
+    id: 'convert',
     status: 'done',
-    detail: 'Skipped',
+    detail: gameplayData.mobyInstances || gameplayData.levelSettings ? 'Parsed gameplay data' : 'Skipped',
     loaded: null,
     total: null
   });
@@ -278,7 +326,8 @@ async function loadLooseViewerPackage(
     entryCount: 0,
     cachedPackage: null,
     packageSource: sourceUrl,
-    levelSettings: null,
+    levelSettings: gameplayData.levelSettings,
+    mobyInstances: gameplayData.mobyInstances,
     durationMs: performance.now() - startedAt
   };
 }

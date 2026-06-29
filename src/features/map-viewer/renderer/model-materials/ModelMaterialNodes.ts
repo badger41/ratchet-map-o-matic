@@ -27,7 +27,8 @@ import type Node from 'three/src/nodes/core/Node.js';
 
 export type ModelMaterialFamily =
   | 'tie'
-  | 'shrub';
+  | 'shrub'
+  | 'moby';
 
 export interface ModelMaterialInfo {
   family: ModelMaterialFamily;
@@ -92,10 +93,10 @@ const tieTextureMatrixPassMask = 0x01;
 const tieEnvironmentPassMask = 0x06;
 
 export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMaterialFamily): ModelMaterialInfo {
-  const alphaUsage = readStringExtra(source, alphaExtraNames(family, 'TextureAlphaUsage'));
-  const alphaMode = readStringExtra(source, alphaExtraNames(family, 'TextureAlphaMode'))
-    ?? readStringExtra(source, alphaExtraNames(family, 'TextureGltfAlphaMode'))
-    ?? normalizeSourceAlphaMode(source.alphaTest, source.transparent);
+  const alphaUsage = resolveAlphaUsage(source, family);
+  const alphaMode = alphaUsage === 'Opaque'
+    ? null
+    : resolveAlphaMode(source, family);
   const inferredTextureAlpha = alphaUsage === 'Opacity'
     || alphaUsage === 'ReflectiveMask'
     || alphaMode === 'Blend'
@@ -715,9 +716,34 @@ function readMaterialEmissiveStrength(source: THREE.Material): number | null {
 }
 
 function alphaExtraNames(family: ModelMaterialFamily, suffix: string): string[] {
-  const prefix = family === 'tie' ? 'Tie' : 'Shrub';
-  const legacyPrefix = family === 'tie' ? 'DlTie' : 'DlShrub';
+  const prefix = family === 'tie' ? 'Tie' : family === 'shrub' ? 'Shrub' : 'Moby';
+  const legacyPrefix = family === 'tie' ? 'DlTie' : family === 'shrub' ? 'DlShrub' : 'DlMoby';
   return [`${prefix}${suffix}`, `${legacyPrefix}${suffix}`];
+}
+
+function resolveAlphaUsage(source: THREE.Material, family: ModelMaterialFamily): string | null {
+  const alphaUsage = readStringExtra(source, alphaExtraNames(family, 'TextureAlphaUsage'));
+  if (alphaUsage || family !== 'moby') {
+    return alphaUsage;
+  }
+
+  const minAlpha = readOptionalNumberExtra(source, ['MobyTextureMinAlpha', 'MinAlpha']);
+  if (minAlpha !== null) {
+    return minAlpha >= modelFullOpacityAlphaByte ? 'Opaque' : 'Opacity';
+  }
+
+  const hasAlpha = readBooleanExtra(source, ['MobyTextureHasAlpha', 'HasAlpha']);
+  return hasAlpha === null ? null : hasAlpha ? 'Opacity' : 'Opaque';
+}
+
+function resolveAlphaMode(source: THREE.Material, family: ModelMaterialFamily): string | null {
+  return readStringExtra(source, alphaExtraNames(family, 'TextureAlphaMode'))
+    ?? readStringExtra(source, alphaExtraNames(family, 'TextureGltfAlphaMode'))
+    ?? (family === 'moby'
+      ? readStringExtra(source, ['MobyTextureGltfAlphaMode', 'GltfAlphaMode'])
+        ?? readStringExtra(source, ['MobyTextureAlphaMode', 'AlphaMode'])
+      : null)
+    ?? normalizeSourceAlphaMode(source.alphaTest, source.transparent);
 }
 
 function normalizeSourceAlphaMode(alphaTest: number, transparent: boolean): string | null {

@@ -74,6 +74,7 @@ export async function loadMapPackageFromAssetPackage(
     : null;
   const skyboxGltfUrl = skyboxGltfPath ? await assetPackage.resolveUrl(skyboxGltfPath) : null;
   const tieEntries = findTieGltfEntries(assetManifest);
+  const mobyEntries = findMobyGltfEntries(assetManifest);
   const shrubEntries = findShrubGltfEntries(assetManifest);
 
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
@@ -126,6 +127,7 @@ export async function loadMapPackageFromAssetPackage(
     tieColorsPath: tieColorsPackagePath,
     tieClassCountExpected: numberValue(worldManifest?.TieClassCount),
     tieInstanceCountExpected: numberValue(worldManifest?.TieInstanceCount),
+    mobyEntries,
     shrubEntries,
     shrubClassIdsPath: shrubClassIdsPackagePath,
     shrubInstancesPath: shrubInstancesPackagePath,
@@ -202,6 +204,10 @@ function findSkyboxGltfEntry(assetManifest: AssetManifest): GltfExportEntry | nu
 
 function findTieGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
   return findFamilyGltfEntries(assetManifest, 'tie');
+}
+
+function findMobyGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
+  return findFamilyGltfEntries(assetManifest, 'moby');
 }
 
 function findShrubGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {

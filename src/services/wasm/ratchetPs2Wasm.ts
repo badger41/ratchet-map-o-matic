@@ -16,6 +16,12 @@ export interface DlRgb96 {
   blue: number;
 }
 
+export interface DlVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface DlLevelSettings {
   backgroundColor: DlRgb96;
   fogColor: DlRgb96;
@@ -25,8 +31,43 @@ export interface DlLevelSettings {
   fogFarIntensity: number;
 }
 
+export interface DlMobyInstance {
+  size: number;
+  mission: number;
+  uid: number;
+  bolts: number;
+  classId: number;
+  scale: number;
+  drawDistance: number;
+  updateDistance: number;
+  unused20: number;
+  unused24: number;
+  position: DlVector3;
+  rotation: DlVector3;
+  group: number;
+  isRooted: number;
+  rootedDistance: number;
+  unused4C: number;
+  pvarIndex: number;
+  occlusion: number;
+  modeBits: number;
+  color: DlRgb96;
+  light: number;
+  unused6C: number;
+}
+
+export interface DlMobyInstances {
+  staticCount: number;
+  spawnableMobyCount: number;
+  pad8: number;
+  padC: number;
+  instances: DlMobyInstance[];
+  trailingByteLength: number;
+}
+
 export interface DlGameplayBlock {
   levelSettings: DlLevelSettings | null;
+  mobyInstances: DlMobyInstances | null;
 }
 
 export interface DlGameplayBlocks {
@@ -42,7 +83,7 @@ export interface RatchetPs2WasmModule {
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'tie-glow-export-v2';
+const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'moby-render-v1';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {

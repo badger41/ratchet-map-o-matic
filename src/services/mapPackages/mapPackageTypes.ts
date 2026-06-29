@@ -4,7 +4,7 @@ export type Vec4 = [number, number, number, number];
 
 export type DiagnosticMode = 'runtime' | 'base' | 'cache' | 'selector';
 export type SkyboxBlendMode = 'metadata' | 'auto-additive-overlays' | 'additive-blend-layers';
-export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'ties' | 'shrubs' | 'compile';
+export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'ties' | 'shrubs' | 'mobys' | 'compile';
 export type MapSceneLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
 
 export interface MapSceneLoadStageUpdate {
@@ -100,6 +100,7 @@ export interface LoadedMapPackage {
   tieColorsPath: string | null;
   tieClassCountExpected: number | null;
   tieInstanceCountExpected: number | null;
+  mobyEntries: GltfExportEntry[];
   shrubEntries: GltfExportEntry[];
   shrubClassIdsPath: string | null;
   shrubInstancesPath: string | null;
@@ -203,6 +204,18 @@ export interface ShrubStats {
   batches: number;
   primitives: number;
   billboardBatches: number;
+  triangles: number;
+}
+
+export interface MobyStats {
+  classIds: number;
+  exportedClasses: number;
+  loadedClasses: number;
+  instances: number;
+  renderedInstances: number;
+  missingClasses: number;
+  batches: number;
+  primitives: number;
   triangles: number;
 }
 

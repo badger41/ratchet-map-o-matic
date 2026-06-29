@@ -21,6 +21,7 @@ import {
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
   defaultTfragMaterialOptions,
+  type MobyStats,
   type ShrubStats,
   type SkyboxStats,
   type TieStats,
@@ -85,6 +86,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [skyboxStats, setSkyboxStats] = useState<SkyboxStats | null>(null);
   const [tieStats, setTieStats] = useState<TieStats | null>(null);
   const [shrubStats, setShrubStats] = useState<ShrubStats | null>(null);
+  const [mobyStats, setMobyStats] = useState<MobyStats | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
@@ -92,6 +94,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [skyboxVisible, setSkyboxVisible] = useState(true);
   const [tiesVisible, setTiesVisible] = useState(true);
   const [shrubsVisible, setShrubsVisible] = useState(true);
+  const [mobysVisible, setMobysVisible] = useState(true);
   const [tieMaterialMode, setTieMaterialMode] = useState<TieMaterialMode>('full');
   const [tieColorsEnabled, setTieColorsEnabled] = useState(true);
   const [tieBundleEnabled, setTieBundleEnabled] = useState(true);
@@ -169,6 +172,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [tiesVisible]);
 
   useEffect(() => {
+    rendererRef.current?.setMobyVisible(mobysVisible);
+  }, [mobysVisible]);
+
+  useEffect(() => {
     rendererRef.current?.setTieMaterialMode(tieMaterialMode);
   }, [tieMaterialMode]);
 
@@ -235,6 +242,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         colorsEnabled: tieColorsEnabled
       },
       levelSettings: result.levelSettings,
+      mobyInstances: result.mobyInstances,
       glowBloomEnabled,
       glowBloomFalloffDistance,
       frameRateLimit,
@@ -271,6 +279,11 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           setShrubStats(stats);
         }
       },
+      onMobyStats: (stats) => {
+        if (!disposed) {
+          setMobyStats(stats);
+        }
+      },
       onFrameStats: (stats) => {
         if (!disposed) {
           setFrameStats(stats);
@@ -294,6 +307,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       setSkyboxStats(null);
       setTieStats(null);
       setShrubStats(null);
+      setMobyStats(null);
       setStages(createMapViewerStages('manifest'));
 
       try {
@@ -326,6 +340,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         renderer.setTerrainVisible(terrainVisible);
         renderer.setTieVisible(tiesVisible);
         renderer.setTieMaterialMode(tieMaterialMode);
+        renderer.setMobyVisible(mobysVisible);
         renderer.setTieBundleEnabled(tieBundleEnabled);
         renderer.setGlowBloomEnabled(glowBloomEnabled);
         renderer.setGlowBloomFalloffDistance(glowBloomFalloffDistance);
@@ -353,7 +368,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       rendererRef.current = null;
       renderer.dispose();
     };
-  }, [result.packageSource, result.levelSettings, debugModeEnabled]);
+  }, [result.packageSource, result.levelSettings, result.mobyInstances, debugModeEnabled]);
 
   return (
     <Box
@@ -509,6 +524,12 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 checked={shrubsVisible}
                 onChange={(event) => setShrubsVisible(event.currentTarget.checked)}
               />
+              <Checkbox
+                size="xs"
+                label="Mobys"
+                checked={mobysVisible}
+                onChange={(event) => setMobysVisible(event.currentTarget.checked)}
+              />
             </Group>
             <Table withRowBorders={false} verticalSpacing={2}>
               <Table.Tbody>
@@ -543,6 +564,12 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 <DebugRow label="Shrub primitives" value={shrubStats?.primitives.toLocaleString() ?? '-'} />
                 <DebugRow label="Shrub triangles" value={shrubStats?.triangles.toLocaleString() ?? '-'} />
                 <DebugRow label="Missing shrubs" value={shrubStats?.missingClasses.toLocaleString() ?? '-'} />
+                <DebugRow label="Moby classes" value={formatMobyLoadedClasses(mobyStats)} />
+                <DebugRow label="Moby instances" value={mobyStats?.renderedInstances.toLocaleString() ?? '-'} />
+                <DebugRow label="Moby batches" value={mobyStats?.batches.toLocaleString() ?? '-'} />
+                <DebugRow label="Moby primitives" value={mobyStats?.primitives.toLocaleString() ?? '-'} />
+                <DebugRow label="Moby triangles" value={mobyStats?.triangles.toLocaleString() ?? '-'} />
+                <DebugRow label="Missing mobys" value={mobyStats?.missingClasses.toLocaleString() ?? '-'} />
                 <DebugRow label="Directional Lights" value={tfragStats.directionalLightRecords.toLocaleString()} />
                 <DebugRow label="Material Rebakes" value={tfragStats.materialRebakes.toLocaleString()} />
                 <DebugRow label="Render Package" value={formatByteSize(result.packedByteLength)} />
@@ -573,6 +600,14 @@ function formatTieLoadedClasses(stats: TieStats | null): string {
 }
 
 function formatShrubLoadedClasses(stats: ShrubStats | null): string {
+  if (!stats) {
+    return '-';
+  }
+
+  return `${stats.loadedClasses.toLocaleString()} / ${stats.classIds.toLocaleString()}`;
+}
+
+function formatMobyLoadedClasses(stats: MobyStats | null): string {
   if (!stats) {
     return '-';
   }
