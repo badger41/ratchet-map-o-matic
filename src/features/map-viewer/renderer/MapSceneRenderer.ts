@@ -63,10 +63,12 @@ import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
 import { setTieBloomDistanceFadeRange } from './ties/TieMaterials';
 import {
+  createModelDisplayNodeOptions,
   defaultModelFogDebugOptions,
   setModelFog,
   setModelFogDebugOptions,
   setModelFamilyDisplayOptions,
+  type ModelDisplayNodeOptions,
   type ModelFogDebugOptions
 } from './ModelFog';
 import type { TieMaterialMode } from './ties/TieTypes';
@@ -85,7 +87,9 @@ interface MapSceneRendererOptions {
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
   frameRateLimit?: number;
+  frameStatsDetailEnabled?: boolean;
   debugTuning?: Partial<MapSceneDebugTuning>;
+  lightingDebugEnabled?: boolean;
   onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
   onStatus: (status: string) => void;
   onTfragStats: (stats: TfragStats) => void;
@@ -212,6 +216,7 @@ export class MapSceneRenderer {
   private tieRenderOptions: TieRenderOptions;
   private shrubRenderOptions: ShrubRenderOptions;
   private readonly sceneEnvironment: MapSceneEnvironment;
+  private readonly lightingDebugEnabled: boolean;
   private debugTuning: MapSceneDebugTuning;
   private renderer: WebGPURenderer | null = null;
   private baseRenderPipeline: MapRenderPipeline | null = null;
@@ -229,6 +234,7 @@ export class MapSceneRenderer {
   private minRenderIntervalMs: number;
   private glowBloomEnabled: boolean;
   private glowBloomFalloffDistance: number;
+  private frameStatsDetailEnabled: boolean;
   private instanceBundleEnabled = true;
   private animationRenderSuspended = false;
   private rendererUnavailable = false;
@@ -257,11 +263,13 @@ export class MapSceneRenderer {
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
     this.sceneEnvironment = resolveMapSceneEnvironment(options.levelSettings ?? null);
-    this.debugTuning = resolveMapSceneDebugTuning(options.debugTuning);
+    this.lightingDebugEnabled = options.lightingDebugEnabled ?? false;
+    this.debugTuning = resolveMapSceneDebugTuning(this.lightingDebugEnabled ? options.debugTuning : undefined);
     setModelFog(this.sceneEnvironment.fog);
     this.applyDebugTuning();
     this.glowBloomEnabled = options.glowBloomEnabled ?? true;
     this.glowBloomFalloffDistance = resolveGlowBloomFalloffDistance(options.glowBloomFalloffDistance);
+    this.frameStatsDetailEnabled = options.frameStatsDetailEnabled ?? false;
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
   }
@@ -328,12 +336,13 @@ export class MapSceneRenderer {
 
     const root = new THREE.Group();
     root.name = 'map_package';
+    const modelDisplayOptions = this.createModelDisplayNodeOptions();
 
     try {
-      const tfragStats = await this.loadTerrain(root, mapPackage);
+      const tfragStats = await this.loadTerrain(root, mapPackage, modelDisplayOptions);
       const skyboxStats = await this.loadSkybox(mapPackage);
-      const tieStats = await this.loadTies(root, mapPackage);
-      const shrubStats = await this.loadShrubs(root, mapPackage);
+      const tieStats = await this.loadTies(root, mapPackage, modelDisplayOptions);
+      const shrubStats = await this.loadShrubs(root, mapPackage, modelDisplayOptions);
 
       await this.prepareFirstFrame(root);
       this.onLoadProgress({
@@ -356,7 +365,11 @@ export class MapSceneRenderer {
     }
   }
 
-  private async loadTerrain(root: THREE.Object3D, mapPackage: LoadedMapPackage): Promise<TfragStats> {
+  private async loadTerrain(
+    root: THREE.Object3D,
+    mapPackage: LoadedMapPackage,
+    modelDisplayOptions: ModelDisplayNodeOptions
+  ): Promise<TfragStats> {
     this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Loading glTF' });
     this.onStatus('Loading tfrag glTF');
     const gltf = await this.loader.loadAsync(mapPackage.tfragGltfUrl);
@@ -367,7 +380,12 @@ export class MapSceneRenderer {
 
     this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Preparing materials' });
     await yieldToBrowser();
-    const tfragStats = this.tfragController.prepare(tfragRoot, mapPackage.directionalLights, this.resolveTfragMaterialOptions());
+    const tfragStats = this.tfragController.prepare(
+      tfragRoot,
+      mapPackage.directionalLights,
+      this.resolveTfragMaterialOptions(),
+      modelDisplayOptions
+    );
     this.onTfragStats(tfragStats);
     this.onLoadProgress({
       id: 'tfrag',
@@ -400,7 +418,11 @@ export class MapSceneRenderer {
     return skyboxStats;
   }
 
-  private async loadTies(root: THREE.Object3D, mapPackage: LoadedMapPackage): Promise<TieStats> {
+  private async loadTies(
+    root: THREE.Object3D,
+    mapPackage: LoadedMapPackage,
+    modelDisplayOptions: ModelDisplayNodeOptions
+  ): Promise<TieStats> {
     this.onLoadProgress({ id: 'ties', status: 'active', detail: 'Preparing instances' });
     this.onStatus('Loading tie instances');
     const tieStats = await this.tieController.load(
@@ -409,6 +431,7 @@ export class MapSceneRenderer {
       this.loader,
       this.resolveTieRenderOptions(),
       this.skyboxController.getReflectionTexture(),
+      modelDisplayOptions,
       (loaded, total) => {
         this.onLoadProgress({
           id: 'ties',
@@ -431,7 +454,11 @@ export class MapSceneRenderer {
     return tieStats;
   }
 
-  private async loadShrubs(root: THREE.Object3D, mapPackage: LoadedMapPackage): Promise<ShrubStats> {
+  private async loadShrubs(
+    root: THREE.Object3D,
+    mapPackage: LoadedMapPackage,
+    modelDisplayOptions: ModelDisplayNodeOptions
+  ): Promise<ShrubStats> {
     this.onLoadProgress({ id: 'shrubs', status: 'active', detail: 'Preparing instances' });
     this.onStatus('Loading shrub instances');
     const shrubStats = await this.shrubController.load(
@@ -439,6 +466,7 @@ export class MapSceneRenderer {
       mapPackage,
       this.loader,
       this.resolveShrubRenderOptions(),
+      modelDisplayOptions,
       (loaded, total) => {
         this.onLoadProgress({
           id: 'shrubs',
@@ -546,6 +574,12 @@ export class MapSceneRenderer {
     });
   }
 
+  setFrameStatsDetailEnabled(enabled: boolean): void {
+    this.frameStatsDetailEnabled = enabled;
+    this.submitSampleTotalMs = 0;
+    this.bloomSampleTotalMs = 0;
+  }
+
   setVirtualMoveInput(input: CameraVirtualMoveInput): void {
     this.controls?.setVirtualMoveInput(input);
   }
@@ -582,6 +616,9 @@ export class MapSceneRenderer {
 
   setGlowBloomEnabled(enabled: boolean): void {
     this.glowBloomEnabled = enabled;
+    if (!enabled) {
+      this.disposeRenderPipeline(true);
+    }
     this.lastRenderSubmitTime = 0;
   }
 
@@ -591,6 +628,10 @@ export class MapSceneRenderer {
   }
 
   setDebugTuning(tuning: Partial<MapSceneDebugTuning>): void {
+    if (!this.lightingDebugEnabled) {
+      return;
+    }
+
     const previousTfragOptions = this.resolveTfragMaterialOptions();
     this.debugTuning = resolveMapSceneDebugTuning(tuning);
     this.applyDebugTuning();
@@ -631,6 +672,15 @@ export class MapSceneRenderer {
     setModelFamilyDisplayOptions(this.debugTuning);
     this.worldDisplayLift.value = finiteNonNegative(this.debugTuning.worldDisplayLift, defaultWorldDisplayLift);
     this.sceneHazeStrength.value = finiteNonNegative(this.debugTuning.sceneHazeStrength, subtleSceneFogStrength);
+  }
+
+  private createModelDisplayNodeOptions(): ModelDisplayNodeOptions {
+    return createModelDisplayNodeOptions(
+      this.sceneEnvironment.fog,
+      this.debugTuning,
+      this.debugTuning,
+      this.lightingDebugEnabled
+    );
   }
 
   private resolveTfragMaterialOptions(): TfragMaterialOptions {
@@ -708,7 +758,8 @@ export class MapSceneRenderer {
       return;
     }
 
-    const submitStartMs = performance.now();
+    const collectDetails = this.frameStatsDetailEnabled;
+    const submitStartMs = collectDetails ? performance.now() : 0;
     const frameMs = time - this.lastFrameTime;
     this.lastFrameTime = time;
     if (frameMs > 0 && frameMs < 250) {
@@ -719,32 +770,36 @@ export class MapSceneRenderer {
     this.controls?.update(frameMs / 1000);
     this.skyboxController.update(time / 1000);
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
-    const bloomStartMs = performance.now();
+    const bloomStartMs = collectDetails ? performance.now() : 0;
     this.lastBloomStatus = this.resolveGlowBloomStatus();
     const includeBloom = this.lastBloomStatus === 'rendered';
     if (includeBloom) {
       this.syncBloomFadeRange();
     }
     this.renderWithPipeline(includeBloom);
-    this.bloomSampleTotalMs += performance.now() - bloomStartMs;
+    if (collectDetails) {
+      this.bloomSampleTotalMs += performance.now() - bloomStartMs;
+    }
 
-    this.submitSampleTotalMs += performance.now() - submitStartMs;
+    if (collectDetails) {
+      this.submitSampleTotalMs += performance.now() - submitStartMs;
+    }
 
     if (this.onFrameStats && time - this.lastStatsUpdateTime >= statsUpdateIntervalMs) {
       const averageFrameMs = this.frameSampleTotalMs / Math.max(1, this.frameSampleCount);
-      const averageSubmitMs = this.submitSampleTotalMs / Math.max(1, this.frameSampleCount);
-      const renderInfo = this.renderer.info.render as RendererRenderInfo;
+      const averageSubmitMs = collectDetails ? this.submitSampleTotalMs / Math.max(1, this.frameSampleCount) : 0;
+      const renderInfo = collectDetails ? this.renderer.info.render as RendererRenderInfo : null;
       this.onFrameStats({
         fps: averageFrameMs > 0 ? 1000 / averageFrameMs : 0,
         frameMs: averageFrameMs,
         submitMs: averageSubmitMs,
         frameRateLimit: this.frameRateLimit,
-        renderPasses: renderInfo.frameCalls ?? 0,
-        drawCalls: renderInfo.drawCalls ?? 0,
-        triangles: renderInfo.triangles ?? 0,
+        renderPasses: renderInfo?.frameCalls ?? 0,
+        drawCalls: renderInfo?.drawCalls ?? 0,
+        triangles: renderInfo?.triangles ?? 0,
         bloomStatus: this.lastBloomStatus,
-        bloomMs: this.bloomSampleTotalMs / Math.max(1, this.frameSampleCount),
-        bloomSources: this.tieController.getGlowBloomSourceCount()
+        bloomMs: collectDetails ? this.bloomSampleTotalMs / Math.max(1, this.frameSampleCount) : 0,
+        bloomSources: collectDetails ? this.tieController.getGlowBloomSourceCount() : 0
       });
       this.lastStatsUpdateTime = time;
       this.frameSampleTotalMs = 0;

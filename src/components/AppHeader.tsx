@@ -1,13 +1,22 @@
-import { Badge, Button, Checkbox, Group, Text } from '@mantine/core';
-import { FileArchive, RotateCcw } from 'lucide-react';
+import { Badge, Button, Checkbox, Group, Menu, Stack, Text } from '@mantine/core';
+import { Bug, FileArchive, RotateCcw } from 'lucide-react';
 import { useAppChrome } from '../features/app-chrome/AppChromeProvider';
 
 export function AppHeader() {
   const {
+    debugModeEnabled,
+    setDebugModeEnabled,
     debugPanelsVisible,
     setDebugPanelsVisible,
     viewerChrome
   } = useAppChrome();
+
+  const setDebugMode = (enabled: boolean) => {
+    setDebugModeEnabled(enabled);
+    if (!enabled) {
+      setDebugPanelsVisible(false);
+    }
+  };
 
   return (
     <Group h="100%" px="xl" justify="space-between" wrap="nowrap">
@@ -44,12 +53,34 @@ export function AppHeader() {
           </Group>
         ) : null}
 
-        <Checkbox
-          checked={debugPanelsVisible}
-          label="Debug"
-          size="xs"
-          onChange={(event) => setDebugPanelsVisible(event.currentTarget.checked)}
-        />
+        <Menu position="bottom-end" closeOnItemClick={false} withinPortal>
+          <Menu.Target>
+            <Button
+              variant={debugModeEnabled ? 'light' : 'subtle'}
+              size="xs"
+              leftSection={<Bug size={14} />}
+            >
+              Debug
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Stack gap="xs" p="xs" miw={160}>
+              <Checkbox
+                checked={debugModeEnabled}
+                label="Debug renderer"
+                size="xs"
+                onChange={(event) => setDebugMode(event.currentTarget.checked)}
+              />
+              <Checkbox
+                checked={debugModeEnabled && debugPanelsVisible}
+                label="Show panels"
+                size="xs"
+                disabled={!debugModeEnabled}
+                onChange={(event) => setDebugPanelsVisible(event.currentTarget.checked)}
+              />
+            </Stack>
+          </Menu.Dropdown>
+        </Menu>
       </Group>
     </Group>
   );

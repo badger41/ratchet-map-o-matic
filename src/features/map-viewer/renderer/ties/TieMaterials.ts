@@ -25,7 +25,8 @@ import {
   applyTieFogNode,
   applyTieDisplayLiftNode,
   applyModelDisplayModulateNode,
-  applyModelColorStrengthNode
+  applyModelColorStrengthNode,
+  type ModelDisplayNodeOptions
 } from '../ModelFog';
 import { createTieAmbientRawColorNode } from './TieAmbient';
 import {
@@ -61,7 +62,8 @@ export function cloneTieMaterial(
   ambientBinding: TieAmbientTextureBinding | null,
   directionalLightBinding: TieDirectionalLightBinding | null,
   skyboxReflectionTexture: THREE.Texture | null,
-  options: TieRenderOptions
+  options: TieRenderOptions,
+  displayOptions: ModelDisplayNodeOptions
 ): THREE.Material | THREE.Material[] {
   return Array.isArray(material)
     ? material.map((item) => createTieDisplayMaterial(
@@ -70,14 +72,16 @@ export function cloneTieMaterial(
       ambientBinding,
       directionalLightBinding,
       skyboxReflectionTexture,
-      options))
+      options,
+      displayOptions))
     : createTieDisplayMaterial(
       material,
       geometry,
       ambientBinding,
       directionalLightBinding,
       skyboxReflectionTexture,
-      options);
+      options,
+      displayOptions);
 }
 
 export function cloneTieTextureMaterial(material: THREE.Material | THREE.Material[]): THREE.Material | THREE.Material[] {
@@ -148,7 +152,8 @@ function createTieDisplayMaterial(
   ambientBinding: TieAmbientTextureBinding | null,
   directionalLightBinding: TieDirectionalLightBinding | null,
   skyboxReflectionTexture: THREE.Texture | null,
-  options: TieRenderOptions
+  options: TieRenderOptions,
+  displayOptions: ModelDisplayNodeOptions
 ): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
   const modelMaterialInfo = resolveModelMaterialInfo(source, 'tie');
@@ -218,7 +223,9 @@ function createTieDisplayMaterial(
       reflectionTexture,
       lightingUniforms,
       hasSecondUvReflection,
-      modelMaterialInfo);
+      modelMaterialInfo,
+      options,
+      displayOptions);
   }
 
   return material;
@@ -253,17 +260,24 @@ function createTieColorNode(
   skyboxReflectionTexture: THREE.Texture | null,
   lightingUniforms: TieLightingUniforms,
   hasSecondUvReflection: boolean,
-  modelMaterialInfo: ModelMaterialInfo
+  modelMaterialInfo: ModelMaterialInfo,
+  options: TieRenderOptions,
+  displayOptions: ModelDisplayNodeOptions
 ): Node<'vec3'> {
   const baseColorNode = createTieBaseColorNode(material);
   const directionalLightNode = directionalLightBinding
-    ? createTieDirectionalLightNode(directionalLightBinding, lightingUniforms)
+    ? createTieDirectionalLightNode(
+      directionalLightBinding,
+      lightingUniforms,
+      displayOptions.dynamic ? undefined : options)
     : null;
   const directionalColorNode = directionalLightBinding
     ? createTieDirectionalColorNode(directionalLightBinding, lightingUniforms)
     : null;
   const directionalTermNode = directionalLightNode
-    ? applyModelColorStrengthNode(directionalLightNode, lightingUniforms.directionalColorStrength)
+    ? applyModelColorStrengthNode(
+      directionalLightNode,
+      displayOptions.dynamic ? lightingUniforms.directionalColorStrength : options.directionalColorStrength)
       .mul(lightingUniforms.directionalScale)
       .mul(float(0.5))
     : vec3(0, 0, 0);
@@ -317,7 +331,11 @@ function createTieColorNode(
       skyboxReflectionTexture,
       lightingUniforms,
       hasSecondUvReflection));
-  return applyTieFogNode(applyTieDisplayLiftNode(featureColorNode.mul(lightingUniforms.exposureScale).clamp(0, 1)));
+  const exposureNode = displayOptions.dynamic ? lightingUniforms.exposureScale : float(Math.max(0, options.exposure));
+  return applyTieFogNode(
+    applyTieDisplayLiftNode(featureColorNode.mul(exposureNode).clamp(0, 1), displayOptions),
+    displayOptions
+  );
 }
 
 function createTieBaseColorNode(material: THREE.MeshBasicNodeMaterial): Node<'vec3'> {

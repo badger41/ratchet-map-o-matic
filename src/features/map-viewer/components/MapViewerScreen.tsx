@@ -74,6 +74,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<MapSceneRenderer | null>(null);
   const {
+    debugModeEnabled,
     debugPanelsVisible,
     setViewerChrome,
     resetViewerChrome
@@ -97,6 +98,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [glowBloomEnabled, setGlowBloomEnabled] = useState(true);
   const [glowBloomFalloffDistance, setGlowBloomFalloffDistance] = useState(defaultGlowBloomFalloffDistance);
   const [debugTuning, setDebugTuning] = useState<MapSceneDebugTuning>(readStoredDebugTuning);
+  const detailedFrameStatsEnabled = debugModeEnabled && debugPanelsVisible;
   const [frameStats, setFrameStats] = useState<MapSceneFrameStats>({
     fps: 0,
     frameMs: 0,
@@ -183,10 +185,18 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [glowBloomFalloffDistance]);
 
   useEffect(() => {
+    rendererRef.current?.setFrameStatsDetailEnabled(detailedFrameStatsEnabled);
+  }, [detailedFrameStatsEnabled]);
+
+  useEffect(() => {
+    if (!debugModeEnabled) {
+      return;
+    }
+
     rendererRef.current?.setDebugTuning(debugTuning);
     const timeoutId = window.setTimeout(() => writeStoredDebugTuning(debugTuning), 150);
     return () => window.clearTimeout(timeoutId);
-  }, [debugTuning]);
+  }, [debugModeEnabled, debugTuning]);
 
   useEffect(() => {
     rendererRef.current?.setTieRenderOptions({
@@ -228,7 +238,9 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       glowBloomEnabled,
       glowBloomFalloffDistance,
       frameRateLimit,
-      debugTuning,
+      frameStatsDetailEnabled: detailedFrameStatsEnabled,
+      debugTuning: debugModeEnabled ? debugTuning : undefined,
+      lightingDebugEnabled: debugModeEnabled,
       onStatus: (nextStatus) => {
         if (!disposed) {
           setStatus(nextStatus);
@@ -341,7 +353,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       rendererRef.current = null;
       renderer.dispose();
     };
-  }, [result.packageSource, result.levelSettings]);
+  }, [result.packageSource, result.levelSettings, debugModeEnabled]);
 
   return (
     <Box
@@ -415,7 +427,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         <MobileCameraControls onMoveInputChange={handleMobileMoveInputChange} />
       ) : null}
 
-      {debugPanelsVisible && ready && tfragStats ? (
+      {debugModeEnabled && debugPanelsVisible && ready && tfragStats ? (
         <Paper
           pos="absolute"
           bottom={{ base: 10, sm: 16 }}
@@ -541,7 +553,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         </Paper>
       ) : null}
 
-      {debugPanelsVisible && ready ? (
+      {debugModeEnabled && debugPanelsVisible && ready ? (
         <LightingDebugPanel
           debugTuning={debugTuning}
           onChange={setDebugTuningValue}

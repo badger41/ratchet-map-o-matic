@@ -67,6 +67,30 @@ export interface ModelFogSettings {
   farIntensity: number;
 }
 
+export interface ModelDisplayNodeOptions {
+  dynamic: boolean;
+  fog: ModelFogSettings | null;
+  fogDebugOptions: ModelFogDebugOptions;
+  familyOptions: ModelFamilyDisplayOptions;
+}
+
+type FloatNodeOrNumber = Node<'float'> | number;
+type FogFamilyKey = 'tfragFogEnabled' | 'tieFogEnabled' | 'shrubFogEnabled';
+
+export function createModelDisplayNodeOptions(
+  fog: ModelFogSettings | null,
+  fogDebugOptions: ModelFogDebugOptions,
+  familyOptions: ModelFamilyDisplayOptions,
+  dynamic: boolean
+): ModelDisplayNodeOptions {
+  return {
+    dynamic,
+    fog,
+    fogDebugOptions,
+    familyOptions
+  };
+}
+
 export function setModelFog(fog: ModelFogSettings | null): void {
   modelFogEnabled.value = fog ? 1 : 0;
   modelFogRed.value = fog?.color.r ?? 0;
@@ -96,31 +120,49 @@ export function setModelFamilyDisplayOptions(options: ModelFamilyDisplayOptions)
   modelShrubFogEnabled.value = options.shrubFogEnabled ? 1 : 0;
 }
 
-export function applyTfragDisplayLiftNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelDisplayLiftNode(colorNode, modelTfragDisplayLift);
+export function applyTfragDisplayLiftNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
+  return applyModelDisplayLiftNode(
+    colorNode,
+    options && !options.dynamic ? options.familyOptions.tfragUplift : modelTfragDisplayLift
+  );
 }
 
-export function applyTieDisplayLiftNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelDisplayLiftNode(colorNode, modelTieDisplayLift);
+export function applyTieDisplayLiftNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
+  return applyModelDisplayLiftNode(
+    colorNode,
+    options && !options.dynamic ? options.familyOptions.tieUplift : modelTieDisplayLift
+  );
 }
 
-export function applyShrubDisplayLiftNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelDisplayLiftNode(colorNode, modelShrubDisplayLift);
+export function applyShrubDisplayLiftNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
+  return applyModelDisplayLiftNode(
+    colorNode,
+    options && !options.dynamic ? options.familyOptions.shrubUplift : modelShrubDisplayLift
+  );
 }
 
-export function applyTfragFogNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelFogNode(colorNode, modelTfragFogEnabled);
+export function applyTfragFogNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
+  return applyModelFogNode(colorNode, modelTfragFogEnabled, options, 'tfragFogEnabled');
 }
 
-export function applyTieFogNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelFogNode(colorNode, modelTieFogEnabled);
+export function applyTieFogNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
+  return applyModelFogNode(colorNode, modelTieFogEnabled, options, 'tieFogEnabled');
 }
 
-export function applyShrubFogNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelFogNode(colorNode, modelShrubFogEnabled);
+export function applyShrubFogNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
+  return applyModelFogNode(colorNode, modelShrubFogEnabled, options, 'shrubFogEnabled');
 }
 
-function applyModelFogNode(colorNode: Node<'vec3'>, familyFogEnabled: Node<'float'>): Node<'vec3'> {
+function applyModelFogNode(
+  colorNode: Node<'vec3'>,
+  familyFogEnabled: Node<'float'>,
+  options: ModelDisplayNodeOptions | undefined,
+  familyKey: FogFamilyKey
+): Node<'vec3'> {
+  if (options && !options.dynamic) {
+    return applyStaticModelFogNode(colorNode, options, familyKey);
+  }
+
   const nearDistance = modelFogNearDistance.mul(modelFogNearDistanceScale);
   const farDistance = max(modelFogFarDistance.mul(modelFogFarDistanceScale), nearDistance.add(float(0.001)));
   const distanceMix = positionView.z.negate()
@@ -139,6 +181,46 @@ function applyModelFogNode(colorNode: Node<'vec3'>, familyFogEnabled: Node<'floa
   return applyModelColorGammaNode(mix(displayColor, displayFog, fogAmount), 2.2);
 }
 
+function applyStaticModelFogNode(
+  colorNode: Node<'vec3'>,
+  options: ModelDisplayNodeOptions,
+  familyKey: FogFamilyKey
+): Node<'vec3'> {
+  const fog = options.fog;
+  if (!fog || !options.familyOptions[familyKey]) {
+    return colorNode;
+  }
+
+  const fogOptions = options.fogDebugOptions;
+  const nearDistance = Math.max(0, finiteNumber(fog.nearDistance, 0))
+    * finiteNonNegative(fogOptions.fogNearDistanceScale, defaultModelFogDebugOptions.fogNearDistanceScale);
+  const farDistance = Math.max(
+    nearDistance + 0.001,
+    Math.max(0, finiteNumber(fog.farDistance, 1))
+      * finiteNonNegative(fogOptions.fogFarDistanceScale, defaultModelFogDebugOptions.fogFarDistanceScale)
+  );
+  const nearIntensity = finiteNumber(fog.nearIntensity, 0)
+    * finiteNonNegative(fogOptions.fogNearIntensityScale, defaultModelFogDebugOptions.fogNearIntensityScale);
+  const farIntensity = finiteNumber(fog.farIntensity, 0)
+    * finiteNonNegative(fogOptions.fogFarIntensityScale, defaultModelFogDebugOptions.fogFarIntensityScale);
+  const maxAmount = finiteNonNegative(fogOptions.fogModulationMaxAmount, defaultModelFogDebugOptions.fogModulationMaxAmount);
+  if (maxAmount <= 0 || (nearIntensity <= 0 && farIntensity <= 0)) {
+    return colorNode;
+  }
+
+  const distanceMix = positionView.z.negate()
+    .sub(float(nearDistance))
+    .div(float(farDistance - nearDistance))
+    .clamp(0, 1);
+  const fogAmount = mix(float(nearIntensity), float(farIntensity), distanceMix).clamp(0, maxAmount);
+  const displayColor = applyModelColorGammaNode(colorNode, 1 / 2.2);
+  const displayFogBase = applyModelColorGammaNode(vec3(fog.color.r, fog.color.g, fog.color.b), 1 / 2.2);
+  const displayFog = displayFogBase
+    .mul(float(finiteNonNegative(fogOptions.fogMeshColorStrength, defaultModelFogDebugOptions.fogMeshColorStrength)))
+    .clamp(0, 1);
+  return applyModelColorGammaNode(mix(displayColor, displayFog, fogAmount), 2.2);
+}
+
 export function applyModelColorGammaNode(colorNode: Node<'vec3'>, exponent: number): Node<'vec3'> {
   return vec3(
     pow(colorNode.r.clamp(0, 1), float(exponent)),
@@ -154,20 +236,39 @@ export function applyModelDisplayModulateNode(baseColorNode: Node<'vec3'>, light
   );
 }
 
-export function applyModelColorStrengthNode(colorNode: Node<'vec3'>, strengthNode: Node<'float'>): Node<'vec3'> {
+export function applyModelColorStrengthNode(colorNode: Node<'vec3'>, strengthNode: FloatNodeOrNumber): Node<'vec3'> {
+  if (typeof strengthNode === 'number') {
+    const strength = finiteNonNegative(strengthNode, 1);
+    if (Math.abs(strength - 1) < 0.0001) {
+      return colorNode;
+    }
+
+    const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
+    return mix(vec3(lumaNode, lumaNode, lumaNode), colorNode, float(strength)).clamp(0, 1);
+  }
+
   const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
   return mix(vec3(lumaNode, lumaNode, lumaNode), colorNode, strengthNode).clamp(0, 1);
 }
 
-function applyModelDisplayLiftNode(colorNode: Node<'vec3'>, lift: Node<'float'>): Node<'vec3'> {
+function applyModelDisplayLiftNode(colorNode: Node<'vec3'>, lift: FloatNodeOrNumber): Node<'vec3'> {
+  if (typeof lift === 'number') {
+    const liftValue = finiteNonNegative(lift, 1);
+    if (Math.abs(liftValue - 1) < 0.0001) {
+      return colorNode;
+    }
+
+    return applyModelDisplayLiftNode(colorNode, float(liftValue));
+  }
+
   const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
   const liftedLumaNode = lumaNode.mul(lift).clamp(0, 1);
   const ratioNode = liftedLumaNode.div(max(lumaNode, float(0.001)));
   return colorNode.mul(ratioNode).clamp(0, 1);
 }
 
-function finiteNonNegative(value: number, fallback: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : fallback;
+function finiteNonNegative(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
 
 function finiteNumber(value: number | undefined, fallback: number): number {

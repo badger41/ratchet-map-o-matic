@@ -33,6 +33,7 @@ import {
   updateShrubMaterialLightingUniforms
 } from './ShrubLighting';
 import { cloneShrubMaterial } from './ShrubMaterials';
+import type { ModelDisplayNodeOptions } from '../ModelFog';
 import {
   lightSelectorAttributeName,
   emptyShrubStats,
@@ -60,16 +61,19 @@ export class ShrubInstanceController {
   private directionalLightBinding: ShrubDirectionalLightBinding | null = null;
   private options: ShrubRenderOptions = { ...defaultShrubRenderOptions };
   private bundleEnabled = false;
+  private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
 
   async load(
     parent: THREE.Object3D,
     mapPackage: LoadedMapPackage,
     loader: GLTFLoader,
     options: ShrubRenderOptions,
+    modelDisplayOptions: ModelDisplayNodeOptions,
     onProgress?: ShrubLoadProgressCallback
   ): Promise<ShrubStats> {
     this.dispose();
     this.options = { ...defaultShrubRenderOptions, ...options };
+    this.modelDisplayOptions = modelDisplayOptions;
     this.stats = {
       ...emptyShrubStats,
       exportedClasses: mapPackage.shrubEntries.length
@@ -107,6 +111,7 @@ export class ShrubInstanceController {
   dispose(): void {
     const directionalLightBinding = this.directionalLightBinding;
     this.directionalLightBinding = null;
+    this.modelDisplayOptions = null;
 
     if (!this.group) {
       if (directionalLightBinding) {
@@ -260,7 +265,12 @@ export class ShrubInstanceController {
       const mirroredRecords = preparedRecords.filter((record) => record.mirroredKey === 'mirrored');
 
       for (const primitive of primitives) {
-        const material = cloneShrubMaterial(primitive.material, this.directionalLightBinding, this.options);
+        const displayOptions = this.modelDisplayOptions;
+        if (!displayOptions) {
+          throw new Error('Shrub material display options are not initialized.');
+        }
+
+        const material = cloneShrubMaterial(primitive.material, this.directionalLightBinding, this.options, displayOptions);
         for (const [chunkIndex, records] of chunkShrubRecords(normalRecords).entries()) {
           this.addInstancedPrimitive(group, classId, 'normal', records, primitive, chunkIndex, material);
         }

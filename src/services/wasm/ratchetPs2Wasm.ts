@@ -42,7 +42,7 @@ export interface RatchetPs2WasmModule {
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = 'gameplay-level-settings-v1';
+const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'tie-glow-export-v2';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {

@@ -9,7 +9,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = 'gameplay-level-settings-v1';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'tie-glow-export-v2';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;

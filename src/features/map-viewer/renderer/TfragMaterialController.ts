@@ -3,7 +3,8 @@ import { texture, uv, vertexColor } from 'three/tsl';
 import type { DirectionalLightRecord, TfragMaterialOptions, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
 import {
   applyTfragFogNode,
-  applyTfragDisplayLiftNode
+  applyTfragDisplayLiftNode,
+  type ModelDisplayNodeOptions
 } from './ModelFog';
 
 type AnyAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
@@ -97,7 +98,12 @@ export class TfragMaterialController {
   private prepared: PreparedTfrag[] = [];
   private materialRebakes = 0;
 
-  prepare(root: THREE.Object3D, directionalLights: DirectionalLightRecord[], options: TfragMaterialOptions): TfragStats {
+  prepare(
+    root: THREE.Object3D,
+    directionalLights: DirectionalLightRecord[],
+    options: TfragMaterialOptions,
+    displayOptions: ModelDisplayNodeOptions
+  ): TfragStats {
     pruneToLod0(root);
     this.dispose();
     this.prepared = [];
@@ -122,7 +128,7 @@ export class TfragMaterialController {
       const materialKey = materialBatchKey(sourceMaterial);
       let material = materialCache.get(materialKey);
       if (!material) {
-        material = createTfragDisplayMaterial(sourceMaterial);
+        material = createTfragDisplayMaterial(sourceMaterial, displayOptions);
         materialCache.set(materialKey, material);
       }
 
@@ -431,7 +437,10 @@ function evaluatePreparedLightRecord(
   ];
 }
 
-function createTfragDisplayMaterial(sourceMaterial: THREE.Material | THREE.Material[] | null): THREE.Material {
+function createTfragDisplayMaterial(
+  sourceMaterial: THREE.Material | THREE.Material[] | null,
+  displayOptions: ModelDisplayNodeOptions
+): THREE.Material {
   const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
   const source = firstMaterial as Partial<THREE.MeshBasicMaterial> | null;
   const material = new THREE.MeshBasicNodeMaterial({
@@ -450,9 +459,12 @@ function createTfragDisplayMaterial(sourceMaterial: THREE.Material | THREE.Mater
 
   if (material.map) {
     material.map.colorSpace = THREE.SRGBColorSpace;
-    material.colorNode = applyTfragFogNode(applyTfragDisplayLiftNode(texture(material.map, uv()).rgb.mul(vertexColor().rgb)));
+    material.colorNode = applyTfragFogNode(
+      applyTfragDisplayLiftNode(texture(material.map, uv()).rgb.mul(vertexColor().rgb), displayOptions),
+      displayOptions
+    );
   } else {
-    material.colorNode = applyTfragFogNode(applyTfragDisplayLiftNode(vertexColor().rgb));
+    material.colorNode = applyTfragFogNode(applyTfragDisplayLiftNode(vertexColor().rgb, displayOptions), displayOptions);
   }
 
   return material;

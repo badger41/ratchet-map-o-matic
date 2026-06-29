@@ -47,6 +47,7 @@ import {
   tieMaterialUsesGlowEmission,
   updateTieRenderOptionUniforms
 } from './TieMaterials';
+import type { ModelDisplayNodeOptions } from '../ModelFog';
 import {
   lightSelectorAttributeName,
   emptyTieStats,
@@ -79,6 +80,7 @@ export class TieInstanceController {
   private materialMode: TieMaterialMode = 'full';
   private bundleEnabled = false;
   private plainMaterial: THREE.MeshBasicNodeMaterial | null = null;
+  private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
   private hasGlowBloom = false;
   private glowBloomCenters: number[] = [];
 
@@ -88,11 +90,13 @@ export class TieInstanceController {
     loader: GLTFLoader,
     options: TieRenderOptions,
     skyboxReflectionTexture: THREE.Texture | null,
+    modelDisplayOptions: ModelDisplayNodeOptions,
     onProgress?: TieLoadProgressCallback
   ): Promise<TieStats> {
     this.dispose();
     this.options = { ...defaultTieRenderOptions, ...options };
     this.skyboxReflectionTexture = skyboxReflectionTexture;
+    this.modelDisplayOptions = modelDisplayOptions;
     this.hasGlowBloom = false;
     this.glowBloomCenters = [];
     this.stats = {
@@ -147,6 +151,7 @@ export class TieInstanceController {
     const directionalLightBinding = this.directionalLightBinding;
     this.directionalLightBinding = null;
     this.skyboxReflectionTexture = null;
+    this.modelDisplayOptions = null;
 
     if (!this.group) {
       this.meshBindings = [];
@@ -393,6 +398,11 @@ export class TieInstanceController {
 
   private createTieMaterialSet(records: PreparedTieRecord[], primitive: TiePrimitive): TieMaterialSet {
     const ambientBinding = createTieAmbientTextureBinding(records, primitive);
+    const displayOptions = this.modelDisplayOptions;
+    if (!displayOptions) {
+      throw new Error('Tie material display options are not initialized.');
+    }
+
     return {
       flatMaterial: cloneTieMaterial(
         primitive.material,
@@ -400,7 +410,8 @@ export class TieInstanceController {
         null,
         this.directionalLightBinding,
         this.skyboxReflectionTexture,
-        this.options),
+        this.options,
+        displayOptions),
       coloredMaterial: ambientBinding
         ? cloneTieMaterial(
           primitive.material,
@@ -408,7 +419,8 @@ export class TieInstanceController {
           ambientBinding,
           this.directionalLightBinding,
           this.skyboxReflectionTexture,
-          this.options)
+          this.options,
+          displayOptions)
         : null,
       textureMaterial: cloneTieTextureMaterial(primitive.material),
       ambientBinding

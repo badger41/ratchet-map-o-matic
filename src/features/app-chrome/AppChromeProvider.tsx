@@ -18,6 +18,8 @@ export interface ViewerChromeState {
 }
 
 interface AppChromeContextValue {
+  debugModeEnabled: boolean;
+  setDebugModeEnabled: (enabled: boolean) => void;
   debugPanelsVisible: boolean;
   setDebugPanelsVisible: (visible: boolean) => void;
   viewerChrome: ViewerChromeState;
@@ -35,6 +37,7 @@ const emptyViewerChrome: ViewerChromeState = {
 const AppChromeContext = createContext<AppChromeContextValue | null>(null);
 
 export function AppChromeProvider({ children }: { children: ReactNode }) {
+  const [debugModeEnabled, setDebugModeEnabled] = useState(false);
   const [debugPanelsVisible, setDebugPanelsVisible] = useState(false);
   const [viewerChrome, setViewerChromeState] = useState<ViewerChromeState>(emptyViewerChrome);
 
@@ -47,12 +50,14 @@ export function AppChromeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AppChromeContextValue>(() => ({
+    debugModeEnabled,
+    setDebugModeEnabled,
     debugPanelsVisible,
     setDebugPanelsVisible,
     viewerChrome,
     setViewerChrome,
     resetViewerChrome
-  }), [debugPanelsVisible, resetViewerChrome, setViewerChrome, viewerChrome]);
+  }), [debugModeEnabled, debugPanelsVisible, resetViewerChrome, setViewerChrome, viewerChrome]);
 
   return (
     <AppChromeContext.Provider value={value}>
