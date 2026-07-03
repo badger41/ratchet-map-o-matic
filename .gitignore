@@ -7,3 +7,4 @@ public/ratchetps2
 src/vendor/ratchetps2-wasm/
 *.local
 docs/map-viewer/
+.test-assets/

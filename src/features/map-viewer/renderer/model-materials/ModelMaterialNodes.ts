@@ -249,7 +249,7 @@ export function configureModelMaterialTransparency(
     material.alphaTest = 0;
   } else if (info.usesAlphaBlend) {
     material.transparent = true;
-    material.depthWrite = true;
+    material.depthWrite = false;
     material.alphaTest = 0;
   } else if (info.usesAlphaMask) {
     material.transparent = false;
@@ -258,6 +258,14 @@ export function configureModelMaterialTransparency(
   }
 
   material.forceSinglePass = false;
+}
+
+export function modelMaterialUsesAlphaBlend(material: THREE.Material | THREE.Material[]): boolean {
+  if (Array.isArray(material)) {
+    return material.some(modelMaterialUsesAlphaBlend);
+  }
+
+  return material.transparent && material.alphaTest <= 0;
 }
 
 export function createModelOpacityNode(

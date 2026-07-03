@@ -36,6 +36,7 @@ import { LoadYieldController, numberValue } from '../ties/tieUtils';
 import {
   configureModelMaterialTransparency,
   createModelOpacityNode,
+  modelMaterialUsesAlphaBlend,
   resolveModelMaterialInfo
 } from '../model-materials/ModelMaterialNodes';
 import {
@@ -73,6 +74,7 @@ interface MobyPrimitive {
 }
 
 interface MobyMeshBinding {
+  classId: number;
   mesh: THREE.InstancedMesh;
   material: THREE.Material | THREE.Material[];
 }
@@ -102,12 +104,14 @@ const mobyInstanceChunkMaxRecords = 768;
 
 export class MobyInstanceController {
   private group: MobyGroup | null = null;
+  private alphaBlendGroup: MobyGroup | null = null;
   private stats: MobyStats = { ...emptyMobyStats };
   private meshBindings: MobyMeshBinding[] = [];
   private directionalLightBinding: ShrubDirectionalLightBinding | null = null;
   private options: ShrubRenderOptions = { ...defaultShrubRenderOptions };
   private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
   private bundleEnabled = false;
+  private hiddenClassIds = new Set<number>();
 
   async load(
     parent: THREE.Object3D,
@@ -128,8 +132,12 @@ export class MobyInstanceController {
 
     const group = new THREE.BundleGroup() as MobyGroup;
     group.name = 'moby_instances';
+    const alphaBlendGroup = new THREE.BundleGroup() as MobyGroup;
+    alphaBlendGroup.name = 'moby_alpha_blend_instances';
     parent.add(group);
+    parent.add(alphaBlendGroup);
     this.group = group;
+    this.alphaBlendGroup = alphaBlendGroup;
     this.applyBundleMode();
     this.directionalLightBinding = createShrubDirectionalLightBinding(mapPackage.directionalLights);
 
@@ -152,23 +160,33 @@ export class MobyInstanceController {
     this.directionalLightBinding = null;
     this.modelDisplayOptions = null;
 
-    if (!this.group) {
+    if (!this.group && !this.alphaBlendGroup) {
       if (directionalLightBinding) {
         disposeShrubDirectionalLightBinding(directionalLightBinding);
       }
       this.meshBindings = [];
+      this.hiddenClassIds.clear();
       return;
     }
 
-    this.group.parent?.remove(this.group);
-    disposeObject3D(this.group);
+    if (this.group) {
+      this.group.parent?.remove(this.group);
+      disposeObject3D(this.group);
+      this.group.clear();
+    }
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.parent?.remove(this.alphaBlendGroup);
+      disposeObject3D(this.alphaBlendGroup);
+      this.alphaBlendGroup.clear();
+    }
     if (directionalLightBinding) {
       disposeShrubDirectionalLightBinding(directionalLightBinding);
     }
 
-    this.group.clear();
     this.group = null;
+    this.alphaBlendGroup = null;
     this.meshBindings = [];
+    this.hiddenClassIds.clear();
   }
 
   getStats(): MobyStats {
@@ -179,11 +197,36 @@ export class MobyInstanceController {
     if (this.group) {
       this.group.visible = visible;
     }
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.visible = visible;
+    }
+  }
+
+  setClassVisible(classId: number, visible: boolean): void {
+    if (visible) {
+      this.hiddenClassIds.delete(classId);
+    } else {
+      this.hiddenClassIds.add(classId);
+    }
+
+    for (const binding of this.meshBindings) {
+      if (binding.classId === classId) {
+        binding.mesh.visible = visible;
+      }
+    }
+    this.markBundleNeedsUpdate();
   }
 
   setBundleEnabled(enabled: boolean): void {
     this.bundleEnabled = enabled;
     this.applyBundleMode();
+  }
+
+  moveAlphaBlendPassToEnd(): void {
+    if (this.alphaBlendGroup?.parent) {
+      this.alphaBlendGroup.parent.add(this.alphaBlendGroup);
+      this.markBundleNeedsUpdate();
+    }
   }
 
   updateLightingOptions(options: ShrubRenderOptions): void {
@@ -199,6 +242,9 @@ export class MobyInstanceController {
     }
 
     this.group.isBundleGroup = this.bundleEnabled;
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.isBundleGroup = this.bundleEnabled;
+    }
     for (const binding of this.meshBindings) {
       binding.mesh.frustumCulled = !this.bundleEnabled;
     }
@@ -209,6 +255,9 @@ export class MobyInstanceController {
   private markBundleNeedsUpdate(): void {
     if (this.group?.needsUpdate !== undefined) {
       this.group.needsUpdate = true;
+    }
+    if (this.alphaBlendGroup?.needsUpdate !== undefined) {
+      this.alphaBlendGroup.needsUpdate = true;
     }
   }
 
@@ -316,6 +365,7 @@ export class MobyInstanceController {
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);
     mesh.name = `moby_${String(classId).padStart(5, '0')}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
+    mesh.visible = !this.hiddenClassIds.has(classId);
     mesh.frustumCulled = !this.bundleEnabled;
     mesh.static = true;
     mesh.matrixAutoUpdate = false;
@@ -329,8 +379,11 @@ export class MobyInstanceController {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
-    group.add(mesh);
-    this.meshBindings.push({ mesh, material });
+    const targetGroup = this.alphaBlendGroup && modelMaterialUsesAlphaBlend(material)
+      ? this.alphaBlendGroup
+      : group;
+    targetGroup.add(mesh);
+    this.meshBindings.push({ classId, mesh, material });
 
     this.stats.batches += 1;
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;

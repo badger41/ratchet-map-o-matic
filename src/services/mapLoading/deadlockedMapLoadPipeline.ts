@@ -10,6 +10,8 @@ import {
   loadRatchetPs2Wasm,
   type DlMobyInstances,
   type DlLevelSettings,
+  type DlPvarTables,
+  type WasmByteArray,
   type RatchetPs2WasmModule
 } from '../wasm/ratchetPs2Wasm';
 import { fetchWadBytes } from '../wads/fetchWadBytes';
@@ -266,11 +268,89 @@ async function parseLooseGameplayData(manifestUrl: string): Promise<DeadlockedGa
 }
 
 async function parseGameplayCore(wasm: RatchetPs2WasmModule, gameplayCore: Uint8Array): Promise<DeadlockedGameplayData> {
-  const blocks = (await wasm.parseDlGameplayCore(gameplayCore)).blocks;
+  const gameplay = await wasm.parseDlGameplayCore(gameplayCore);
+  const pvarTables = normalizeDlPvarTables(gameplay.pvarTables);
+  const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
   return {
-    levelSettings: blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
-    mobyInstances: blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null
+    levelSettings: gameplay.blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
+    mobyInstances: attachMobyPvars(mobyInstances, pvarTables)
   };
+}
+
+function attachMobyPvars(mobyInstances: DlMobyInstances | null, pvarTables: DlPvarTables | null): DlMobyInstances | null {
+  if (!mobyInstances || !pvarTables) {
+    return mobyInstances;
+  }
+
+  return {
+    ...mobyInstances,
+    instances: mobyInstances.instances.map((instance) => {
+      const entry = instance.pvarIndex >= 0 ? pvarTables.entries[instance.pvarIndex] : null;
+      return {
+        ...instance,
+        pvar: entry
+          ? {
+              index: entry.index,
+              offset: entry.offset,
+              length: entry.length,
+              data: normalizeBytes(entry.data)
+            }
+          : null
+      };
+    })
+  };
+}
+
+function normalizeDlPvarTables(pvarTables: DlPvarTables | null | undefined): DlPvarTables | null {
+  if (!pvarTables) {
+    return null;
+  }
+
+  return {
+    ...pvarTables,
+    mobyLinksBytes: normalizeBytes(pvarTables.mobyLinksBytes),
+    tableBytes: normalizeBytes(pvarTables.tableBytes),
+    dataBytes: normalizeBytes(pvarTables.dataBytes),
+    relativePointerBytes: normalizeBytes(pvarTables.relativePointerBytes),
+    entries: pvarTables.entries.map((entry) => ({
+      ...entry,
+      data: normalizeBytes(entry.data)
+    }))
+  };
+}
+
+function normalizeBytes(value: WasmByteArray | ArrayBuffer | ArrayBufferView | null | undefined): Uint8Array {
+  if (!value) {
+    return new Uint8Array();
+  }
+
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+
+  if (typeof value === 'string') {
+    return decodeBase64Bytes(value);
+  }
+
+  return Uint8Array.from(value);
+}
+
+function decodeBase64Bytes(value: string): Uint8Array {
+  const binary = globalThis.atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
 }
 
 function emptyGameplayData(): DeadlockedGameplayData {

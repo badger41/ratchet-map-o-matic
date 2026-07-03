@@ -34,6 +34,7 @@ import {
 } from './ShrubLighting';
 import { cloneShrubMaterial } from './ShrubMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
+import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
 import {
   lightSelectorAttributeName,
   emptyShrubStats,
@@ -56,6 +57,7 @@ type ShrubGroup = THREE.Group & {
 
 export class ShrubInstanceController {
   private group: ShrubGroup | null = null;
+  private alphaBlendGroup: ShrubGroup | null = null;
   private stats: ShrubStats = { ...emptyShrubStats };
   private meshBindings: ShrubInstancedMeshBinding[] = [];
   private directionalLightBinding: ShrubDirectionalLightBinding | null = null;
@@ -82,8 +84,13 @@ export class ShrubInstanceController {
     const group = new THREE.BundleGroup() as ShrubGroup;
     group.name = 'shrub_instances';
     group.visible = this.options.visible;
+    const alphaBlendGroup = new THREE.BundleGroup() as ShrubGroup;
+    alphaBlendGroup.name = 'shrub_alpha_blend_instances';
+    alphaBlendGroup.visible = this.options.visible;
     parent.add(group);
+    parent.add(alphaBlendGroup);
     this.group = group;
+    this.alphaBlendGroup = alphaBlendGroup;
     this.applyBundleMode();
     this.directionalLightBinding = createShrubDirectionalLightBinding(mapPackage.directionalLights);
 
@@ -113,21 +120,29 @@ export class ShrubInstanceController {
     this.directionalLightBinding = null;
     this.modelDisplayOptions = null;
 
-    if (!this.group) {
+    if (!this.group && !this.alphaBlendGroup) {
       if (directionalLightBinding) {
         disposeShrubDirectionalLightBinding(directionalLightBinding);
       }
       return;
     }
 
-    this.group.parent?.remove(this.group);
-    disposeObject3D(this.group);
+    if (this.group) {
+      this.group.parent?.remove(this.group);
+      disposeObject3D(this.group);
+      this.group.clear();
+    }
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.parent?.remove(this.alphaBlendGroup);
+      disposeObject3D(this.alphaBlendGroup);
+      this.alphaBlendGroup.clear();
+    }
     if (directionalLightBinding) {
       disposeShrubDirectionalLightBinding(directionalLightBinding);
     }
 
-    this.group.clear();
     this.group = null;
+    this.alphaBlendGroup = null;
     this.meshBindings = [];
   }
 
@@ -161,9 +176,19 @@ export class ShrubInstanceController {
     this.applyBundleMode();
   }
 
+  moveAlphaBlendPassToEnd(): void {
+    if (this.alphaBlendGroup?.parent) {
+      this.alphaBlendGroup.parent.add(this.alphaBlendGroup);
+      this.markBundleNeedsUpdate();
+    }
+  }
+
   private applyOptions(options: ShrubRenderOptions): void {
     if (this.group) {
       this.group.visible = options.visible;
+    }
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.visible = options.visible;
     }
 
     for (const binding of this.meshBindings) {
@@ -179,6 +204,9 @@ export class ShrubInstanceController {
     }
 
     this.group.isBundleGroup = this.bundleEnabled;
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.isBundleGroup = this.bundleEnabled;
+    }
     for (const binding of this.meshBindings) {
       binding.mesh.frustumCulled = !this.bundleEnabled;
     }
@@ -189,6 +217,9 @@ export class ShrubInstanceController {
   private markBundleNeedsUpdate(): void {
     if (this.group?.needsUpdate !== undefined) {
       this.group.needsUpdate = true;
+    }
+    if (this.alphaBlendGroup?.needsUpdate !== undefined) {
+      this.alphaBlendGroup.needsUpdate = true;
     }
   }
 
@@ -328,7 +359,10 @@ export class ShrubInstanceController {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
-    group.add(mesh);
+    const targetGroup = this.alphaBlendGroup && modelMaterialUsesAlphaBlend(material)
+      ? this.alphaBlendGroup
+      : group;
+    targetGroup.add(mesh);
     this.meshBindings.push({ mesh, material, isBillboard: primitive.isBillboard });
 
     this.stats.batches += 1;

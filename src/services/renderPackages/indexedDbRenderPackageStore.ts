@@ -10,7 +10,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'moby-render-v1';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'fx-textures-v1';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;

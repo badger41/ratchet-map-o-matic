@@ -1,7 +1,6 @@
 import {
   Alert,
   Box,
-  Button,
   Center,
   Checkbox,
   Group,
@@ -15,6 +14,7 @@ import { useMediaQuery } from '@mantine/hooks';
 import { AlertCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
+import { dirnamePackagePath, joinPackagePath } from '../../../services/mapAssets/mapAssetPackage';
 import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadlockedMapLoadPipeline';
 import {
   defaultShrubRenderOptions,
@@ -25,10 +25,12 @@ import {
   type ShrubStats,
   type SkyboxStats,
   type TieStats,
-  type TfragStats
+  type TfragStats,
+  type LoadedMapPackage
 } from '../../../services/mapPackages/mapPackageTypes';
 import { loadViewerPackageSource } from '../../../services/mapPackages/viewerPackageSource';
 import { formatByteSize } from '../../../shared/format';
+import { dlFxTextureName } from '../dlFxTextureCatalog';
 import {
   applyViewerStageUpdate,
   createMapViewerStages,
@@ -44,12 +46,26 @@ import {
 } from '../renderer/MapSceneRenderer';
 import type { CameraVirtualMoveInput } from '../renderer/FpsCameraController';
 import type { TieMaterialMode } from '../renderer/ties/TieTypes';
+import { LightingDebugPanel } from './debug/LightingDebugPanel';
+import { WaterDebugPanel } from './debug/WaterDebugPanel';
+import { FxTextureWindow, type FxTextureView } from './FxTextureWindow';
 import { MapViewerStageList } from './MapViewerStageList';
 import { MobileCameraControls } from './MobileCameraControls';
 
 interface MapViewerScreenProps {
   result: DeadlockedMapLoadResult;
   onChooseAnother: () => void;
+}
+
+interface FxTextureManifest {
+  Textures?: FxTextureManifestEntry[];
+}
+
+interface FxTextureManifestEntry {
+  Index?: unknown;
+  Path?: unknown;
+  Width?: unknown;
+  Height?: unknown;
 }
 
 const frameRateOptions = ['30', '60', '120', '240'].map((value) => ({
@@ -69,7 +85,6 @@ const tieMaterialOptions: Array<{ value: TieMaterialMode; label: string }> = [
 ];
 
 const lightingDebugStorageKey = 'map-viewer-lighting-debug-tuning-v4';
-const lightingDebugStep = 0.05;
 
 export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -88,6 +103,9 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [shrubStats, setShrubStats] = useState<ShrubStats | null>(null);
   const [mobyStats, setMobyStats] = useState<MobyStats | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [fxTextures, setFxTextures] = useState<FxTextureView[]>([]);
+  const [fxTextureLoadError, setFxTextureLoadError] = useState<string | null>(null);
+  const [fxTextureWindowOpen, setFxTextureWindowOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
   const [terrainVisible, setTerrainVisible] = useState(true);
@@ -95,6 +113,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [tiesVisible, setTiesVisible] = useState(true);
   const [shrubsVisible, setShrubsVisible] = useState(true);
   const [mobysVisible, setMobysVisible] = useState(true);
+  const [mobySimulationEnabled, setMobySimulationEnabled] = useState(true);
   const [tieMaterialMode, setTieMaterialMode] = useState<TieMaterialMode>('full');
   const [tieColorsEnabled, setTieColorsEnabled] = useState(true);
   const [tieBundleEnabled, setTieBundleEnabled] = useState(true);
@@ -116,6 +135,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   });
   const mobileControlsVisible = useMediaQuery('(pointer: coarse)', false);
 
+  const openFxTextureWindow = useCallback(() => {
+    setFxTextureWindowOpen(true);
+  }, []);
+
   const handleMobileMoveInputChange = useCallback((input: CameraVirtualMoveInput) => {
     rendererRef.current?.setVirtualMoveInput(input);
   }, []);
@@ -131,6 +154,22 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     setDebugTuning({ ...defaultMapSceneDebugTuning });
   }, []);
 
+  const resetWaterDebugTuning = useCallback(() => {
+    setDebugTuning((current) => ({
+      ...current,
+      waterUnderlayRingDebugEnabled: defaultMapSceneDebugTuning.waterUnderlayRingDebugEnabled,
+      waterUnderlaySphereDepth: defaultMapSceneDebugTuning.waterUnderlaySphereDepth,
+      waterWaveDirectionOffsetDegrees: defaultMapSceneDebugTuning.waterWaveDirectionOffsetDegrees,
+      waterUnderlayDarkContrast: defaultMapSceneDebugTuning.waterUnderlayDarkContrast,
+      waterUnderlayBrightContrast: defaultMapSceneDebugTuning.waterUnderlayBrightContrast,
+      waterUnderlayDarkMinOpacity: defaultMapSceneDebugTuning.waterUnderlayDarkMinOpacity,
+      waterColorSaturation: defaultMapSceneDebugTuning.waterColorSaturation,
+      waterColorContrast: defaultMapSceneDebugTuning.waterColorContrast,
+      waterOverlayColorStrength: defaultMapSceneDebugTuning.waterOverlayColorStrength,
+      waterOverlayOpacityScale: defaultMapSceneDebugTuning.waterOverlayOpacityScale
+    }));
+  }, []);
+
   useEffect(() => {
     return () => resetViewerChrome();
   }, [resetViewerChrome]);
@@ -141,11 +180,13 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       mapLabel: result.map.label,
       status,
       state: lastError ? 'failed' : ready ? 'ready' : 'loading',
-      onChooseAnother
+      onChooseAnother,
+      onOpenFxTextures: ready ? openFxTextureWindow : undefined
     });
   }, [
     lastError,
     onChooseAnother,
+    openFxTextureWindow,
     ready,
     result.map.label,
     setViewerChrome,
@@ -174,6 +215,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   useEffect(() => {
     rendererRef.current?.setMobyVisible(mobysVisible);
   }, [mobysVisible]);
+
+  useEffect(() => {
+    rendererRef.current?.setMobySimulationEnabled(mobySimulationEnabled);
+  }, [mobySimulationEnabled]);
 
   useEffect(() => {
     rendererRef.current?.setTieMaterialMode(tieMaterialMode);
@@ -245,6 +290,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       mobyInstances: result.mobyInstances,
       glowBloomEnabled,
       glowBloomFalloffDistance,
+      mobySimulationEnabled,
       frameRateLimit,
       frameStatsDetailEnabled: detailedFrameStatsEnabled,
       debugTuning: debugModeEnabled ? debugTuning : undefined,
@@ -308,6 +354,9 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       setTieStats(null);
       setShrubStats(null);
       setMobyStats(null);
+      setFxTextures([]);
+      setFxTextureLoadError(null);
+      setFxTextureWindowOpen(false);
       setStages(createMapViewerStages('manifest'));
 
       try {
@@ -336,11 +385,29 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           detail: `${loadedPackage.directionalLights.length.toLocaleString()} lights`
         }));
 
+        try {
+          const loadedFxTextures = await loadFxTextureViews(loadedPackage);
+          if (!disposed) {
+            setFxTextures(loadedFxTextures);
+          }
+        } catch (error: unknown) {
+          if (!disposed) {
+            setFxTextures([]);
+            setFxTextureLoadError(error instanceof Error ? error.message : String(error));
+          }
+        }
+
+        if (disposed) {
+          loadedPackage.assetPackage.dispose();
+          return;
+        }
+
         await renderer.loadPackage(loadedPackage);
         renderer.setTerrainVisible(terrainVisible);
         renderer.setTieVisible(tiesVisible);
         renderer.setTieMaterialMode(tieMaterialMode);
         renderer.setMobyVisible(mobysVisible);
+        renderer.setMobySimulationEnabled(mobySimulationEnabled);
         renderer.setTieBundleEnabled(tieBundleEnabled);
         renderer.setGlowBloomEnabled(glowBloomEnabled);
         renderer.setGlowBloomFalloffDistance(glowBloomFalloffDistance);
@@ -530,6 +597,12 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
                 checked={mobysVisible}
                 onChange={(event) => setMobysVisible(event.currentTarget.checked)}
               />
+              <Checkbox
+                size="xs"
+                label="Moby simulation"
+                checked={mobySimulationEnabled}
+                onChange={(event) => setMobySimulationEnabled(event.currentTarget.checked)}
+              />
             </Group>
             <Table withRowBorders={false} verticalSpacing={2}>
               <Table.Tbody>
@@ -587,8 +660,51 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           onReset={resetDebugTuning}
         />
       ) : null}
+
+      {debugModeEnabled && debugPanelsVisible && ready ? (
+        <WaterDebugPanel
+          debugTuning={debugTuning}
+          onChange={setDebugTuningValue}
+          onReset={resetWaterDebugTuning}
+        />
+      ) : null}
+
+      <FxTextureWindow
+        opened={fxTextureWindowOpen}
+        textures={fxTextures}
+        error={fxTextureLoadError}
+        onClose={() => setFxTextureWindowOpen(false)}
+      />
     </Box>
   );
+}
+
+async function loadFxTextureViews(mapPackage: LoadedMapPackage): Promise<FxTextureView[]> {
+  const assetRootPath = dirnamePackagePath(mapPackage.assetManifestPath);
+  const manifestPath = joinPackagePath(assetRootPath, 'fx/manifest.json');
+  const manifest = await mapPackage.assetPackage.readOptionalJson<FxTextureManifest>(manifestPath);
+  const textures = Array.isArray(manifest?.Textures) ? manifest.Textures : [];
+  const views = await Promise.all(textures.map(async (entry) => {
+    const index = numberValue(entry.Index);
+    const path = stringValue(entry.Path);
+    if (index === null || !path) {
+      return null;
+    }
+
+    const packagePath = joinPackagePath(assetRootPath, path);
+    return {
+      index,
+      name: dlFxTextureName(index),
+      path: packagePath,
+      url: await mapPackage.assetPackage.resolveUrl(packagePath),
+      width: numberValue(entry.Width),
+      height: numberValue(entry.Height)
+    } satisfies FxTextureView;
+  }));
+
+  return views
+    .filter((texture): texture is FxTextureView => texture !== null)
+    .sort((a, b) => a.index - b.index);
 }
 
 function formatTieLoadedClasses(stats: TieStats | null): string {
@@ -597,6 +713,23 @@ function formatTieLoadedClasses(stats: TieStats | null): string {
   }
 
   return `${stats.loadedClasses.toLocaleString()} / ${stats.classIds.toLocaleString()}`;
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 function formatShrubLoadedClasses(stats: ShrubStats | null): string {
@@ -613,94 +746,6 @@ function formatMobyLoadedClasses(stats: MobyStats | null): string {
   }
 
   return `${stats.loadedClasses.toLocaleString()} / ${stats.classIds.toLocaleString()}`;
-}
-
-function LightingDebugPanel({
-  debugTuning,
-  onChange,
-  onReset
-}: {
-  debugTuning: MapSceneDebugTuning;
-  onChange: <K extends keyof MapSceneDebugTuning>(key: K, value: MapSceneDebugTuning[K]) => void;
-  onReset: () => void;
-}) {
-  return (
-    <Paper
-      pos="absolute"
-      top={{ base: 90, sm: 96 }}
-      right={{ base: 10, sm: 16 }}
-      left={{ base: 10, sm: 'auto' }}
-      w={{ base: 'auto', sm: 'min(520px, calc(100vw - 32px))' }}
-      p="sm"
-      radius="md"
-      bg="rgba(17, 24, 32, 0.88)"
-      withBorder
-      style={{
-        zIndex: 2,
-        borderColor: 'rgba(159, 174, 188, 0.22)',
-        backdropFilter: 'blur(10px)',
-        maxHeight: 'calc(100dvh - 112px)',
-        overflowY: 'auto'
-      }}
-    >
-      <Stack gap="xs">
-        <Group gap="xs" justify="space-between" wrap="nowrap">
-          <Text size="xs" c="dimmed" fw={700}>Lighting Debug</Text>
-          <Button size="compact-xs" variant="subtle" onClick={onReset}>
-            Reset
-          </Button>
-        </Group>
-        <Text size="xs" c="dimmed" fw={700}>Scene</Text>
-        <Group gap="xs" align="end">
-          <DebugSlider label="Front light" value={debugTuning.directionalFrontScale} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('directionalFrontScale', value)} />
-          <DebugSlider label="Back light" value={debugTuning.directionalBackScale} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('directionalBackScale', value)} />
-          <DebugSlider label="Light color" value={debugTuning.directionalColorStrength} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('directionalColorStrength', value)} />
-          <DebugSlider label="All exposure" value={debugTuning.sceneExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('sceneExposure', value)} />
-          <DebugSlider label="World lift" value={debugTuning.worldDisplayLift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('worldDisplayLift', value)} />
-          <DebugSlider label="Scene haze" value={debugTuning.sceneHazeStrength} min={0} max={0.5} step={lightingDebugStep} onChange={(value) => onChange('sceneHazeStrength', value)} />
-        </Group>
-        <Text size="xs" c="dimmed" fw={700}>Meshes</Text>
-        <Group gap="xs" align="end">
-          <DebugSlider label="Tfrag exposure" value={debugTuning.tfragExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('tfragExposure', value)} />
-          <DebugSlider label="Tfrag lift" value={debugTuning.tfragUplift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('tfragUplift', value)} />
-          <DebugSlider label="Tie exposure" value={debugTuning.tieExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('tieExposure', value)} />
-          <DebugSlider label="Tie ambient" value={debugTuning.tieAmbientScale} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('tieAmbientScale', value)} />
-          <DebugSlider label="Tie lift" value={debugTuning.tieUplift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('tieUplift', value)} />
-          <DebugSlider label="Shrub exposure" value={debugTuning.shrubExposure} min={0} max={2} step={lightingDebugStep} onChange={(value) => onChange('shrubExposure', value)} />
-          <DebugSlider label="Shrub lift" value={debugTuning.shrubUplift} min={0} max={4} step={lightingDebugStep} onChange={(value) => onChange('shrubUplift', value)} />
-        </Group>
-        <Text size="xs" c="dimmed" fw={700}>Fog</Text>
-        <Group gap="xs" wrap="wrap">
-          <Checkbox
-            size="xs"
-            label="Tfrag fog"
-            checked={debugTuning.tfragFogEnabled}
-            onChange={(event) => onChange('tfragFogEnabled', event.currentTarget.checked)}
-          />
-          <Checkbox
-            size="xs"
-            label="Tie fog"
-            checked={debugTuning.tieFogEnabled}
-            onChange={(event) => onChange('tieFogEnabled', event.currentTarget.checked)}
-          />
-          <Checkbox
-            size="xs"
-            label="Shrub fog"
-            checked={debugTuning.shrubFogEnabled}
-            onChange={(event) => onChange('shrubFogEnabled', event.currentTarget.checked)}
-          />
-        </Group>
-        <Group gap="xs" align="end">
-          <DebugSlider label="Near strength" value={debugTuning.fogNearIntensityScale} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogNearIntensityScale', value)} />
-          <DebugSlider label="Near distance" value={debugTuning.fogNearDistanceScale} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogNearDistanceScale', value)} />
-          <DebugSlider label="Far strength" value={debugTuning.fogFarIntensityScale} min={0} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogFarIntensityScale', value)} />
-          <DebugSlider label="Far distance" value={debugTuning.fogFarDistanceScale} min={0.1} max={3} step={lightingDebugStep} onChange={(value) => onChange('fogFarDistanceScale', value)} />
-          <DebugSlider label="Mesh fog color" value={debugTuning.fogMeshColorStrength} min={0} max={6} step={lightingDebugStep} onChange={(value) => onChange('fogMeshColorStrength', value)} />
-          <DebugSlider label="Fog cap" value={debugTuning.fogModulationMaxAmount} min={0} max={1} step={lightingDebugStep} onChange={(value) => onChange('fogModulationMaxAmount', value)} />
-        </Group>
-      </Stack>
-    </Paper>
-  );
 }
 
 function readStoredDebugTuning(): MapSceneDebugTuning {
@@ -741,54 +786,4 @@ function DebugRow({ label, value }: { label: string; value: string }) {
       </Table.Td>
     </Table.Tr>
   );
-}
-
-function DebugSlider({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <Stack gap={2} style={{ flex: '1 1 150px', minWidth: 150 }}>
-      <Group gap={6} justify="space-between" wrap="nowrap">
-        <Text size="xs" c="dimmed" fw={700}>
-          {label}
-        </Text>
-        <Text size="xs" fw={700}>
-          {formatDebugSliderValue(value, step)}
-        </Text>
-      </Group>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-        style={{ width: '100%' }}
-      />
-    </Stack>
-  );
-}
-
-function formatDebugSliderValue(value: number, step: number): string {
-  if (step < 0.01) {
-    return value.toFixed(3);
-  }
-
-  if (step < 0.1) {
-    return value.toFixed(2);
-  }
-
-  return value.toFixed(1);
 }

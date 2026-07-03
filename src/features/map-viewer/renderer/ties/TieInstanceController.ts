@@ -48,6 +48,7 @@ import {
   updateTieRenderOptionUniforms
 } from './TieMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
+import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
 import {
   lightSelectorAttributeName,
   emptyTieStats,
@@ -72,6 +73,7 @@ type TieGroup = THREE.Group & {
 
 export class TieInstanceController {
   private group: TieGroup | null = null;
+  private alphaBlendGroup: TieGroup | null = null;
   private stats: TieStats = { ...emptyTieStats };
   private meshBindings: TieInstancedMeshBinding[] = [];
   private directionalLightBinding: TieDirectionalLightBinding | null = null;
@@ -106,8 +108,12 @@ export class TieInstanceController {
 
     const group = new THREE.BundleGroup() as TieGroup;
     group.name = 'tie_instances';
+    const alphaBlendGroup = new THREE.BundleGroup() as TieGroup;
+    alphaBlendGroup.name = 'tie_alpha_blend_instances';
     parent.add(group);
+    parent.add(alphaBlendGroup);
     this.group = group;
+    this.alphaBlendGroup = alphaBlendGroup;
     this.applyBundleMode();
     this.directionalLightBinding = createTieDirectionalLightBinding(mapPackage.directionalLights);
 
@@ -153,7 +159,7 @@ export class TieInstanceController {
     this.skyboxReflectionTexture = null;
     this.modelDisplayOptions = null;
 
-    if (!this.group) {
+    if (!this.group && !this.alphaBlendGroup) {
       this.meshBindings = [];
       this.hasGlowBloom = false;
       this.glowBloomCenters = [];
@@ -173,13 +179,21 @@ export class TieInstanceController {
       disposeInactiveMaterial(binding.mesh.material, binding.textureMaterial, disposedMaterials, disposedTextures);
     }
 
-    this.group.parent?.remove(this.group);
-    disposeObject3D(this.group, disposedMaterials, disposedTextures);
+    if (this.group) {
+      this.group.parent?.remove(this.group);
+      disposeObject3D(this.group, disposedMaterials, disposedTextures);
+      this.group.clear();
+    }
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.parent?.remove(this.alphaBlendGroup);
+      disposeObject3D(this.alphaBlendGroup, disposedMaterials, disposedTextures);
+      this.alphaBlendGroup.clear();
+    }
     if (directionalLightBinding) {
       disposeTieDirectionalLightBinding(directionalLightBinding);
     }
-    this.group.clear();
     this.group = null;
+    this.alphaBlendGroup = null;
     this.meshBindings = [];
     this.glowBloomCenters = [];
     this.plainMaterial?.dispose();
@@ -220,6 +234,9 @@ export class TieInstanceController {
     if (this.group) {
       this.group.visible = visible;
     }
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.visible = visible;
+    }
   }
 
   setMaterialMode(mode: TieMaterialMode): void {
@@ -233,6 +250,13 @@ export class TieInstanceController {
   setBundleEnabled(enabled: boolean): void {
     this.bundleEnabled = enabled;
     this.applyBundleMode();
+  }
+
+  moveAlphaBlendPassToEnd(): void {
+    if (this.alphaBlendGroup?.parent) {
+      this.alphaBlendGroup.parent.add(this.alphaBlendGroup);
+      this.markBundleNeedsUpdate();
+    }
   }
 
   hasGlowBloomSources(): boolean {
@@ -326,7 +350,10 @@ export class TieInstanceController {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
-    group.add(mesh);
+    const targetGroup = this.alphaBlendGroup && tieMaterialSetUsesAlphaBlend(materialSet)
+      ? this.alphaBlendGroup
+      : group;
+    targetGroup.add(mesh);
     const binding: TieInstancedMeshBinding = {
       mesh,
       records,
@@ -383,6 +410,9 @@ export class TieInstanceController {
     }
 
     this.group.isBundleGroup = this.bundleEnabled;
+    if (this.alphaBlendGroup) {
+      this.alphaBlendGroup.isBundleGroup = this.bundleEnabled;
+    }
     for (const binding of this.meshBindings) {
       binding.mesh.frustumCulled = !this.bundleEnabled;
     }
@@ -393,6 +423,9 @@ export class TieInstanceController {
   private markBundleNeedsUpdate(): void {
     if (this.group?.needsUpdate !== undefined) {
       this.group.needsUpdate = true;
+    }
+    if (this.alphaBlendGroup?.needsUpdate !== undefined) {
+      this.alphaBlendGroup.needsUpdate = true;
     }
   }
 
@@ -526,6 +559,12 @@ export class TieInstanceController {
       disposeObject3D(source);
     }
   }
+}
+
+function tieMaterialSetUsesAlphaBlend(materialSet: TieMaterialSet): boolean {
+  return modelMaterialUsesAlphaBlend(materialSet.flatMaterial)
+    || (materialSet.coloredMaterial !== null && modelMaterialUsesAlphaBlend(materialSet.coloredMaterial))
+    || modelMaterialUsesAlphaBlend(materialSet.textureMaterial);
 }
 
 function resolveGeometryBoundingSphere(geometry: THREE.BufferGeometry): THREE.Sphere | null {

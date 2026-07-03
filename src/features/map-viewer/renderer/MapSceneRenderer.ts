@@ -61,6 +61,12 @@ import {
 } from './RendererDisposal';
 import { yieldToBrowser } from './RendererTiming';
 import { MobyInstanceController } from './mobys/MobyInstanceController';
+import { MobySimulationController } from './mobys/MobySimulationController';
+import {
+  defaultWaterPlaneDebugOptions,
+  setWaterPlaneDebugOptions,
+  type WaterPlaneDebugOptions
+} from './mobys/simulation/dl/2871/WaterPlane';
 import { SkyboxController } from './skybox/SkyboxController';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
@@ -90,6 +96,7 @@ interface MapSceneRendererOptions {
   mobyInstances?: DlMobyInstances | null;
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
+  mobySimulationEnabled?: boolean;
   frameRateLimit?: number;
   frameStatsDetailEnabled?: boolean;
   debugTuning?: Partial<MapSceneDebugTuning>;
@@ -115,8 +122,10 @@ const dlFogDistanceScale = dlWorldPositionScale;
 const subtleSceneFogStrength = 0.3;
 export const defaultGlowBloomFalloffDistance = 100;
 const glowBloomFullStrengthRatio = 0.25;
+const mobySimulationStepSeconds = 1 / 60;
+const mobySimulationMaxStepsPerFrame = 5;
 
-export interface MapSceneDebugTuning extends ModelFogDebugOptions {
+export interface MapSceneDebugTuning extends ModelFogDebugOptions, WaterPlaneDebugOptions {
   directionalFrontScale: number;
   directionalBackScale: number;
   directionalColorStrength: number;
@@ -137,6 +146,7 @@ export interface MapSceneDebugTuning extends ModelFogDebugOptions {
 
 export const defaultMapSceneDebugTuning: MapSceneDebugTuning = {
   ...defaultModelFogDebugOptions,
+  ...defaultWaterPlaneDebugOptions,
   directionalFrontScale: 1,
   directionalBackScale: 0,
   directionalColorStrength: 1,
@@ -218,6 +228,7 @@ export class MapSceneRenderer {
   private readonly tieController = new TieInstanceController();
   private readonly shrubController = new ShrubInstanceController();
   private readonly mobyController = new MobyInstanceController();
+  private readonly mobySimulationController = new MobySimulationController();
   private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
@@ -242,6 +253,9 @@ export class MapSceneRenderer {
   private minRenderIntervalMs: number;
   private glowBloomEnabled: boolean;
   private glowBloomFalloffDistance: number;
+  private mobySimulationEnabled: boolean;
+  private mobySimulationAccumulatorSeconds = 0;
+  private lastMobySimulationTime = performance.now();
   private frameStatsDetailEnabled: boolean;
   private instanceBundleEnabled = true;
   private animationRenderSuspended = false;
@@ -279,6 +293,8 @@ export class MapSceneRenderer {
     this.applyDebugTuning();
     this.glowBloomEnabled = options.glowBloomEnabled ?? true;
     this.glowBloomFalloffDistance = resolveGlowBloomFalloffDistance(options.glowBloomFalloffDistance);
+    this.mobySimulationEnabled = options.mobySimulationEnabled ?? true;
+    this.mobySimulationController.setEnabled(this.mobySimulationEnabled);
     this.frameStatsDetailEnabled = options.frameStatsDetailEnabled ?? false;
     this.frameRateLimit = resolveFrameRateLimit(options.frameRateLimit ?? 120);
     this.minRenderIntervalMs = frameIntervalForLimit(this.frameRateLimit);
@@ -354,6 +370,12 @@ export class MapSceneRenderer {
       const tieStats = await this.loadTies(root, mapPackage, modelDisplayOptions);
       const shrubStats = await this.loadShrubs(root, mapPackage, modelDisplayOptions);
       const mobyStats = await this.loadMobys(root, mapPackage, modelDisplayOptions);
+      await this.mobySimulationController.load(root, mapPackage, this.mobyInstances, this.mobyController, this.camera);
+      this.tieController.moveAlphaBlendPassToEnd();
+      this.shrubController.moveAlphaBlendPassToEnd();
+      this.mobyController.moveAlphaBlendPassToEnd();
+      this.mobySimulationController.setEnabled(this.mobySimulationEnabled);
+      this.resetMobySimulationClock(performance.now());
 
       await this.prepareFirstFrame(root);
       this.onLoadProgress({
@@ -597,6 +619,7 @@ export class MapSceneRenderer {
     this.tieController.dispose();
     this.shrubController.dispose();
     this.mobyController.dispose();
+    this.mobySimulationController.dispose();
     this.disposeRenderPipelines();
     this.renderer?.dispose();
     this.container.replaceChildren();
@@ -655,6 +678,12 @@ export class MapSceneRenderer {
 
   setMobyVisible(visible: boolean): void {
     this.mobyController.setVisible(visible);
+  }
+
+  setMobySimulationEnabled(enabled: boolean): void {
+    this.mobySimulationEnabled = enabled;
+    this.mobySimulationController.setEnabled(enabled);
+    this.resetMobySimulationClock(performance.now());
   }
 
   setTieMaterialMode(mode: TieMaterialMode): void {
@@ -726,6 +755,7 @@ export class MapSceneRenderer {
   private applyDebugTuning(): void {
     setModelFogDebugOptions(this.debugTuning);
     setModelFamilyDisplayOptions(this.debugTuning);
+    setWaterPlaneDebugOptions(this.debugTuning);
     this.worldDisplayLift.value = finiteNonNegative(this.debugTuning.worldDisplayLift, defaultWorldDisplayLift);
     this.sceneHazeStrength.value = finiteNonNegative(this.debugTuning.sceneHazeStrength, subtleSceneFogStrength);
   }
@@ -791,22 +821,51 @@ export class MapSceneRenderer {
 
   private handleAnimationFrame(time: DOMHighResTimeStamp): void {
     if (this.animationRenderSuspended || this.rendererUnavailable) {
+      this.resetMobySimulationClock(time);
       return;
     }
 
-    if (this.minRenderIntervalMs > 0 && this.lastRenderSubmitTime > 0) {
-      const elapsedMs = time - this.lastRenderSubmitTime;
-      if (elapsedMs < this.minRenderIntervalMs - 0.35) {
-        return;
-      }
-    }
-
-    this.lastRenderSubmitTime = time;
     try {
+      this.updateMobySimulation(time);
+      if (this.minRenderIntervalMs > 0 && this.lastRenderSubmitTime > 0) {
+        const elapsedMs = time - this.lastRenderSubmitTime;
+        if (elapsedMs < this.minRenderIntervalMs - 0.35) {
+          return;
+        }
+      }
+
+      this.lastRenderSubmitTime = time;
       this.renderFrame(time);
     } catch (error: unknown) {
       this.reportRendererRuntimeError(error);
     }
+  }
+
+  private updateMobySimulation(time: DOMHighResTimeStamp): void {
+    if (!this.mobySimulationEnabled) {
+      this.resetMobySimulationClock(time);
+      return;
+    }
+
+    const deltaSeconds = Math.max(0, Math.min((time - this.lastMobySimulationTime) / 1000, 0.25));
+    this.lastMobySimulationTime = time;
+    this.mobySimulationAccumulatorSeconds += deltaSeconds;
+
+    let steps = 0;
+    while (this.mobySimulationAccumulatorSeconds >= mobySimulationStepSeconds && steps < mobySimulationMaxStepsPerFrame) {
+      this.mobySimulationController.fixedUpdate(mobySimulationStepSeconds);
+      this.mobySimulationAccumulatorSeconds -= mobySimulationStepSeconds;
+      steps += 1;
+    }
+
+    if (steps === mobySimulationMaxStepsPerFrame) {
+      this.mobySimulationAccumulatorSeconds = 0;
+    }
+  }
+
+  private resetMobySimulationClock(time: DOMHighResTimeStamp): void {
+    this.lastMobySimulationTime = time;
+    this.mobySimulationAccumulatorSeconds = 0;
   }
 
   private renderFrame(time: DOMHighResTimeStamp): void {
@@ -825,6 +884,7 @@ export class MapSceneRenderer {
 
     this.controls?.update(frameMs / 1000);
     this.skyboxController.update(time / 1000);
+    this.mobySimulationController.renderUpdate(time / 1000);
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
     const bloomStartMs = collectDetails ? performance.now() : 0;
     this.lastBloomStatus = this.resolveGlowBloomStatus();
@@ -1063,6 +1123,8 @@ export class MapSceneRenderer {
     runRendererCleanup('tie controller', () => this.tieController.dispose());
     runRendererCleanup('skybox controller', () => this.skyboxController.dispose());
     runRendererCleanup('tfrag controller', () => this.tfragController.dispose());
+    runRendererCleanup('moby simulation', () => this.mobySimulationController.dispose());
+    runRendererCleanup('moby controller', () => this.mobyController.dispose());
     runRendererCleanup('partial scene root', () => disposeObject3D(root));
     if (this.currentPackage === mapPackage) {
       this.currentPackage = null;
@@ -1079,7 +1141,10 @@ export class MapSceneRenderer {
     this.skyboxController.dispose();
     this.tieController.dispose();
     this.shrubController.dispose();
+    this.mobySimulationController.dispose();
+    this.mobyController.dispose();
     currentPackage?.assetPackage.dispose();
+    this.resetMobySimulationClock(performance.now());
 
     if (!this.currentRoot) {
       return;
@@ -1135,7 +1200,19 @@ function resolveMapSceneDebugTuning(tuning: Partial<MapSceneDebugTuning> | undef
     fogNearIntensityScale: finiteNonNegative(merged.fogNearIntensityScale, defaultMapSceneDebugTuning.fogNearIntensityScale),
     fogFarIntensityScale: finiteNonNegative(merged.fogFarIntensityScale, defaultMapSceneDebugTuning.fogFarIntensityScale),
     fogMeshColorStrength: finiteNonNegative(merged.fogMeshColorStrength, defaultMapSceneDebugTuning.fogMeshColorStrength),
-    fogModulationMaxAmount: finiteNonNegative(merged.fogModulationMaxAmount, defaultMapSceneDebugTuning.fogModulationMaxAmount)
+    fogModulationMaxAmount: finiteNonNegative(merged.fogModulationMaxAmount, defaultMapSceneDebugTuning.fogModulationMaxAmount),
+    waterUnderlayRingDebugEnabled: merged.waterUnderlayRingDebugEnabled === true,
+    waterUnderlaySphereDepth: finiteNonNegative(merged.waterUnderlaySphereDepth, defaultMapSceneDebugTuning.waterUnderlaySphereDepth),
+    waterWaveDirectionOffsetDegrees: typeof merged.waterWaveDirectionOffsetDegrees === 'number' && Number.isFinite(merged.waterWaveDirectionOffsetDegrees)
+      ? merged.waterWaveDirectionOffsetDegrees
+      : defaultMapSceneDebugTuning.waterWaveDirectionOffsetDegrees,
+    waterUnderlayDarkContrast: finiteNonNegative(merged.waterUnderlayDarkContrast, defaultMapSceneDebugTuning.waterUnderlayDarkContrast),
+    waterUnderlayBrightContrast: finiteNonNegative(merged.waterUnderlayBrightContrast, defaultMapSceneDebugTuning.waterUnderlayBrightContrast),
+    waterUnderlayDarkMinOpacity: finiteNonNegative(merged.waterUnderlayDarkMinOpacity, defaultMapSceneDebugTuning.waterUnderlayDarkMinOpacity),
+    waterColorSaturation: finiteNonNegative(merged.waterColorSaturation, defaultMapSceneDebugTuning.waterColorSaturation),
+    waterColorContrast: finiteNonNegative(merged.waterColorContrast, defaultMapSceneDebugTuning.waterColorContrast),
+    waterOverlayColorStrength: finiteNonNegative(merged.waterOverlayColorStrength, defaultMapSceneDebugTuning.waterOverlayColorStrength),
+    waterOverlayOpacityScale: finiteNonNegative(merged.waterOverlayOpacityScale, defaultMapSceneDebugTuning.waterOverlayOpacityScale)
   };
 }
 

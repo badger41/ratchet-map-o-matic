@@ -10,6 +10,8 @@ export interface PackedFilePackageResult {
   entries: PackedFileEntry[];
 }
 
+export type WasmByteArray = Uint8Array | number[] | string;
+
 export interface DlRgb96 {
   red: number;
   green: number;
@@ -54,6 +56,14 @@ export interface DlMobyInstance {
   color: DlRgb96;
   light: number;
   unused6C: number;
+  pvar?: DlMobyInstancePvar | null;
+}
+
+export interface DlMobyInstancePvar {
+  index: number;
+  offset: number;
+  length: number;
+  data: Uint8Array;
 }
 
 export interface DlMobyInstances {
@@ -65,12 +75,41 @@ export interface DlMobyInstances {
   trailingByteLength: number;
 }
 
+export interface DlPvarTableEntry {
+  index: number;
+  offset: number;
+  length: number;
+  data: WasmByteArray;
+}
+
+export interface DlPvarRelativePointer {
+  pvarIndex: number;
+  offset: number;
+}
+
+export interface DlPvarTables {
+  mobyLinksBytes: WasmByteArray;
+  tableBytes: WasmByteArray;
+  dataBytes: WasmByteArray;
+  relativePointerBytes: WasmByteArray;
+  entries: DlPvarTableEntry[];
+  relativePointers: DlPvarRelativePointer[];
+}
+
 export interface DlGameplayBlock {
+  index: number;
+  headerOffset: number;
+  pointer: number;
+  semanticName: string;
+  payloadLength: number;
   levelSettings: DlLevelSettings | null;
   mobyInstances: DlMobyInstances | null;
 }
 
 export interface DlGameplayBlocks {
+  kind: string;
+  headerSize: number;
+  pvarTables: DlPvarTables | null;
   blocks: DlGameplayBlock[];
 }
 
@@ -79,11 +118,12 @@ export interface RatchetPs2WasmModule {
   getApiVersion(): Promise<string>;
   unpackDlLevelWad(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   parseDlGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
+  parseDlGameplayMission(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
   buildDlLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'moby-render-v1';
+const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'moby-pvars-v1';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {
