@@ -87,6 +87,7 @@ export async function loadMapPackageFromAssetPackage(
   const tieClassIdsPath = findWorldSlotPath(worldManifest, 'tie_class_ids');
   const tieInstancesPath = findWorldSlotPath(worldManifest, 'tie_instances');
   const tieColorsPath = findWorldSlotPath(worldManifest, 'tie_instance_colors');
+  const tieGroupsPath = findWorldSlotPath(worldManifest, 'tie_groups');
   const shrubClassIdsPath = findWorldSlotPath(worldManifest, 'shrub_class_ids');
   const shrubInstancesPath = findWorldSlotPath(worldManifest, 'shrub_instances');
   const shrubGroupsPath = findWorldSlotPath(worldManifest, 'shrub_groups');
@@ -100,6 +101,7 @@ export async function loadMapPackageFromAssetPackage(
   const tieClassIdsPackagePath = tieClassIdsPath ? resolveWorldPath(manifestRootPath, tieClassIdsPath) : null;
   const tieInstancesPackagePath = tieInstancesPath ? resolveWorldPath(manifestRootPath, tieInstancesPath) : null;
   const tieColorsPackagePath = tieColorsPath ? resolveWorldPath(manifestRootPath, tieColorsPath) : null;
+  const tieGroupsPackagePath = tieGroupsPath ? resolveWorldPath(manifestRootPath, tieGroupsPath) : null;
   const shrubClassIdsPackagePath = shrubClassIdsPath ? resolveWorldPath(manifestRootPath, shrubClassIdsPath) : null;
   const shrubInstancesPackagePath = shrubInstancesPath ? resolveWorldPath(manifestRootPath, shrubInstancesPath) : null;
   const shrubGroupsPackagePath = shrubGroupsPath ? resolveWorldPath(manifestRootPath, shrubGroupsPath) : null;
@@ -125,6 +127,7 @@ export async function loadMapPackageFromAssetPackage(
     tieClassIdsPath: tieClassIdsPackagePath,
     tieInstancesPath: tieInstancesPackagePath,
     tieColorsPath: tieColorsPackagePath,
+    tieGroupsPath: tieGroupsPackagePath,
     tieClassCountExpected: numberValue(worldManifest?.TieClassCount),
     tieInstanceCountExpected: numberValue(worldManifest?.TieInstanceCount),
     mobyEntries,

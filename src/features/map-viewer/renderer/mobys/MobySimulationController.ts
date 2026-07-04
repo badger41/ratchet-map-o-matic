@@ -6,6 +6,7 @@ import type {
 } from '../../../../services/wasm/ratchetPs2Wasm';
 import { disposeObject3D } from '../RendererDisposal';
 import type { MobyInstanceController } from './MobyInstanceController';
+import type { TieInstanceController } from '../ties/TieInstanceController';
 import {
   type MobyClass,
   type MobyClassFactory,
@@ -33,6 +34,7 @@ export class MobySimulationController {
     mapPackage: LoadedMapPackage,
     mobyInstances: DlMobyInstances | null,
     mobyController: MobyInstanceController,
+    tieController: TieInstanceController,
     camera: THREE.Camera
   ): Promise<MobySimulationStats> {
     this.dispose();
@@ -56,6 +58,7 @@ export class MobySimulationController {
         root,
         mapPackage,
         mobyController,
+        tieController,
         camera,
         instances
       });

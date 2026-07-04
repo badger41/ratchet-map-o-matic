@@ -73,4 +73,14 @@ function disposeMaterialOwnedTextures(material: THREE.Material, disposedTextures
 
     material.userData.mapOmaticTieAmbientTexture = null;
   }
+
+  const glowTexture = material.userData.mapOmaticTieGlowColorTexture;
+  if (glowTexture instanceof THREE.Texture) {
+    if (!disposedTextures.has(glowTexture)) {
+      disposedTextures.add(glowTexture);
+      glowTexture.dispose();
+    }
+
+    material.userData.mapOmaticTieGlowColorTexture = null;
+  }
 }

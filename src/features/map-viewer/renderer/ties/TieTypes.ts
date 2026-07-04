@@ -31,6 +31,10 @@ export interface PreparedTieRecord {
 export interface TieInstancedMeshBinding {
   mesh: THREE.InstancedMesh;
   records: PreparedTieRecord[];
+  primitiveMatrixWorld: THREE.Matrix4;
+  fullMirrored: boolean;
+  tieGroupRecordIndices: Map<number, number[]>;
+  glowColorBinding: TieGlowColorBinding | null;
   flatMaterial: THREE.Material | THREE.Material[];
   coloredMaterial: THREE.Material | THREE.Material[] | null;
   textureMaterial: THREE.Material | THREE.Material[];
@@ -77,11 +81,19 @@ export interface TieAmbientTextureBinding {
   statsCounted: boolean;
 }
 
+export interface TieGlowColorBinding {
+  texture: THREE.DataTexture;
+  data: Uint8Array;
+  instanceCount: number;
+  rowByRecord: WeakMap<PreparedTieRecord, number>;
+}
+
 export interface TieMaterialSet {
   flatMaterial: THREE.Material | THREE.Material[];
   coloredMaterial: THREE.Material | THREE.Material[] | null;
   textureMaterial: THREE.Material | THREE.Material[];
   ambientBinding: TieAmbientTextureBinding | null;
+  glowColorBinding: TieGlowColorBinding | null;
 }
 
 export type TieMaterialMode = 'full' | 'texture' | 'plain';
@@ -132,6 +144,7 @@ export const tieAmbientAttributeAliases = [
   '_DL_TIE_AMBIENT_INDEX'
 ];
 export const tieAmbientInstanceRowAttributeName = 'tieAmbientRow';
+export const tieGlowColorRowAttributeName = 'tieGlowColorRow';
 export const tieAmbientPs2NeutralByte = 128;
 export const tieAmbientRawIntensityScale = 255 / tieAmbientPs2NeutralByte;
 export const tieEnvironmentPassMask = 0x06;

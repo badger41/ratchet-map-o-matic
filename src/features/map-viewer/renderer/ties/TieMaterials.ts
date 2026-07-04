@@ -1,13 +1,17 @@
 import * as THREE from 'three/webgpu';
 import {
+  attribute,
   float,
   max,
+  mix,
   positionView,
   smoothstep,
   texture,
   uniform,
   uv,
-  vec3
+  vec2,
+  vec3,
+  vertexStage
 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
 import type {
@@ -38,8 +42,10 @@ import {
 import {
   tieEnvironmentPassMask,
   tieAmbientRawIntensityScale,
+  tieGlowColorRowAttributeName,
   type TieAmbientTextureBinding,
   type TieDirectionalLightBinding,
+  type TieGlowColorBinding,
   type TieInstancedMeshBinding,
   type TieLightingUniforms
 } from './TieTypes';
@@ -60,6 +66,7 @@ export function cloneTieMaterial(
   material: THREE.Material | THREE.Material[],
   geometry: THREE.BufferGeometry,
   ambientBinding: TieAmbientTextureBinding | null,
+  glowColorBinding: TieGlowColorBinding | null,
   directionalLightBinding: TieDirectionalLightBinding | null,
   skyboxReflectionTexture: THREE.Texture | null,
   options: TieRenderOptions,
@@ -70,6 +77,7 @@ export function cloneTieMaterial(
       item,
       geometry,
       ambientBinding,
+      glowColorBinding,
       directionalLightBinding,
       skyboxReflectionTexture,
       options,
@@ -78,6 +86,7 @@ export function cloneTieMaterial(
       material,
       geometry,
       ambientBinding,
+      glowColorBinding,
       directionalLightBinding,
       skyboxReflectionTexture,
       options,
@@ -136,8 +145,7 @@ function createTieTextureMaterial(source: THREE.Material): THREE.Material {
 
   configureModelMaterialTransparency(material, modelMaterialInfo);
   if (modelMaterialInfo.usesGlowEmission) {
-    material.colorNode = createTieBaseColorNode(material)
-      .mul(vec3(modelMaterialInfo.glowTint.r, modelMaterialInfo.glowTint.g, modelMaterialInfo.glowTint.b));
+    material.colorNode = createTieGlowNode(material, modelMaterialInfo, null);
   }
   return material;
 }
@@ -150,6 +158,7 @@ function createTieDisplayMaterial(
   source: THREE.Material,
   geometry: THREE.BufferGeometry,
   ambientBinding: TieAmbientTextureBinding | null,
+  glowColorBinding: TieGlowColorBinding | null,
   directionalLightBinding: TieDirectionalLightBinding | null,
   skyboxReflectionTexture: THREE.Texture | null,
   options: TieRenderOptions,
@@ -180,6 +189,7 @@ function createTieDisplayMaterial(
     mapOmaticTieMaterial: true,
     mapOmaticTieAmbientMaterial: ambientBinding !== null,
     mapOmaticTieAmbientTexture: ambientBinding?.texture ?? null,
+    mapOmaticTieGlowColorTexture: glowColorBinding?.texture ?? null,
     mapOmaticTieDirectionalLightMaterial: directionalLightBinding !== null,
     mapOmaticTiePreserveMultipassMaterial: modelMaterialInfo.preserveTieMultipass,
     mapOmaticTieSecondUvReflectionMaterial: hasSecondUvReflection,
@@ -199,11 +209,10 @@ function createTieDisplayMaterial(
   configureModelMaterialTransparency(material, modelMaterialInfo);
   material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
   if (modelMaterialInfo.usesGlowEmission) {
-    const glowColorNode = createTieBaseColorNode(material)
-      .mul(vec3(modelMaterialInfo.glowTint.r, modelMaterialInfo.glowTint.g, modelMaterialInfo.glowTint.b));
+    const glowNode = createTieGlowNode(material, modelMaterialInfo, glowColorBinding);
     const bloomFadeNode = createTieBloomDistanceFadeNode();
-    material.colorNode = glowColorNode.mul(float(1).sub(bloomFadeNode));
-    (material as MeshBasicWithEmissiveNode).emissiveNode = glowColorNode.mul(bloomFadeNode);
+    material.colorNode = glowNode.mul(float(1).sub(bloomFadeNode));
+    (material as MeshBasicWithEmissiveNode).emissiveNode = glowNode.mul(bloomFadeNode);
     return material;
   }
 
@@ -345,6 +354,25 @@ function createTieBaseColorNode(material: THREE.MeshBasicNodeMaterial): Node<'ve
   }
 
   return texture(material.map, uv()).rgb.mul(materialColorNode);
+}
+
+function createTieGlowNode(
+  material: THREE.MeshBasicNodeMaterial,
+  modelMaterialInfo: ModelMaterialInfo,
+  glowColorBinding: TieGlowColorBinding | null
+): Node<'vec3'> {
+  const baseColor = createTieBaseColorNode(material);
+  const exportedTint = vec3(modelMaterialInfo.glowTint.r, modelMaterialInfo.glowTint.g, modelMaterialInfo.glowTint.b);
+  if (!glowColorBinding) {
+    return baseColor.mul(exportedTint);
+  }
+
+  const row = attribute<'float'>(tieGlowColorRowAttributeName, 'float');
+  const runtimeTint = vertexStage(texture(
+    glowColorBinding.texture,
+    vec2(float(0.5), row.add(float(0.5)).div(float(glowColorBinding.instanceCount)).clamp(0, 1))
+  ));
+  return baseColor.mul(mix(exportedTint, runtimeTint.rgb, runtimeTint.a));
 }
 
 function hasTieSecondUvReflection(

@@ -12,6 +12,7 @@ import {
 import {
   parseTieClassIds,
   parseTieColorTable,
+  parseTieGroupRecords,
   parseTieInstanceRecords
 } from '../../../../services/mapPackages/tiePackageParsers';
 import {
@@ -55,21 +56,29 @@ import {
   instanceMirrorMatrix,
   tieAmbientInstanceRowAttributeName,
   tieClassLoadConcurrency,
+  tieGlowColorRowAttributeName,
   tieLoadFrameBudgetMs,
   type PreparedTieRecord,
   type TieDirectionalLightBinding,
+  type TieGlowColorBinding,
   type TieInstancedMeshBinding,
   type TieLoadProgressCallback,
   type TieMaterialSet,
   type TieMaterialMode,
   type TiePrimitive
 } from './TieTypes';
-import { LoadYieldController } from './tieUtils';
+import {
+  clampByte,
+  LoadYieldController
+} from './tieUtils';
 
 type TieGroup = THREE.Group & {
   isBundleGroup?: boolean;
   needsUpdate?: boolean;
 };
+
+// ponytail: C66 local-origin ties sat slightly low; keep this fixed so rotation does not bounce.
+const tieLocalOriginRotationLiftRatio = 0.0075;
 
 export class TieInstanceController {
   private group: TieGroup | null = null;
@@ -85,6 +94,16 @@ export class TieInstanceController {
   private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
   private hasGlowBloom = false;
   private glowBloomCenters: number[] = [];
+  private tieGroupByRecordIndex = new Map<number, number>();
+  private readonly composeMatrix = new THREE.Matrix4();
+  private readonly groupTransformMatrix = new THREE.Matrix4();
+  private readonly toPivotMatrix = new THREE.Matrix4();
+  private readonly fromPivotMatrix = new THREE.Matrix4();
+  private readonly instancePosition = new THREE.Vector3();
+  private readonly instanceQuaternion = new THREE.Quaternion();
+  private readonly instanceScale = new THREE.Vector3();
+  private readonly rotationQuaternion = new THREE.Quaternion();
+  private readonly baselineBox = new THREE.Box3();
 
   async load(
     parent: THREE.Object3D,
@@ -121,11 +140,14 @@ export class TieInstanceController {
       return this.getStats();
     }
 
-    const [classIdsBytes, instancesBytes, colorBytes] = await Promise.all([
+    const [classIdsBytes, instancesBytes, colorBytes, groupBytes] = await Promise.all([
       mapPackage.assetPackage.readBytes(mapPackage.tieClassIdsPath),
       mapPackage.assetPackage.readBytes(mapPackage.tieInstancesPath),
       mapPackage.tieColorsPath
         ? mapPackage.assetPackage.readOptionalBytes(mapPackage.tieColorsPath)
+        : Promise.resolve(null),
+      mapPackage.tieGroupsPath
+        ? mapPackage.assetPackage.readOptionalBytes(mapPackage.tieGroupsPath)
         : Promise.resolve(null)
     ]);
     const classIds = parseTieClassIds(classIdsBytes);
@@ -133,6 +155,9 @@ export class TieInstanceController {
     const colorTable = colorBytes
       ? parseTieColorTable(colorBytes)
       : null;
+    this.tieGroupByRecordIndex = groupBytes
+      ? buildTieGroupRecordIndex(parseTieGroupRecords(groupBytes, records.length))
+      : new Map();
     const entriesByClassId = buildTieEntryMap(mapPackage.tieEntries);
     const recordsByClassId = groupRecordsByClassId(records);
 
@@ -161,6 +186,7 @@ export class TieInstanceController {
 
     if (!this.group && !this.alphaBlendGroup) {
       this.meshBindings = [];
+      this.tieGroupByRecordIndex = new Map();
       this.hasGlowBloom = false;
       this.glowBloomCenters = [];
       if (directionalLightBinding) {
@@ -195,6 +221,7 @@ export class TieInstanceController {
     this.group = null;
     this.alphaBlendGroup = null;
     this.meshBindings = [];
+    this.tieGroupByRecordIndex = new Map();
     this.glowBloomCenters = [];
     this.plainMaterial?.dispose();
     this.plainMaterial = null;
@@ -283,6 +310,76 @@ export class TieInstanceController {
     return false;
   }
 
+  setTieGroupRotation(groupIndex: number, rotation: THREE.Matrix4 | null, pivot: THREE.Vector3 | null = null): void {
+    if (!this.group || groupIndex < 0) {
+      return;
+    }
+
+    let changed = false;
+    for (const binding of this.meshBindings) {
+      const localIndices = binding.tieGroupRecordIndices.get(groupIndex);
+      if (!localIndices || localIndices.length === 0) {
+        continue;
+      }
+
+      for (const localIndex of localIndices) {
+        this.writeTieInstanceMatrix(binding, localIndex, rotation, pivot);
+      }
+
+      binding.mesh.instanceMatrix.needsUpdate = true;
+      binding.mesh.computeBoundingBox();
+      binding.mesh.computeBoundingSphere();
+      changed = true;
+    }
+
+    if (changed) {
+      this.markBundleNeedsUpdate();
+    }
+  }
+
+  setTieGroupGlowColor(groupIndex: number, color: THREE.Color | null): void {
+    if (!this.group || groupIndex < 0) {
+      return;
+    }
+
+    const r = clampByte((color?.r ?? 1) * 255);
+    const g = clampByte((color?.g ?? 1) * 255);
+    const b = clampByte((color?.b ?? 1) * 255);
+    const a = color ? 255 : 0;
+    let changed = false;
+    for (const binding of this.meshBindings) {
+      const glowColorBinding = binding.glowColorBinding;
+      if (!glowColorBinding) {
+        continue;
+      }
+
+      const localIndices = binding.tieGroupRecordIndices.get(groupIndex);
+      if (!localIndices || localIndices.length === 0) {
+        continue;
+      }
+
+      for (const localIndex of localIndices) {
+        const row = glowColorBinding.rowByRecord.get(binding.records[localIndex]);
+        if (row === undefined) {
+          continue;
+        }
+
+        const offset = row * 4;
+        glowColorBinding.data[offset] = r;
+        glowColorBinding.data[offset + 1] = g;
+        glowColorBinding.data[offset + 2] = b;
+        glowColorBinding.data[offset + 3] = a;
+      }
+
+      glowColorBinding.texture.needsUpdate = true;
+      changed = true;
+    }
+
+    if (changed) {
+      this.markBundleNeedsUpdate();
+    }
+  }
+
   private addInstancedPrimitive(
     group: THREE.Group,
     classId: number,
@@ -294,7 +391,7 @@ export class TieInstanceController {
   ): void {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
-    const { ambientBinding, flatMaterial, coloredMaterial, textureMaterial } = materialSet;
+    const { ambientBinding, glowColorBinding, flatMaterial, coloredMaterial, textureMaterial } = materialSet;
     const usesGlowBloom = tieMaterialUsesGlowEmission(primitive.material);
     if (ambientBinding) {
       geometry.setAttribute(
@@ -306,6 +403,12 @@ export class TieInstanceController {
     if (!primitive.isGlowOverlay && this.directionalLightBinding) {
       geometry.setAttribute(lightSelectorAttributeName, createLightSelectorInstanceAttribute(records));
     }
+    if (glowColorBinding) {
+      geometry.setAttribute(
+        tieGlowColorRowAttributeName,
+        new THREE.InstancedBufferAttribute(createTieGlowRowAttribute(records, glowColorBinding), 1)
+      );
+    }
 
     const mesh = new THREE.InstancedMesh(
       geometry,
@@ -315,7 +418,7 @@ export class TieInstanceController {
     mesh.name = `tie_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
     mesh.frustumCulled = !this.bundleEnabled;
-    mesh.static = true;
+    mesh.static = !glowColorBinding;
     mesh.matrixAutoUpdate = false;
     if (usesGlowBloom) {
       this.hasGlowBloom = true;
@@ -357,6 +460,10 @@ export class TieInstanceController {
     const binding: TieInstancedMeshBinding = {
       mesh,
       records,
+      primitiveMatrixWorld: primitive.matrixWorld.clone(),
+      fullMirrored,
+      tieGroupRecordIndices: this.buildTieGroupRecordIndices(records),
+      glowColorBinding,
       flatMaterial,
       coloredMaterial,
       textureMaterial,
@@ -375,6 +482,87 @@ export class TieInstanceController {
     }
 
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;
+  }
+
+  private buildTieGroupRecordIndices(records: PreparedTieRecord[]): Map<number, number[]> {
+    const groups = new Map<number, number[]>();
+    for (let localIndex = 0; localIndex < records.length; localIndex += 1) {
+      const groupIndex = this.tieGroupByRecordIndex.get(records[localIndex].source.index);
+      if (groupIndex === undefined) {
+        continue;
+      }
+
+      const indices = groups.get(groupIndex);
+      if (indices) {
+        indices.push(localIndex);
+      } else {
+        groups.set(groupIndex, [localIndex]);
+      }
+    }
+
+    return groups;
+  }
+
+  private writeTieInstanceMatrix(
+    binding: TieInstancedMeshBinding,
+    localIndex: number,
+    rotation: THREE.Matrix4 | null,
+    pivot: THREE.Vector3 | null
+  ): void {
+    const record = binding.records[localIndex];
+    const matrix = this.composeMatrix.copy(record.instanceMatrix);
+    if (rotation) {
+      if (pivot) {
+        this.toPivotMatrix.makeTranslation(pivot.x, pivot.y, pivot.z);
+        this.fromPivotMatrix.makeTranslation(-pivot.x, -pivot.y, -pivot.z);
+        this.groupTransformMatrix
+          .copy(this.toPivotMatrix)
+          .multiply(rotation)
+          .multiply(this.fromPivotMatrix);
+        matrix.premultiply(this.groupTransformMatrix);
+      } else {
+        const baselineMatrix = this.groupTransformMatrix
+          .copy(record.instanceMatrix)
+          .multiply(binding.primitiveMatrixWorld);
+        this.rotationQuaternion.setFromRotationMatrix(rotation);
+        matrix.decompose(this.instancePosition, this.instanceQuaternion, this.instanceScale);
+        this.instanceQuaternion.multiply(this.rotationQuaternion);
+        matrix.compose(this.instancePosition, this.instanceQuaternion, this.instanceScale);
+        matrix.multiply(binding.primitiveMatrixWorld);
+        matrix.elements[12] = baselineMatrix.elements[12];
+        matrix.elements[13] = baselineMatrix.elements[13] + this.getLocalOriginRotationLift(binding, baselineMatrix);
+        matrix.elements[14] = baselineMatrix.elements[14];
+        if (binding.fullMirrored) {
+          matrix.premultiply(instanceMirrorMatrix);
+        }
+
+        binding.mesh.setMatrixAt(localIndex, matrix);
+        return;
+      }
+    }
+
+    matrix.multiply(binding.primitiveMatrixWorld);
+    if (binding.fullMirrored) {
+      matrix.premultiply(instanceMirrorMatrix);
+    }
+
+    binding.mesh.setMatrixAt(localIndex, matrix);
+  }
+
+  private getLocalOriginRotationLift(
+    binding: TieInstancedMeshBinding,
+    baselineMatrix: THREE.Matrix4
+  ): number {
+    const geometry = binding.mesh.geometry;
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+    if (!geometry.boundingBox) {
+      return 0;
+    }
+
+    this.baselineBox.copy(geometry.boundingBox).applyMatrix4(baselineMatrix);
+    return (this.baselineBox.max.y - this.baselineBox.min.y) * tieLocalOriginRotationLiftRatio;
   }
 
   private applyBindingMaterial(binding: TieInstancedMeshBinding): void {
@@ -431,6 +619,9 @@ export class TieInstanceController {
 
   private createTieMaterialSet(records: PreparedTieRecord[], primitive: TiePrimitive): TieMaterialSet {
     const ambientBinding = createTieAmbientTextureBinding(records, primitive);
+    const glowColorBinding = tieMaterialUsesGlowEmission(primitive.material)
+      ? createTieGlowColorBinding(records)
+      : null;
     const displayOptions = this.modelDisplayOptions;
     if (!displayOptions) {
       throw new Error('Tie material display options are not initialized.');
@@ -441,6 +632,7 @@ export class TieInstanceController {
         primitive.material,
         primitive.geometry,
         null,
+        glowColorBinding,
         this.directionalLightBinding,
         this.skyboxReflectionTexture,
         this.options,
@@ -450,13 +642,15 @@ export class TieInstanceController {
           primitive.material,
           primitive.geometry,
           ambientBinding,
+          glowColorBinding,
           this.directionalLightBinding,
           this.skyboxReflectionTexture,
           this.options,
           displayOptions)
         : null,
       textureMaterial: cloneTieTextureMaterial(primitive.material),
-      ambientBinding
+      ambientBinding,
+      glowColorBinding
     };
   }
 
@@ -573,4 +767,56 @@ function resolveGeometryBoundingSphere(geometry: THREE.BufferGeometry): THREE.Sp
   }
 
   return geometry.boundingSphere;
+}
+
+function createTieGlowColorBinding(records: PreparedTieRecord[]): TieGlowColorBinding {
+  const instanceCount = Math.max(1, records.length);
+  const data = new Uint8Array(instanceCount * 4);
+  const texture = new THREE.DataTexture(data, 1, instanceCount, THREE.RGBAFormat, THREE.UnsignedByteType);
+  texture.name = `tie_glow_runtime_${records[0]?.source.classId ?? 'empty'}_${records[0]?.source.index ?? 0}`;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.flipY = false;
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.needsUpdate = true;
+  return {
+    texture,
+    data,
+    instanceCount,
+    rowByRecord: createTieGlowRowMap(records)
+  };
+}
+
+function createTieGlowRowAttribute(
+  records: PreparedTieRecord[],
+  binding: TieGlowColorBinding
+): Float32Array {
+  const rows = new Float32Array(records.length);
+  for (let index = 0; index < records.length; index += 1) {
+    rows[index] = binding.rowByRecord.get(records[index]) ?? 0;
+  }
+
+  return rows;
+}
+
+function createTieGlowRowMap(records: PreparedTieRecord[]): WeakMap<PreparedTieRecord, number> {
+  const rowByRecord = new WeakMap<PreparedTieRecord, number>();
+  for (let index = 0; index < records.length; index += 1) {
+    rowByRecord.set(records[index], index);
+  }
+
+  return rowByRecord;
+}
+
+function buildTieGroupRecordIndex(groups: number[][]): Map<number, number> {
+  const byRecordIndex = new Map<number, number>();
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    for (const recordIndex of groups[groupIndex]) {
+      byRecordIndex.set(recordIndex, groupIndex);
+    }
+  }
+
+  return byRecordIndex;
 }

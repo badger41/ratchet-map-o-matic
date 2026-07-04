@@ -53,6 +53,42 @@ export function parseTieInstanceRecords(buffer: BinaryBuffer, expectedCount: num
   return records;
 }
 
+export function parseTieGroupRecords(buffer: BinaryBuffer, instanceCount: number): number[][] {
+  const byteLength = binaryByteLength(buffer);
+  if (byteLength < 0x10) {
+    return [];
+  }
+
+  const view = createDataView(buffer);
+  const groupCount = Math.max(0, view.getInt32(0, true));
+  const groupDataByteCount = Math.max(0, view.getInt32(4, true));
+  const dataStart = 0x10 + align(groupCount * 4, 0x10);
+  if (dataStart > byteLength) {
+    return [];
+  }
+
+  const dataEnd = Math.min(byteLength, dataStart + groupDataByteCount);
+  const groups: number[][] = [];
+  for (let groupIndex = 0; groupIndex < groupCount; groupIndex += 1) {
+    const offsetPosition = 0x10 + groupIndex * 4;
+    if (offsetPosition + 4 > byteLength) {
+      groups.push([]);
+      continue;
+    }
+
+    const startOffset = Math.max(0, view.getInt32(offsetPosition, true));
+    const nextOffset = groupIndex + 1 < groupCount && offsetPosition + 8 <= byteLength
+      ? Math.max(0, view.getInt32(offsetPosition + 4, true))
+      : groupDataByteCount;
+    const safeEndOffset = Math.max(startOffset, nextOffset);
+    const start = Math.min(dataEnd, dataStart + startOffset);
+    const end = Math.min(dataEnd, dataStart + safeEndOffset);
+    groups.push(readTieGroupInstanceIds(view, start, end, instanceCount));
+  }
+
+  return groups;
+}
+
 export function parseTieColorTable(buffer: BinaryBuffer): TieColorTable {
   const byteLength = binaryByteLength(buffer);
   const view = createDataView(buffer);
@@ -154,6 +190,23 @@ function readTieInstanceRecord(view: DataView, index: number, offset: number): T
   };
 }
 
+function readTieGroupInstanceIds(view: DataView, start: number, end: number, instanceCount: number): number[] {
+  const ids: number[] = [];
+  for (let offset = start; offset + 2 <= end; offset += 2) {
+    const raw = view.getUint16(offset, true);
+    const id = raw & 0x7fff;
+    if (id < instanceCount) {
+      ids.push(id);
+    }
+
+    if ((raw & 0x8000) !== 0) {
+      break;
+    }
+  }
+
+  return ids;
+}
+
 function readTieColorEntry(
   view: DataView,
   id: number,
@@ -234,4 +287,8 @@ function tieAmbientNeutralPackedColor(valid: boolean): { r: number; g: number; b
 
 function clampByte(value: number): number {
   return Math.max(0, Math.min(Math.floor(value), 255));
+}
+
+function align(value: number, alignment: number): number {
+  return Math.ceil(value / alignment) * alignment;
 }

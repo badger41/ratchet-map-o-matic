@@ -98,6 +98,7 @@ export interface LoadedMapPackage {
   tieClassIdsPath: string | null;
   tieInstancesPath: string | null;
   tieColorsPath: string | null;
+  tieGroupsPath: string | null;
   tieClassCountExpected: number | null;
   tieInstanceCountExpected: number | null;
   mobyEntries: GltfExportEntry[];

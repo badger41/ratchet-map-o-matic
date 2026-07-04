@@ -3,11 +3,13 @@ import type { LoadedMapPackage } from '../../../../../services/mapPackages/mapPa
 import type { DlMobyInstance } from '../../../../../services/wasm/ratchetPs2Wasm';
 import { disposeObject3D } from '../../RendererDisposal';
 import type { MobyInstanceController } from '../MobyInstanceController';
+import type { TieInstanceController } from '../../ties/TieInstanceController';
 
 export interface MobyClassContext {
   root: THREE.Group;
   mapPackage: LoadedMapPackage;
   mobyController: MobyInstanceController;
+  tieController: TieInstanceController;
   camera: THREE.Camera;
   instances: DlMobyInstance[];
 }

@@ -370,7 +370,14 @@ export class MapSceneRenderer {
       const tieStats = await this.loadTies(root, mapPackage, modelDisplayOptions);
       const shrubStats = await this.loadShrubs(root, mapPackage, modelDisplayOptions);
       const mobyStats = await this.loadMobys(root, mapPackage, modelDisplayOptions);
-      await this.mobySimulationController.load(root, mapPackage, this.mobyInstances, this.mobyController, this.camera);
+      await this.mobySimulationController.load(
+        root,
+        mapPackage,
+        this.mobyInstances,
+        this.mobyController,
+        this.tieController,
+        this.camera
+      );
       this.tieController.moveAlphaBlendPassToEnd();
       this.shrubController.moveAlphaBlendPassToEnd();
       this.mobyController.moveAlphaBlendPassToEnd();
