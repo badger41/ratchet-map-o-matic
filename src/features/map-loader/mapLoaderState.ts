@@ -3,9 +3,11 @@ import {
   type MapLoadStageId,
   type MapLoadStageStatus,
   type MapLoadStageUpdate
-} from '../../services/mapLoading/deadlockedMapLoadPipeline';
+} from '../../services/mapLoading/mapLoadPipeline';
 
 export type MapLoaderPhase = 'welcome' | 'loading' | 'ready' | 'error';
+export type MapSource = 'vanilla' | 'custom';
+export type CustomMapsStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface MapLoadStageState {
   id: MapLoadStageId;

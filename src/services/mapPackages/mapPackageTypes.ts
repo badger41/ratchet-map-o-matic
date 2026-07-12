@@ -90,9 +90,9 @@ export interface LoadedMapPackage {
   skyboxEntry: GltfExportEntry | null;
   skyboxGltfPath: string | null;
   skyboxGltfUrl: string | null;
-  tfragEntry: GltfExportEntry;
-  tfragGltfPath: string;
-  tfragGltfUrl: string;
+  tfragEntry: GltfExportEntry | null;
+  tfragGltfPath: string | null;
+  tfragGltfUrl: string | null;
   tfragDiagnostics: TfragDiagnostics | null;
   tieEntries: GltfExportEntry[];
   tieClassIdsPath: string | null;

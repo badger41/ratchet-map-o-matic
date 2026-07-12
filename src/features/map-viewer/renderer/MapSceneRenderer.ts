@@ -411,6 +411,20 @@ export class MapSceneRenderer {
     mapPackage: LoadedMapPackage,
     modelDisplayOptions: ModelDisplayNodeOptions
   ): Promise<TfragStats> {
+    if (!mapPackage.tfragGltfUrl) {
+      const tfragStats: TfragStats = {
+        meshes: 0,
+        sourcePrimitives: 0,
+        triangles: 0,
+        lod0Triangles: null,
+        directionalLightRecords: mapPackage.directionalLights.length,
+        materialRebakes: 0
+      };
+      this.onTfragStats(tfragStats);
+      this.onLoadProgress({ id: 'tfrag', status: 'done', detail: 'Skipped' });
+      return tfragStats;
+    }
+
     this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Loading glTF' });
     this.onStatus('Loading tfrag glTF');
     const gltf = await this.loader.loadAsync(mapPackage.tfragGltfUrl);
@@ -1218,6 +1232,7 @@ function resolveMapSceneDebugTuning(tuning: Partial<MapSceneDebugTuning> | undef
     waterUnderlayDarkMinOpacity: finiteNonNegative(merged.waterUnderlayDarkMinOpacity, defaultMapSceneDebugTuning.waterUnderlayDarkMinOpacity),
     waterColorSaturation: finiteNonNegative(merged.waterColorSaturation, defaultMapSceneDebugTuning.waterColorSaturation),
     waterColorContrast: finiteNonNegative(merged.waterColorContrast, defaultMapSceneDebugTuning.waterColorContrast),
+    waterFogStrength: finiteNonNegative(merged.waterFogStrength, defaultMapSceneDebugTuning.waterFogStrength),
     waterOverlayColorStrength: finiteNonNegative(merged.waterOverlayColorStrength, defaultMapSceneDebugTuning.waterOverlayColorStrength),
     waterOverlayOpacityScale: finiteNonNegative(merged.waterOverlayOpacityScale, defaultMapSceneDebugTuning.waterOverlayOpacityScale)
   };

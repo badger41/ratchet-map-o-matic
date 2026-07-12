@@ -55,7 +55,7 @@ export class HttpMapAssetPackage implements MapAssetPackage {
 
   async readOptionalBytes(path: string): Promise<Uint8Array | null> {
     const response = await fetch(await this.resolveUrl(path));
-    if (response.status === 404) {
+    if (response.status === 404 || isHtmlFallback(response)) {
       return null;
     }
 
@@ -255,6 +255,10 @@ export function dirnamePackagePath(path: string): string {
 
 function isRelativeResourceUri(uri: string): boolean {
   return !/^(?:[a-z]+:|\/\/)/i.test(uri);
+}
+
+function isHtmlFallback(response: Response): boolean {
+  return response.ok && response.headers.get('content-type')?.toLowerCase().includes('text/html') === true;
 }
 
 function toBlobPart(bytes: Uint8Array): BlobPart {

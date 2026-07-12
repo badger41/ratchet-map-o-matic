@@ -372,7 +372,7 @@ function createTieGlowNode(
     glowColorBinding.texture,
     vec2(float(0.5), row.add(float(0.5)).div(float(glowColorBinding.instanceCount)).clamp(0, 1))
   ));
-  return baseColor.mul(mix(exportedTint, runtimeTint.rgb, runtimeTint.a));
+  return baseColor.mul(mix(exportedTint, runtimeTint.rgb.mul(float(255 / 128)), runtimeTint.a));
 }
 
 function hasTieSecondUvReflection(

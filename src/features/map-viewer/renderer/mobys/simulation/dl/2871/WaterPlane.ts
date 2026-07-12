@@ -83,10 +83,12 @@ interface FxTextureManifest {
 
 type WaterTextureMode = 'none' | 'world' | 'worldUnderlay';
 
-const fxLevelTextureBaseId = 0x62;
+const dlFxLevelTextureBaseId = 0x62;
+const uyaFxLevelTextureBaseId = dlFxLevelTextureBaseId + 2;
 const waterPvarByteLength = 0x70;
 const waterPlaneRenderOrder = 1_000_000_000;
 const ps2ColorByteScale = 1 / ps2FullOpacityAlphaByte;
+const waterOverlayAlphaEnableThreshold = 0x10;
 const waterFogIntensityScale = 1 / 100;
 const waterWaveComponentCount = 8;
 const waterDetailWaveSlopeScale = 1.75;
@@ -118,7 +120,7 @@ export class WaterPlaneMobyClass extends MobyClass {
 
     const textureUrls = await loadFxTextureUrls(context);
     const water = new WaterPlaneMobyClass(context, configs);
-    await water.loadLayers(textureUrls);
+    await water.loadLayers(textureUrls, fxLevelTextureBaseIdForGame(context.mapPackage.rootManifest.Game));
     if (water.layers.length === 0) {
       water.dispose();
       return null;
@@ -186,12 +188,12 @@ export class WaterPlaneMobyClass extends MobyClass {
     super.dispose();
   }
 
-  private async loadLayers(textureUrls: Map<number, string>): Promise<void> {
+  private async loadLayers(textureUrls: Map<number, string>, fxLevelTextureBaseId: number): Promise<void> {
     const loader = new THREE.TextureLoader();
     for (let index = 0; index < this.configs.length; index += 1) {
       const config = this.configs[index];
       const underlayTextureUrl = config.underlayFxTexId >= 0
-        ? resolveFxTextureUrl(textureUrls, config.underlayFxTexId)
+        ? resolveFxTextureUrl(textureUrls, config.underlayFxTexId, fxLevelTextureBaseId)
         : null;
       this.addBackgroundDarkenLayer(config, index);
       await this.addLayer({
@@ -213,7 +215,7 @@ export class WaterPlaneMobyClass extends MobyClass {
           config,
           configIndex: index,
           name: 'overlay',
-          textureUrl: resolveFxTextureUrl(textureUrls, config.overlayFxTexId),
+          textureUrl: resolveFxTextureUrl(textureUrls, config.overlayFxTexId, fxLevelTextureBaseId),
           color: config.overlayColor,
           directionDegrees: config.overlayDirection,
           speed: config.overlaySpeed,
@@ -372,14 +374,14 @@ function parseWaterPvar(instance: DlMobyInstance): WaterPvar | null {
   const overlayFxTexId = view.getInt32(0x00, true);
   const underlayFxTexId = view.getInt32(0x04, true);
   return {
-    overlayFxTexId: overlayFxTexId >= 0 && view.getUint8(0x33) >= 0x10 ? overlayFxTexId : -1,
+    overlayFxTexId: overlayFxTexId >= 0 && view.getUint8(0x33) >= waterOverlayAlphaEnableThreshold ? overlayFxTexId : -1,
     underlayFxTexId,
     overlayTiling: view.getFloat32(0x24, true),
     overlayDirection: view.getFloat32(0x28, true),
     overlaySpeed: view.getFloat32(0x2c, true),
     overlayAdditive: view.getUint8(0x39) !== 0,
     overlayMipChain: readWaterOverlayMipChain(view),
-    overlayColor: readWaterColor(view, 0x30),
+    overlayColor: readWaterColor(view, 0x30, waterOverlayAlphaEnableThreshold),
     underlayColor: readWaterColor(view, 0x34),
     fog: readWaterFog(view),
     waves: readWaterWaves(view),
@@ -392,7 +394,13 @@ function getWaterRenderPosZ(config: WaterPvar): number {
   return config.posZ + config.waves.amplitudeSum * waterWaveBaseHeightScale;
 }
 
-function resolveFxTextureUrl(textureUrls: Map<number, string>, pvarTextureId: number): string | null {
+function fxLevelTextureBaseIdForGame(game: unknown): number {
+  return typeof game === 'string' && game.toUpperCase() === 'UYA'
+    ? uyaFxLevelTextureBaseId
+    : dlFxLevelTextureBaseId;
+}
+
+function resolveFxTextureUrl(textureUrls: Map<number, string>, pvarTextureId: number, fxLevelTextureBaseId: number): string | null {
   return pvarTextureId >= 0 ? textureUrls.get(fxLevelTextureBaseId + pvarTextureId) ?? null : null;
 }
 
@@ -414,7 +422,7 @@ function readWaterOverlayMipChain(view: DataView): WaterOverlayMipChain {
   };
 }
 
-function readWaterColor(view: DataView, offset: number): WaterColor {
+function readWaterColor(view: DataView, offset: number, alphaThreshold = 0): WaterColor {
   const alpha = view.getUint8(offset + 3);
   const color = new THREE.Color(
     view.getUint8(offset) * ps2ColorByteScale,
@@ -424,7 +432,7 @@ function readWaterColor(view: DataView, offset: number): WaterColor {
 
   return {
     color,
-    opacity: clamp01(alpha / ps2FullOpacityAlphaByte)
+    opacity: clamp01((alpha - alphaThreshold) / (ps2FullOpacityAlphaByte - alphaThreshold))
   };
 }
 
@@ -564,7 +572,7 @@ async function loadFxTextureUrls(context: MobyClassContext): Promise<Map<number,
 async function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Texture | null> {
   try {
     const texture = await loader.loadAsync(url);
-    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.colorSpace = THREE.NoColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.magFilter = THREE.LinearFilter;

@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import type { TieInstanceRecord } from '../../../../../../../services/mapPackages/mapPackageTypes';
 import type { DlMobyInstance } from '../../../../../../../services/wasm/ratchetPs2Wasm';
 import {
   MobyClass,
@@ -10,22 +11,27 @@ export const tieGlowColorMobyClassId = 0x0ce9;
 
 interface TieGlowColorConfig {
   tieGroupIndex: number;
-  phaseRadiansPerSecond: number;
+  phaseRadiansPerStep: number;
   thresholdRadians: number;
   colorA: THREE.Color;
   colorB: THREE.Color;
   current: THREE.Color;
   phase: number;
+  spatialPhaseVector: THREE.Vector3 | null;
 }
 
 const pvarByteLength = 0x26;
+const spatialPvarByteLength = 0x80;
 const degreesToRadians = Math.PI / 180;
 const byteToColor = 1 / 255;
 const glowDisplayGamma = 2.2;
-const phaseSpeedScale = 1;
+const gameStepSeconds = 1 / 60;
+const thresholdBlendAmount = 0.1;
 const tau = Math.PI * 2;
 
 export class TieGlowColorMobyClass extends MobyClass {
+  private readonly scratchColor = new THREE.Color();
+
   static async create(context: MobyClassContext): Promise<TieGlowColorMobyClass | null> {
     const configs = context.instances
       .map((instance) => parseTieGlowColorPvar(instance))
@@ -61,11 +67,17 @@ export class TieGlowColorMobyClass extends MobyClass {
 
   override update(update: MobyClassUpdate): void {
     for (const config of this.configs) {
-      config.phase = wrapAngle(config.phase + config.phaseRadiansPerSecond * update.stepSeconds * phaseSpeedScale);
-      const amount = config.thresholdRadians === 0
-        ? Math.sin(config.phase) * 0.5 + 0.5
-        : (config.phase > config.thresholdRadians ? 1 : 0);
-      config.current.copy(config.colorA).lerp(config.colorB, amount);
+      config.phase = wrapAngle(config.phase + config.phaseRadiansPerStep * update.stepSeconds / gameStepSeconds);
+      if (!config.spatialPhaseVector) {
+        if (config.thresholdRadians === 0) {
+          colorForPhase(config, config.phase, config.current);
+        } else {
+          config.current.lerp(
+            config.phase > config.thresholdRadians ? config.colorB : config.colorA,
+            thresholdBlendAmount * update.stepSeconds / gameStepSeconds
+          );
+        }
+      }
     }
 
     this.applyGlowColors();
@@ -79,7 +91,15 @@ export class TieGlowColorMobyClass extends MobyClass {
 
   private applyGlowColors(): void {
     for (const config of this.configs) {
-      this.context.tieController.setTieGroupGlowColor(config.tieGroupIndex, config.current);
+      if (!config.spatialPhaseVector) {
+        this.context.tieController.setTieGroupGlowColor(config.tieGroupIndex, config.current);
+        continue;
+      }
+
+      this.context.tieController.setTieGroupGlowColorForRecords(
+        config.tieGroupIndex,
+        (record) => colorForPhase(config, spatialPhaseForRecord(config, record), this.scratchColor)
+      );
     }
   }
 
@@ -102,17 +122,57 @@ function parseTieGlowColorPvar(instance: DlMobyInstance): TieGlowColorConfig | n
     return null;
   }
 
-  // ponytail: local CE9 fixtures only exercise this non-spatial sine/threshold blend path.
   const colorA = readRgb(pvar, 0x20);
   return {
     tieGroupIndex,
-    phaseRadiansPerSecond: finiteOrZero(view.getFloat32(0x04, true)) * degreesToRadians,
-    thresholdRadians: Math.max(0, finiteOrZero(view.getFloat32(0x08, true)) * degreesToRadians),
+    phaseRadiansPerStep: finiteOrZero(view.getFloat32(0x04, true)) * degreesToRadians * gameStepSeconds,
+    thresholdRadians: wrapAngle(finiteOrZero(view.getFloat32(0x08, true)) * degreesToRadians),
     colorA,
     colorB: readRgb(pvar, 0x23),
     current: colorA.clone(),
-    phase: 0
+    phase: wrapAngle(finiteOrZero(view.getFloat32(0x0c, true))),
+    spatialPhaseVector: readSpatialPhaseVector(view, pvar.byteLength)
   };
+}
+
+function colorForPhase(config: TieGlowColorConfig, phase: number, target: THREE.Color): THREE.Color {
+  if (config.thresholdRadians === 0) {
+    return target.copy(config.colorA).lerp(config.colorB, Math.cos(phase) * 0.5 + 0.5);
+  }
+
+  return target.copy(phase > config.thresholdRadians ? config.colorB : config.colorA);
+}
+
+function spatialPhaseForRecord(config: TieGlowColorConfig, record: TieInstanceRecord): number {
+  const vector = config.spatialPhaseVector;
+  if (!vector) {
+    return config.phase;
+  }
+
+  const row = record.matrixRows[2];
+  return wrapAngle(config.phase - (row[0] * vector.x + row[1] * vector.y + row[2] * vector.z) * tau);
+}
+
+function readSpatialPhaseVector(view: DataView, byteLength: number): THREE.Vector3 | null {
+  if (byteLength < spatialPvarByteLength || view.getInt32(0x1c, true) === 0) {
+    return null;
+  }
+
+  const spatialScale = Math.abs(finiteOrZero(view.getFloat32(0x7c, true)));
+  if (spatialScale === 0) {
+    return null;
+  }
+
+  const vector = new THREE.Vector3(
+    finiteOrZero(view.getFloat32(0x70, true)),
+    finiteOrZero(view.getFloat32(0x74, true)),
+    finiteOrZero(view.getFloat32(0x78, true))
+  );
+  if (vector.lengthSq() === 0) {
+    return null;
+  }
+
+  return vector.normalize().multiplyScalar(1 / Math.sqrt(spatialScale));
 }
 
 function readRgb(bytes: Uint8Array, offset: number): THREE.Color {
@@ -124,7 +184,6 @@ function readRgb(bytes: Uint8Array, offset: number): THREE.Color {
 }
 
 function pvarColorToRaw(value: number | undefined): number {
-  // ponytail: keep the display curve that matched CE9 broadly; 9592 needs a separate base-glow fix.
   return Math.pow((((value ?? 255) >> 2) << 2) * byteToColor, glowDisplayGamma);
 }
 

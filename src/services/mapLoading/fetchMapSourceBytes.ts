@@ -1,16 +1,17 @@
-export interface WadFetchProgress {
+export interface MapSourceFetchProgress {
   loaded: number;
   total: number | null;
 }
 
-export async function fetchWadBytes(
+export async function fetchMapSourceBytes(
   url: string,
-  onProgress?: (progress: WadFetchProgress) => void
+  onProgress?: (progress: MapSourceFetchProgress) => void,
+  resourceLabel = 'WAD'
 ): Promise<Uint8Array> {
-  const sourceUrl = normalizeWadUrl(url);
+  const sourceUrl = normalizeMapSourceUrl(url, resourceLabel);
   const response = await fetch(sourceUrl);
   if (!response.ok) {
-    throw new Error(`Failed to fetch WAD: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch ${resourceLabel}: ${response.status} ${response.statusText}`);
   }
 
   const total = parseContentLength(response.headers.get('content-length'));
@@ -48,10 +49,10 @@ export async function fetchWadBytes(
   return bytes;
 }
 
-function normalizeWadUrl(value: string): string {
+function normalizeMapSourceUrl(value: string, resourceLabel: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new Error('WAD URL is empty.');
+    throw new Error(`${resourceLabel} URL is empty.`);
   }
 
   return trimmed;

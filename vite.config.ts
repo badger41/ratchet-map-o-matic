@@ -8,7 +8,8 @@ export default defineConfig({
     fs: {
       allow: [
         searchForWorkspaceRoot(process.cwd()),
-        '/run/media/system/data/Projects/ratchet-ps2-cli/test-assets/extractions'
+        '/run/media/system/data/Projects/ratchet-ps2-cli/test-assets/extractions',
+        '/run/media/system/data/Projects/ratchet-ps2-cli/test-assets/extractions_uya'
       ]
     }
   }

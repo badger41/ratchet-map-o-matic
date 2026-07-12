@@ -34,6 +34,7 @@ export interface WaterPlaneDebugOptions {
   waterUnderlayDarkMinOpacity: number;
   waterColorSaturation: number;
   waterColorContrast: number;
+  waterFogStrength: number;
   waterOverlayColorStrength: number;
   waterOverlayOpacityScale: number;
 }
@@ -72,8 +73,8 @@ export const waterBackgroundDarkenScale = 0.7;
 
 const defaultWaterUnderlaySphereDepth = 0.3;
 const waterUnderlayRingDebugWidth = 2 / 128;
-const defaultWaterUnderlayDarkContrast = 0.80;
-const defaultWaterUnderlayBrightContrast = 4;
+const defaultWaterUnderlayDarkContrast = 1;
+const defaultWaterUnderlayBrightContrast = 1;
 const waterUnderlayTextureContrastPivot = 0.5;
 const defaultWaterUnderlayDarkMinOpacity = 0.45;
 const waterShimmerUvScale = 0.06;
@@ -83,11 +84,11 @@ const waterShimmerMinLight = 0.6;
 const waterShimmerMaxLight = 1.42;
 const defaultWaterColorSaturation = 1;
 const defaultWaterColorContrast = 1;
+const defaultWaterFogStrength = 1;
 const waterColorContrastPivot = 0.12;
-const defaultWaterOverlayColorStrength = 1.15;
-const waterOverlayUnderlayTint = 0.3;
-const defaultWaterOverlayOpacityScale = 0.675;
-const waterOverlayHighlightOpacityScale = 0.72;
+const defaultWaterOverlayColorStrength = 1;
+const waterOverlayUnderlayTint = 0;
+const defaultWaterOverlayOpacityScale = 0.25;
 const defaultWaterWorldLift = 2.4;
 const waterWaveHeightScale = 1;
 
@@ -100,6 +101,7 @@ export const defaultWaterPlaneDebugOptions: WaterPlaneDebugOptions = {
   waterUnderlayDarkMinOpacity: defaultWaterUnderlayDarkMinOpacity,
   waterColorSaturation: defaultWaterColorSaturation,
   waterColorContrast: defaultWaterColorContrast,
+  waterFogStrength: defaultWaterFogStrength,
   waterOverlayColorStrength: defaultWaterOverlayColorStrength,
   waterOverlayOpacityScale: defaultWaterOverlayOpacityScale
 };
@@ -112,6 +114,7 @@ const waterUnderlayBrightContrast = uniform(defaultWaterPlaneDebugOptions.waterU
 const waterUnderlayDarkMinOpacity = uniform(defaultWaterPlaneDebugOptions.waterUnderlayDarkMinOpacity);
 const waterColorSaturation = uniform(defaultWaterPlaneDebugOptions.waterColorSaturation);
 const waterColorContrast = uniform(defaultWaterPlaneDebugOptions.waterColorContrast);
+const waterFogStrength = uniform(defaultWaterPlaneDebugOptions.waterFogStrength);
 const waterOverlayColorStrength = uniform(defaultWaterPlaneDebugOptions.waterOverlayColorStrength);
 const waterOverlayOpacityScale = uniform(defaultWaterPlaneDebugOptions.waterOverlayOpacityScale);
 const waterWorldLiftInverse = uniform(1 / defaultWaterWorldLift);
@@ -131,6 +134,7 @@ export function setWaterPlaneDebugOptions(options: Partial<WaterPlaneDebugOption
   waterUnderlayDarkMinOpacity.value = clamp01(finiteNumber(options.waterUnderlayDarkMinOpacity ?? defaultWaterPlaneDebugOptions.waterUnderlayDarkMinOpacity, defaultWaterPlaneDebugOptions.waterUnderlayDarkMinOpacity));
   waterColorSaturation.value = finiteNonNegative(options.waterColorSaturation, defaultWaterPlaneDebugOptions.waterColorSaturation);
   waterColorContrast.value = finiteNonNegative(options.waterColorContrast, defaultWaterPlaneDebugOptions.waterColorContrast);
+  waterFogStrength.value = finiteNonNegative(options.waterFogStrength, defaultWaterPlaneDebugOptions.waterFogStrength);
   waterOverlayColorStrength.value = finiteNonNegative(options.waterOverlayColorStrength, defaultWaterPlaneDebugOptions.waterOverlayColorStrength);
   waterOverlayOpacityScale.value = finiteNonNegative(options.waterOverlayOpacityScale, defaultWaterPlaneDebugOptions.waterOverlayOpacityScale);
   const lift = finiteNumber(options.worldDisplayLift ?? defaultWaterWorldLift, defaultWaterWorldLift);
@@ -202,9 +206,13 @@ function createWaterUnderlayMaterial(
   const underlayAlpha = underlaySample.a
     .div(float(ps2FullOpacityAlphaByte * colorByteScale))
     .clamp(0, 1);
+  const underlayTextureColor = applyWaterUnderlayTextureContrastNode(
+    underlaySample.rgb,
+    underlayAlpha
+  );
   const waterColor = mix(
     applyWaterPs2ColorNode(baseColor),
-    applyWaterPs2TextureColorNode(applyWaterUnderlayTextureContrastNode(underlaySample.rgb, underlayAlpha), baseColor),
+    applyWaterPs2TextureModulateNode(underlayTextureColor, baseColor),
     underlayAlpha
   );
   const waveColor = applyWaterWaveColorNode(waterColor, waves);
@@ -255,27 +263,30 @@ export function createWaterLayerMaterial({
     : baseColor;
   const textureSample = textureSource ? texture(textureSource) : null;
   const layerColor = textureSample
-    ? applyWaterPs2TextureColorNode(textureSample.rgb, layerTint)
+    ? polygonOffset
+      ? additive
+        ? applyWaterPs2TextureRgbNode(textureSample.rgb)
+        : applyWaterPs2TextureModulateNode(applyWaterPs2TextureRgbNode(textureSample.rgb), layerTint)
+      : applyWaterPs2TextureModulateNode(applyWaterPs2TextureRgbNode(textureSample.rgb), layerTint)
     : applyWaterPs2ColorNode(layerTint);
   const waveLayerColor = applyWaterWaveColorNode(layerColor, waves);
   material.colorNode = polygonOffset
     ? applyWaterFogNode(waveLayerColor.mul(waterOverlayColorStrength), fog)
     : applyWaterDisplayNode(applyWaterFogNode(waveLayerColor, fog));
   if (textureSample) {
-    const opacityScale = polygonOffset ? waterOverlayOpacityScale : float(1);
-    const highlightOpacity = polygonOffset
-      ? mix(
-        float(1),
-        float(waterOverlayHighlightOpacityScale),
-        dot(textureSample.rgb, vec3(0.299, 0.587, 0.114)).clamp(0, 1)
-      )
-      : float(1);
-    material.opacityNode = textureSample.a
-      .div(float(ps2FullOpacityAlphaByte * colorByteScale))
-      .mul(float(opacity))
-      .mul(opacityScale)
-      .mul(highlightOpacity)
-      .clamp(0, 1);
+    const overlayOpacityScale = additive
+      ? waterOverlayOpacityScale
+        .mul(dot(layerTint, vec3(0.299, 0.587, 0.114)))
+        .mul(float(ps2FullOpacityAlphaByte / 255))
+      : waterOverlayOpacityScale;
+    material.opacityNode = polygonOffset
+      ? float(opacity)
+        .mul(overlayOpacityScale)
+        .clamp(0, 1)
+      : textureSample.a
+        .div(float(ps2FullOpacityAlphaByte * colorByteScale))
+        .mul(float(opacity))
+        .clamp(0, 1);
   }
 
   return material;
@@ -388,7 +399,9 @@ function applyWaterFogNode(colorNode: Node<'vec3'>, fog: WaterFog | null): Node<
     .sub(float(fog.nearDistance))
     .div(float(fog.farDistance - fog.nearDistance))
     .clamp(0, 1);
-  const fogAmount = mix(float(fog.nearIntensity), float(fog.farIntensity), distanceMix).clamp(0, 1);
+  const fogAmount = mix(float(fog.nearIntensity), float(fog.farIntensity), distanceMix)
+    .mul(waterFogStrength)
+    .clamp(0, 1);
   const displayColor = applyModelColorGammaNode(colorNode, 1 / 2.2);
   const displayFog = applyModelColorGammaNode(vec3(fog.color.r, fog.color.g, fog.color.b), 1 / 2.2);
   return applyModelColorGammaNode(mix(displayColor, displayFog, fogAmount), 2.2);
@@ -398,22 +411,24 @@ function applyWaterPs2ColorNode(colorNode: Node<'vec3'>): Node<'vec3'> {
   return applyModelColorGammaNode(colorNode, 2.2);
 }
 
-function applyWaterPs2TextureColorNode(textureColorNode: Node<'vec3'>, colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelColorGammaNode(
-    applyModelColorGammaNode(textureColorNode, 1 / 2.2).mul(colorNode),
-    2.2
-  );
+function applyWaterPs2TextureRgbNode(textureColorNode: Node<'vec3'>): Node<'vec3'> {
+  return textureColorNode
+    .div(float(ps2FullOpacityAlphaByte * colorByteScale))
+    .clamp(0, 1);
+}
+
+function applyWaterPs2TextureModulateNode(textureColorNode: Node<'vec3'>, colorNode: Node<'vec3'>): Node<'vec3'> {
+  return applyModelColorGammaNode(textureColorNode.mul(colorNode).clamp(0, 1), 2.2);
 }
 
 function applyWaterUnderlayTextureContrastNode(textureColorNode: Node<'vec3'>, alphaNode: Node<'float'>): Node<'vec3'> {
-  const displayTexture = applyModelColorGammaNode(textureColorNode, 1 / 2.2);
-  const textureLuma = dot(displayTexture, vec3(0.2126, 0.7152, 0.0722));
-  const darkContrastTexture = displayTexture
+  const textureLuma = dot(textureColorNode, vec3(0.2126, 0.7152, 0.0722));
+  const darkContrastTexture = textureColorNode
     .sub(vec3(waterUnderlayTextureContrastPivot))
     .mul(waterUnderlayDarkContrast)
     .add(vec3(waterUnderlayTextureContrastPivot))
     .clamp(0, 1);
-  const brightContrastTexture = displayTexture
+  const brightContrastTexture = textureColorNode
     .sub(vec3(waterUnderlayTextureContrastPivot))
     .mul(waterUnderlayBrightContrast)
     .add(vec3(waterUnderlayTextureContrastPivot))
@@ -422,10 +437,7 @@ function applyWaterUnderlayTextureContrastNode(textureColorNode: Node<'vec3'>, a
   const darkWeight = float(1)
     .sub(smoothstep(float(0), float(waterUnderlayTextureContrastPivot), textureLuma))
     .mul(smoothstep(waterUnderlayDarkMinOpacity, float(1), alphaNode));
-  return applyModelColorGammaNode(
-    mix(mix(displayTexture, brightContrastTexture, brightWeight), darkContrastTexture, darkWeight),
-    2.2
-  );
+  return mix(mix(textureColorNode, brightContrastTexture, brightWeight), darkContrastTexture, darkWeight);
 }
 
 function applyWaterDisplayNode(colorNode: Node<'vec3'>): Node<'vec3'> {

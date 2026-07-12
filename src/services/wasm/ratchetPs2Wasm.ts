@@ -113,17 +113,98 @@ export interface DlGameplayBlocks {
   blocks: DlGameplayBlock[];
 }
 
+export type UyaRgb96 = DlRgb96;
+export type UyaVector3 = DlVector3;
+
+export interface UyaLevelSettings extends DlLevelSettings {
+  deathHeight: number;
+  isSphericalWorld: boolean;
+  sphereCenter: UyaVector3;
+  shipPosition: UyaVector3;
+  shipRotationZ: number;
+  shipPath: number;
+  shipCameraCuboidStart: number;
+  shipCameraCuboidEnd: number;
+  padding58: number;
+  chunkPlanes: unknown[];
+  coreSoundsCount: number;
+  rac3ThirdPart: number;
+  trailingByteLength: number;
+}
+
+export interface UyaMobyInstance {
+  size: number;
+  mission: number;
+  uid: number;
+  bolts: number;
+  unknown20: number;
+  unknown24: number;
+  classId: number;
+  scale: number;
+  drawDistance: number;
+  updateDistance: number;
+  position: UyaVector3;
+  rotation: UyaVector3;
+  group: number;
+  isRooted: number;
+  rootedDistance: number;
+  unknown64: number;
+  pvarIndex: number;
+  occlusion: number;
+  modeBits: number;
+  color: UyaRgb96;
+  light: number;
+  unknown84: number;
+}
+
+export interface UyaMobyInstances {
+  staticCount: number;
+  spawnableMobyCount: number;
+  pad8: number;
+  padC: number;
+  instances: UyaMobyInstance[];
+  trailingByteLength: number;
+}
+
+export interface UyaGameplayBlock {
+  index: number;
+  headerOffset: number;
+  pointer: number;
+  semanticName: string;
+  payloadLength: number;
+  payloadBytes: Uint8Array;
+  levelSettings: UyaLevelSettings | null;
+  mobyInstances: UyaMobyInstances | null;
+}
+
+export interface UyaGameplayBlocks {
+  kind: string;
+  headerSize: number;
+  headerBytes: Uint8Array;
+  pvarTables: DlPvarTables | null;
+  blocks: UyaGameplayBlock[];
+}
+
 export interface RatchetPs2WasmModule {
   initializeRatchetPs2Wasm(options?: { assetBaseUrl?: string }): Promise<void>;
   getApiVersion(): Promise<string>;
   unpackDlLevelWad(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  unpackUyaLevelWad(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   parseDlGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
   parseDlGameplayMission(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
+  parseUyaGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
   buildDlLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  buildDlLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
+  buildUyaLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  buildUyaLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
+  buildUyaCustomMapZipRenderPackage?(zipBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  buildUyaCustomMapZipRenderPackageEnvelope?(zipBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
+  buildUyaCustomMapRenderPackage?(zipBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  buildUyaCustomMapRenderPackageEnvelope?(zipBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'moby-pvars-v1';
+const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'packed-gameplay-metadata-v1';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {

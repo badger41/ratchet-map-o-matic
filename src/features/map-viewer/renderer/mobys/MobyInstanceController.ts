@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import {
+  attribute,
   float,
   texture,
   uv,
@@ -81,6 +82,7 @@ interface MobyMeshBinding {
 
 interface PreparedMobyRecord {
   instanceMatrix: THREE.Matrix4;
+  colorTone: [number, number, number];
 }
 
 type MobyLoadProgressCallback = (loadedClasses: number, totalClasses: number) => void;
@@ -101,6 +103,8 @@ const mobyClassLoadConcurrency = 2;
 const mobyLoadFrameBudgetMs = 6;
 const mobyInstanceChunkCellSize = 2400;
 const mobyInstanceChunkMaxRecords = 768;
+const mobyColorToneAttributeName = 'mobyColorTone';
+const mobyColorToneNeutralByte = 128;
 
 export class MobyInstanceController {
   private group: MobyGroup | null = null;
@@ -329,17 +333,18 @@ export class MobyInstanceController {
 
       this.stats.loadedClasses += 1;
       this.stats.primitives += primitives.length;
+      const useColorTone = isUyaMapPackage(mapPackage);
       const preparedRecords = classRecords.map(prepareMobyRecord);
 
       for (const primitive of primitives) {
         const displayOptions = this.modelDisplayOptions;
         if (!displayOptions) {
           throw new Error('Moby material display options are not initialized.');
-      }
+        }
 
-        const material = cloneMaterial(primitive, this.directionalLightBinding, this.options, displayOptions);
+        const material = cloneMaterial(primitive, this.directionalLightBinding, this.options, displayOptions, useColorTone);
         for (const [chunkIndex, records] of chunkMobyRecords(preparedRecords).entries()) {
-          this.addInstancedPrimitive(group, classId, records, primitive, chunkIndex, material);
+          this.addInstancedPrimitive(group, classId, records, primitive, chunkIndex, material, useColorTone);
         }
 
         await yieldController.maybeYield();
@@ -357,10 +362,14 @@ export class MobyInstanceController {
     records: PreparedMobyRecord[],
     primitive: MobyPrimitive,
     chunkIndex: number,
-    material: THREE.Material | THREE.Material[]
+    material: THREE.Material | THREE.Material[],
+    useColorTone: boolean
   ): void {
     const geometry = createMobyInstancedGeometry(primitive.geometry);
     geometry.setAttribute(lightSelectorAttributeName, createMobyLightSelectorInstanceAttribute(records));
+    if (useColorTone) {
+      geometry.setAttribute(mobyColorToneAttributeName, createMobyColorToneInstanceAttribute(records));
+    }
 
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);
     mesh.name = `moby_${String(classId).padStart(5, '0')}_c${chunkIndex}_${primitive.name}`;
@@ -458,9 +467,18 @@ function groupMobyRecordsByClassId(records: DlMobyInstance[]): Map<number, DlMob
   return groups;
 }
 
+function isUyaMapPackage(mapPackage: LoadedMapPackage): boolean {
+  return mapPackage.rootManifest.Game?.toUpperCase() === 'UYA';
+}
+
 function prepareMobyRecord(record: DlMobyInstance): PreparedMobyRecord {
   return {
-    instanceMatrix: buildMobyInstanceMatrix(record)
+    instanceMatrix: buildMobyInstanceMatrix(record),
+    colorTone: [
+      mobyColorToneComponent(record.color.red),
+      mobyColorToneComponent(record.color.green),
+      mobyColorToneComponent(record.color.blue)
+    ]
   };
 }
 
@@ -552,11 +570,12 @@ function cloneMaterial(
   primitive: MobyPrimitive,
   directionalLightBinding: ShrubDirectionalLightBinding | null,
   options: ShrubRenderOptions,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  useColorTone: boolean
 ): THREE.Material | THREE.Material[] {
   return Array.isArray(primitive.material)
-    ? primitive.material.map((item) => createMobyMaterial(item, primitive.geometry, directionalLightBinding, options, displayOptions))
-    : createMobyMaterial(primitive.material, primitive.geometry, directionalLightBinding, options, displayOptions);
+    ? primitive.material.map((item) => createMobyMaterial(item, primitive.geometry, directionalLightBinding, options, displayOptions, useColorTone))
+    : createMobyMaterial(primitive.material, primitive.geometry, directionalLightBinding, options, displayOptions, useColorTone);
 }
 
 function createMobyMaterial(
@@ -564,7 +583,8 @@ function createMobyMaterial(
   geometry: THREE.BufferGeometry,
   directionalLightBinding: ShrubDirectionalLightBinding | null,
   options: ShrubRenderOptions,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  useColorTone: boolean
 ): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshStandardMaterial>;
   const modelMaterialInfo = resolveModelMaterialInfo(source, 'moby');
@@ -607,7 +627,8 @@ function createMobyMaterial(
     directionalLightBinding,
     uniforms,
     options,
-    displayOptions);
+    displayOptions,
+    useColorTone);
   material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
   return material;
 }
@@ -618,7 +639,8 @@ function createMobyColorNode(
   directionalLightBinding: ShrubDirectionalLightBinding | null,
   uniforms: ShrubLightingUniforms,
   options: ShrubRenderOptions,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  useColorTone: boolean
 ) {
   const materialColorNode = vec3(material.color.r, material.color.g, material.color.b);
   const textureColorNode = material.map
@@ -627,6 +649,9 @@ function createMobyColorNode(
   const baseColorNode = hasVertexColors
     ? textureColorNode.mul(vertexColor().rgb)
     : textureColorNode;
+  const tonedColorNode = useColorTone
+    ? baseColorNode.mul(attribute<'vec3'>(mobyColorToneAttributeName, 'vec3'))
+    : baseColorNode;
   const ambientTermNode = vec3(mobyAmbientScale, mobyAmbientScale, mobyAmbientScale)
     .mul(uniforms.ambientScale);
   const directionalLightNode = directionalLightBinding
@@ -643,7 +668,7 @@ function createMobyColorNode(
       .mul(float(0.5))
     : vec3(0, 0, 0);
   const litColorNode = applyModelDisplayModulateNode(
-    baseColorNode,
+    tonedColorNode,
     ambientTermNode.add(directionalTermNode).clamp(0, 1)
   ).saturate();
   const exposureNode = displayOptions.dynamic ? uniforms.exposureScale : float(Math.max(0, options.exposure));
@@ -658,6 +683,23 @@ function createMobyLightSelectorInstanceAttribute(records: PreparedMobyRecord[])
   selectors.fill(defaultMobyLightSelector);
 
   return new THREE.InstancedBufferAttribute(selectors, 1);
+}
+
+function createMobyColorToneInstanceAttribute(records: PreparedMobyRecord[]): THREE.InstancedBufferAttribute {
+  const colors = new Float32Array(records.length * 3);
+  for (let index = 0; index < records.length; index += 1) {
+    const color = records[index].colorTone;
+    const offset = index * 3;
+    colors[offset] = color[0];
+    colors[offset + 1] = color[1];
+    colors[offset + 2] = color[2];
+  }
+
+  return new THREE.InstancedBufferAttribute(colors, 3);
+}
+
+function mobyColorToneComponent(value: number): number {
+  return Math.max(0, Math.min(255, finiteNumber(value, mobyColorToneNeutralByte))) / mobyColorToneNeutralByte;
 }
 
 function finiteNumber(value: number, fallback = 0): number {

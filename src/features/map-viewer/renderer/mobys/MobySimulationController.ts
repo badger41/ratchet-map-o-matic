@@ -14,6 +14,7 @@ import {
   type MobyClassUpdate
 } from './simulation/MobyClass';
 import { dlMobyClassFactories } from './simulation/dl/dlMobyClasses';
+import { uyaMobyClassFactories } from './simulation/uya/uyaMobyClasses';
 
 export interface MobySimulationStats {
   registeredClasses: number;
@@ -148,7 +149,9 @@ function groupMobyRecordsByClassId(records: DlMobyInstance[]): Map<number, DlMob
 
 function getMobyClassFactoriesForGame(game: unknown): Map<number, MobyClassFactory> {
   const key = typeof game === 'string' ? game.toLowerCase() : '';
-  return key === 'dl' || key.includes('deadlocked')
-    ? dlMobyClassFactories
-    : new Map();
+  if (key === 'dl' || key.includes('deadlocked')) {
+    return dlMobyClassFactories;
+  }
+
+  return key === 'uya' ? uyaMobyClassFactories : new Map();
 }

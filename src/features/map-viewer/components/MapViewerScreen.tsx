@@ -15,7 +15,7 @@ import { AlertCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import { dirnamePackagePath, joinPackagePath } from '../../../services/mapAssets/mapAssetPackage';
-import type { DeadlockedMapLoadResult } from '../../../services/mapLoading/deadlockedMapLoadPipeline';
+import type { MapLoadResult } from '../../../services/mapLoading/mapLoadPipeline';
 import {
   defaultShrubRenderOptions,
   defaultSkyboxRenderOptions,
@@ -30,7 +30,7 @@ import {
 } from '../../../services/mapPackages/mapPackageTypes';
 import { loadViewerPackageSource } from '../../../services/mapPackages/viewerPackageSource';
 import { formatByteSize } from '../../../shared/format';
-import { dlFxTextureName } from '../dlFxTextureCatalog';
+import { fxTextureName } from '../fxTextureCatalog';
 import {
   applyViewerStageUpdate,
   createMapViewerStages,
@@ -53,7 +53,7 @@ import { MapViewerStageList } from './MapViewerStageList';
 import { MobileCameraControls } from './MobileCameraControls';
 
 interface MapViewerScreenProps {
-  result: DeadlockedMapLoadResult;
+  result: MapLoadResult;
   onChooseAnother: () => void;
 }
 
@@ -84,7 +84,7 @@ const tieMaterialOptions: Array<{ value: TieMaterialMode; label: string }> = [
   { value: 'plain', label: 'Plain' }
 ];
 
-const lightingDebugStorageKey = 'map-viewer-lighting-debug-tuning-v4';
+const lightingDebugStorageKey = 'map-viewer-lighting-debug-tuning-v15';
 
 export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -165,6 +165,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       waterUnderlayDarkMinOpacity: defaultMapSceneDebugTuning.waterUnderlayDarkMinOpacity,
       waterColorSaturation: defaultMapSceneDebugTuning.waterColorSaturation,
       waterColorContrast: defaultMapSceneDebugTuning.waterColorContrast,
+      waterFogStrength: defaultMapSceneDebugTuning.waterFogStrength,
       waterOverlayColorStrength: defaultMapSceneDebugTuning.waterOverlayColorStrength,
       waterOverlayOpacityScale: defaultMapSceneDebugTuning.waterOverlayOpacityScale
     }));
@@ -694,7 +695,7 @@ async function loadFxTextureViews(mapPackage: LoadedMapPackage): Promise<FxTextu
     const packagePath = joinPackagePath(assetRootPath, path);
     return {
       index,
-      name: dlFxTextureName(index),
+      name: fxTextureName(mapPackage.rootManifest.Game, index),
       path: packagePath,
       url: await mapPackage.assetPackage.resolveUrl(packagePath),
       width: numberValue(entry.Width),

@@ -380,6 +380,50 @@ export class TieInstanceController {
     }
   }
 
+  setTieGroupGlowColorForRecords(
+    groupIndex: number,
+    resolveColor: (record: TieInstanceRecord) => THREE.Color | null
+  ): void {
+    if (!this.group || groupIndex < 0) {
+      return;
+    }
+
+    let changed = false;
+    for (const binding of this.meshBindings) {
+      const glowColorBinding = binding.glowColorBinding;
+      if (!glowColorBinding) {
+        continue;
+      }
+
+      const localIndices = binding.tieGroupRecordIndices.get(groupIndex);
+      if (!localIndices || localIndices.length === 0) {
+        continue;
+      }
+
+      for (const localIndex of localIndices) {
+        const record = binding.records[localIndex];
+        const row = glowColorBinding.rowByRecord.get(record);
+        if (row === undefined) {
+          continue;
+        }
+
+        const color = resolveColor(record.source);
+        const offset = row * 4;
+        glowColorBinding.data[offset] = clampByte((color?.r ?? 1) * 255);
+        glowColorBinding.data[offset + 1] = clampByte((color?.g ?? 1) * 255);
+        glowColorBinding.data[offset + 2] = clampByte((color?.b ?? 1) * 255);
+        glowColorBinding.data[offset + 3] = color ? 255 : 0;
+      }
+
+      glowColorBinding.texture.needsUpdate = true;
+      changed = true;
+    }
+
+    if (changed) {
+      this.markBundleNeedsUpdate();
+    }
+  }
+
   private addInstancedPrimitive(
     group: THREE.Group,
     classId: number,

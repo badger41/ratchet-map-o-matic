@@ -66,8 +66,10 @@ export async function loadMapPackageFromAssetPackage(
   const assetManifestPath = joinPackagePath(manifestRootPath, 'assets/manifest.json');
   const assetManifest = await assetPackage.readJson<AssetManifest>(assetManifestPath);
   const tfragEntry = findTfragGltfEntry(assetManifest);
-  const tfragGltfPath = resolveAssetPath(manifestRootPath, requiredString(tfragEntry.GltfPath, 'tfrag GltfPath'));
-  const tfragGltfUrl = await assetPackage.resolveUrl(tfragGltfPath);
+  const tfragGltfPath = tfragEntry?.GltfPath
+    ? resolveAssetPath(manifestRootPath, tfragEntry.GltfPath)
+    : null;
+  const tfragGltfUrl = tfragGltfPath ? await assetPackage.resolveUrl(tfragGltfPath) : null;
   const skyboxEntry = findSkyboxGltfEntry(assetManifest);
   const skyboxGltfPath = skyboxEntry?.GltfPath
     ? resolveAssetPath(manifestRootPath, skyboxEntry.GltfPath)
@@ -79,33 +81,24 @@ export async function loadMapPackageFromAssetPackage(
 
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
   const worldManifest = await assetPackage.readOptionalJson<WorldManifest>(worldManifestPath);
-  const directionalLightPath = findDirectionalLightPath(worldManifest);
-  const directionalLightPackagePath = resolveWorldPath(manifestRootPath, directionalLightPath);
+  const directionalLightPackagePath = findDirectionalLightPath(manifestRootPath, rootManifest, worldManifest);
   const directionalLightUrl = await assetPackage.resolveUrl(directionalLightPackagePath);
   const directionalLightBytes = await assetPackage.readBytes(directionalLightPackagePath);
   const directionalLights = parseDirectionalLightRecords(directionalLightBytes);
-  const tieClassIdsPath = findWorldSlotPath(worldManifest, 'tie_class_ids');
-  const tieInstancesPath = findWorldSlotPath(worldManifest, 'tie_instances');
-  const tieColorsPath = findWorldSlotPath(worldManifest, 'tie_instance_colors');
-  const tieGroupsPath = findWorldSlotPath(worldManifest, 'tie_groups');
-  const shrubClassIdsPath = findWorldSlotPath(worldManifest, 'shrub_class_ids');
-  const shrubInstancesPath = findWorldSlotPath(worldManifest, 'shrub_instances');
-  const shrubGroupsPath = findWorldSlotPath(worldManifest, 'shrub_groups');
+  const tieClassIdsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_class_ids');
+  const tieInstancesPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_instances');
+  const tieColorsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_instance_colors');
+  const tieGroupsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_groups');
+  const shrubClassIdsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'shrub_class_ids');
+  const shrubInstancesPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'shrub_instances');
+  const shrubGroupsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'shrub_groups');
 
-  const tfragDiagnosticsPath = tfragEntry.DiagnosticsPath
+  const tfragDiagnosticsPath = tfragEntry?.DiagnosticsPath
     ? resolveAssetPath(manifestRootPath, tfragEntry.DiagnosticsPath)
     : null;
   const tfragDiagnostics = tfragDiagnosticsPath
     ? await assetPackage.readOptionalJson<TfragDiagnostics>(tfragDiagnosticsPath)
     : null;
-  const tieClassIdsPackagePath = tieClassIdsPath ? resolveWorldPath(manifestRootPath, tieClassIdsPath) : null;
-  const tieInstancesPackagePath = tieInstancesPath ? resolveWorldPath(manifestRootPath, tieInstancesPath) : null;
-  const tieColorsPackagePath = tieColorsPath ? resolveWorldPath(manifestRootPath, tieColorsPath) : null;
-  const tieGroupsPackagePath = tieGroupsPath ? resolveWorldPath(manifestRootPath, tieGroupsPath) : null;
-  const shrubClassIdsPackagePath = shrubClassIdsPath ? resolveWorldPath(manifestRootPath, shrubClassIdsPath) : null;
-  const shrubInstancesPackagePath = shrubInstancesPath ? resolveWorldPath(manifestRootPath, shrubInstancesPath) : null;
-  const shrubGroupsPackagePath = shrubGroupsPath ? resolveWorldPath(manifestRootPath, shrubGroupsPath) : null;
-
   return {
     assetPackage,
     manifestUrl,
@@ -177,21 +170,15 @@ export function parseDirectionalLightRecords(buffer: BinaryBuffer): DirectionalL
   return records;
 }
 
-function findTfragGltfEntry(assetManifest: AssetManifest): GltfExportEntry {
-  const entry = assetManifest.GltfExports?.find((candidate) => {
+function findTfragGltfEntry(assetManifest: AssetManifest): GltfExportEntry | null {
+  return assetManifest.GltfExports?.find((candidate) => {
     return (
       candidate.Family?.toLowerCase() === 'tfrag' &&
       candidate.Status?.toLowerCase() === 'written' &&
       typeof candidate.GltfPath === 'string' &&
       candidate.GltfPath.length > 0
     );
-  });
-
-  if (!entry) {
-    throw new Error('No written tfrag glTF export found in assets/manifest.json');
-  }
-
-  return entry;
+  }) ?? null;
 }
 
 function findSkyboxGltfEntry(assetManifest: AssetManifest): GltfExportEntry | null {
@@ -231,8 +218,55 @@ function findFamilyGltfEntries(assetManifest: AssetManifest, family: string): Gl
     .sort((a, b) => (numberValue(a.ModelId) ?? 0) - (numberValue(b.ModelId) ?? 0));
 }
 
-function findDirectionalLightPath(worldManifest: WorldManifest | null): string {
-  return findWorldSlotPath(worldManifest, 'directional_lights') ?? 'lighting/directional_lights.bin';
+function findDirectionalLightPath(
+  manifestRootPath: string,
+  rootManifest: RootManifest,
+  worldManifest: WorldManifest | null
+): string {
+  return findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'directional_lights')
+    ?? resolveWorldPath(manifestRootPath, 'lighting/directional_lights.bin');
+}
+
+function findStaticInstancePath(
+  manifestRootPath: string,
+  rootManifest: RootManifest,
+  worldManifest: WorldManifest | null,
+  semanticName: string
+): string | null {
+  const worldPath = findWorldSlotPath(worldManifest, semanticName);
+  if (worldPath) {
+    return resolveWorldPath(manifestRootPath, worldPath);
+  }
+
+  const gameplayCorePath = findUyaGameplayCorePath(rootManifest, semanticName);
+  return gameplayCorePath ? joinPackagePath(manifestRootPath, gameplayCorePath) : null;
+}
+
+function findUyaGameplayCorePath(rootManifest: RootManifest, semanticName: string): string | null {
+  if (typeof rootManifest.Game !== 'string' || rootManifest.Game.toUpperCase() !== 'UYA') {
+    return null;
+  }
+
+  switch (semanticName) {
+    case 'directional_lights':
+      return 'gameplay/core/directional_lights.bin';
+    case 'tie_class_ids':
+      return 'gameplay/core/tie_classes.bin';
+    case 'tie_instances':
+      return 'gameplay/core/tie_instances.bin';
+    case 'tie_instance_colors':
+      return 'gameplay/core/tie_ambient_rgbas.bin';
+    case 'tie_groups':
+      return 'gameplay/core/tie_groups.bin';
+    case 'shrub_class_ids':
+      return 'gameplay/core/shrub_classes.bin';
+    case 'shrub_instances':
+      return 'gameplay/core/shrub_instances.bin';
+    case 'shrub_groups':
+      return 'gameplay/core/shrub_groups.bin';
+    default:
+      return null;
+  }
 }
 
 function findWorldSlotPath(worldManifest: WorldManifest | null, semanticName: string): string | null {

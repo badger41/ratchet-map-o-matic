@@ -10,7 +10,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'fx-textures-v1';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'packed-gameplay-metadata-v1';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
@@ -115,7 +115,8 @@ export async function findIndexedDbRenderPackageBySourceUrl(
       return (
         record.cacheVersion === renderPackageFormatVersion &&
         normalizeSourceUrl(record.sourceUrl) === normalizedSourceUrl &&
-        hasViewerRenderPackageEntries(record.entries)
+        hasViewerRenderPackageEntries(record.entries) &&
+        hasGameplayMetadata(record)
       );
     }) ?? null
   );
@@ -175,6 +176,19 @@ export async function deleteIndexedDbRenderPackage(id: string): Promise<void> {
 export function hasViewerRenderPackageEntries(entries: PackedFileEntry[]): boolean {
   const paths = new Set(entries.map((entry) => normalizePackagePath(entry.path)));
   return paths.has('manifest.json') && paths.has('assets/manifest.json') && paths.has('world/manifest.json');
+}
+
+function hasGameplayMetadata(record: IndexedDbRenderPackageMetadata): boolean {
+  if (record.levelSettings === undefined || record.mobyInstances === undefined) {
+    return false;
+  }
+
+  return !hasMobyAssetEntries(record.entries) ||
+    (record.mobyInstances?.instances.length ?? 0) > 0;
+}
+
+function hasMobyAssetEntries(entries: PackedFileEntry[]): boolean {
+  return entries.some((entry) => normalizePackagePath(entry.path).startsWith('assets/moby/'));
 }
 
 async function getMetadata(id: string): Promise<IndexedDbRenderPackageMetadata | null> {

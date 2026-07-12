@@ -115,6 +115,15 @@ export function WaterDebugPanel({
           onChange={(value) => onChange('waterColorContrast', value)}
         />
         <DebugSlider
+          label="Water fog"
+          grow={false}
+          value={debugTuning.waterFogStrength}
+          min={0}
+          max={2}
+          step={debugSliderStep}
+          onChange={(value) => onChange('waterFogStrength', value)}
+        />
+        <DebugSlider
           label="Overlay strength"
           grow={false}
           value={debugTuning.waterOverlayColorStrength}

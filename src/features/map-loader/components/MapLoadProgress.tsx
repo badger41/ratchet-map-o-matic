@@ -9,7 +9,7 @@ import {
   Title
 } from '@mantine/core';
 import type { ReactNode } from 'react';
-import type { DeadlockedMapDefinition } from '../../../data/deadlockedMaps';
+import type { MapDefinition } from '../../../data/mapCatalog';
 import { formatByteSize } from '../../../shared/format';
 import {
   stageColor,
@@ -18,7 +18,7 @@ import {
 } from '../mapLoaderState';
 
 interface MapLoadProgressProps {
-  map: DeadlockedMapDefinition;
+  map: MapDefinition;
   stages: MapLoadStageState[];
   children?: ReactNode;
 }
@@ -36,7 +36,7 @@ export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps)
             <Text c="dimmed">{map.label}</Text>
           </Stack>
           <Badge variant="outline" color="gray">
-            {map.gameId} level {map.level.toString().padStart(2, '0')}
+            {formatMapBadge(map)}
           </Badge>
         </Group>
 
@@ -75,6 +75,12 @@ export function MapLoadProgress({ map, stages, children }: MapLoadProgressProps)
       </Stack>
     </Container>
   );
+}
+
+function formatMapBadge(map: MapDefinition): string {
+  return map.sourceKind === 'customZip'
+    ? `${map.gameId} custom`
+    : `${map.gameId} level ${map.level.toString().padStart(2, '0')}`;
 }
 
 function currentStage(stages: MapLoadStageState[]): MapLoadStageState | null {
