@@ -31,6 +31,7 @@ const gameOptions: Array<{ gameId: RatchetGameId; label: string }> = [
 ];
 const vanillaRouteSegment = 'vanilla';
 const customRouteSegment = 'custom';
+const routeBasePath = resolveRouteBasePath();
 
 interface MapRouteSeed {
   gameId: RatchetGameId | null;
@@ -361,7 +362,7 @@ function resolveCustomMapId(maps: MapDefinition[], id: string | null): string | 
 }
 
 function readMapRoute(): MapRouteSeed {
-  const [gameSlug, sourceSlug, itemSlug] = window.location.pathname
+  const [gameSlug, sourceSlug, itemSlug] = routePathname()
     .replace(/^\/+|\/+$/g, '')
     .split('/');
   const gameId = parseRouteGameId(gameSlug);
@@ -434,7 +435,40 @@ function writeCustomRoute(map?: MapDefinition): void {
 }
 
 function pushRoute(nextPath: string): void {
-  if (window.location.pathname !== nextPath) {
-    window.history.pushState(null, '', nextPath);
+  const routePath = withRouteBase(nextPath);
+  if (window.location.pathname !== routePath) {
+    window.history.pushState(null, '', routePath);
   }
+}
+
+function resolveRouteBasePath(): string {
+  if (!import.meta.env.BASE_URL || import.meta.env.BASE_URL === './') {
+    return '/';
+  }
+
+  const pathname = new URL(import.meta.env.BASE_URL, window.location.origin).pathname;
+  return pathname.endsWith('/') ? pathname : `${pathname}/`;
+}
+
+function routePathname(): string {
+  const pathname = window.location.pathname;
+  if (routeBasePath === '/') {
+    return pathname;
+  }
+
+  if (pathname === routeBasePath.slice(0, -1)) {
+    return '/';
+  }
+
+  return pathname.startsWith(routeBasePath)
+    ? `/${pathname.slice(routeBasePath.length)}`
+    : pathname;
+}
+
+function withRouteBase(path: string): string {
+  if (routeBasePath === '/') {
+    return path;
+  }
+
+  return `${routeBasePath}${path.replace(/^\/+/, '')}`;
 }

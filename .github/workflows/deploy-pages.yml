@@ -50,7 +50,12 @@ jobs:
         run: bash scripts/install-ratchetps2-wasm.sh
 
       - name: Build
+        env:
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
         run: npm run build
+
+      - name: Add SPA fallback
+        run: cp dist/index.html dist/404.html
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
