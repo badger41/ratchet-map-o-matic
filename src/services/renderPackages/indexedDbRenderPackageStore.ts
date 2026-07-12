@@ -10,7 +10,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'packed-gameplay-metadata-v1';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'packed-gameplay-metadata-tfrag-chunks-v1';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
@@ -152,6 +152,10 @@ export async function loadIndexedDbRenderPackage(id: string): Promise<IndexedDbR
       throw new Error(`Cached render package '${id}' was not found.`);
     }
 
+    if (metadata.cacheVersion !== renderPackageFormatVersion) {
+      throw new Error(`Cached render package '${id}' was built by an older viewer format. Rebuild the map package.`);
+    }
+
     return {
       ...metadata,
       packedBytes: normalizeBytes(payload.packedBytes)
@@ -179,16 +183,7 @@ export function hasViewerRenderPackageEntries(entries: PackedFileEntry[]): boole
 }
 
 function hasGameplayMetadata(record: IndexedDbRenderPackageMetadata): boolean {
-  if (record.levelSettings === undefined || record.mobyInstances === undefined) {
-    return false;
-  }
-
-  return !hasMobyAssetEntries(record.entries) ||
-    (record.mobyInstances?.instances.length ?? 0) > 0;
-}
-
-function hasMobyAssetEntries(entries: PackedFileEntry[]): boolean {
-  return entries.some((entry) => normalizePackagePath(entry.path).startsWith('assets/moby/'));
+  return record.levelSettings !== undefined && record.mobyInstances !== undefined;
 }
 
 async function getMetadata(id: string): Promise<IndexedDbRenderPackageMetadata | null> {

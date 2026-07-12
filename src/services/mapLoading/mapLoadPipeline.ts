@@ -345,7 +345,7 @@ async function parsePackedGameplayData(
   }
 
   try {
-    return parseGameplayCore(wasm, gameplayCore);
+    return await parseGameplayCore(wasm, gameplayCore);
   } catch (error) {
     console.warn('Failed to parse packed DL gameplay data.', error);
     return emptyGameplayData();
@@ -376,7 +376,7 @@ async function parseLooseGameplayData(
     }
 
     const wasm = await loadRatchetPs2Wasm();
-    return parseGameplayCore(wasm, gameplayCore);
+    return await parseGameplayCore(wasm, gameplayCore);
   } catch (error) {
     console.warn('Failed to parse loose DL gameplay data.', error);
     return emptyGameplayData();

@@ -30,6 +30,7 @@ interface PreparedTfrag {
 }
 
 interface TfragGeometryBatch {
+  target: THREE.Object3D;
   material: THREE.Material;
   geometries: THREE.BufferGeometry[];
   sourcePrimitives: number;
@@ -110,7 +111,6 @@ export class TfragMaterialController {
 
     root.updateWorldMatrix(true, true);
     const bakeContext = createTfragBakeContext(directionalLights, options);
-    const rootWorldInverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
     const batches = new Map<string, TfragGeometryBatch>();
     const materialCache = new Map<string, THREE.Material>();
     const sourceMeshes: THREE.Mesh[] = [];
@@ -133,9 +133,11 @@ export class TfragMaterialController {
       }
 
       const clonedGeometry = mesh.geometry.clone();
-      const localToRoot = new THREE.Matrix4().multiplyMatrices(rootWorldInverse, mesh.matrixWorld);
-      if (!isIdentityMatrix(localToRoot)) {
-        clonedGeometry.applyMatrix4(localToRoot);
+      const batchTarget = getTfragBatchTarget(root, mesh);
+      const targetWorldInverse = new THREE.Matrix4().copy(batchTarget.matrixWorld).invert();
+      const localToTarget = new THREE.Matrix4().multiplyMatrices(targetWorldInverse, mesh.matrixWorld);
+      if (!isIdentityMatrix(localToTarget)) {
+        clonedGeometry.applyMatrix4(localToTarget);
       }
 
       const geometry = clonedGeometry.index ? clonedGeometry.toNonIndexed() : clonedGeometry;
@@ -145,14 +147,16 @@ export class TfragMaterialController {
 
       bakeTfragGeometryColors(geometry, bakeContext);
 
-      let batch = batches.get(materialKey);
+      const batchKey = `${batchTarget.uuid}:${materialKey}`;
+      let batch = batches.get(batchKey);
       if (!batch) {
         batch = {
+          target: batchTarget,
           material,
           geometries: [],
           sourcePrimitives: 0
         };
-        batches.set(materialKey, batch);
+        batches.set(batchKey, batch);
       }
 
       batch.geometries.push(geometry);
@@ -174,7 +178,7 @@ export class TfragMaterialController {
       if (!mergedGeometry) {
         for (const geometry of batch.geometries) {
           const mesh = createMergedTfragMesh(geometry, batch.material, mergedIndex);
-          root.add(mesh);
+          batch.target.add(mesh);
           this.prepared.push({
             geometry,
             mesh,
@@ -192,7 +196,7 @@ export class TfragMaterialController {
       }
 
       const mesh = createMergedTfragMesh(mergedGeometry, batch.material, mergedIndex);
-      root.add(mesh);
+      batch.target.add(mesh);
       this.prepared.push({
         geometry: mergedGeometry,
         mesh,
@@ -249,6 +253,17 @@ function createMergedTfragMesh(geometry: THREE.BufferGeometry, material: THREE.M
   mesh.name = `tfrag_lod0_merged_${index.toString().padStart(3, '0')}`;
   mesh.frustumCulled = false;
   return mesh;
+}
+
+function getTfragBatchTarget(root: THREE.Object3D, object: THREE.Object3D): THREE.Object3D {
+  let current = object;
+  let parent = current.parent;
+  while (parent && parent !== root) {
+    current = parent;
+    parent = current.parent;
+  }
+
+  return parent === root && current !== object ? current : root;
 }
 
 function pruneToLod0(root: THREE.Object3D): void {

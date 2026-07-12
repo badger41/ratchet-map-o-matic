@@ -93,6 +93,9 @@ export interface LoadedMapPackage {
   tfragEntry: GltfExportEntry | null;
   tfragGltfPath: string | null;
   tfragGltfUrl: string | null;
+  tfragChunkEntries: GltfExportEntry[];
+  tfragChunkGltfPaths: string[];
+  tfragChunkGltfUrls: string[];
   tfragDiagnostics: TfragDiagnostics | null;
   tieEntries: GltfExportEntry[];
   tieClassIdsPath: string | null;

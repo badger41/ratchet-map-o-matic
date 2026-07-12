@@ -112,6 +112,12 @@ interface MapSceneRendererOptions {
   onRuntimeError?: (message: string) => void;
 }
 
+interface TfragGltfSource {
+  url: string;
+  name: string;
+  label: string;
+}
+
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
@@ -411,7 +417,8 @@ export class MapSceneRenderer {
     mapPackage: LoadedMapPackage,
     modelDisplayOptions: ModelDisplayNodeOptions
   ): Promise<TfragStats> {
-    if (!mapPackage.tfragGltfUrl) {
+    const tfragSources = getTfragGltfSources(mapPackage);
+    if (tfragSources.length === 0) {
       const tfragStats: TfragStats = {
         meshes: 0,
         sourcePrimitives: 0,
@@ -425,13 +432,24 @@ export class MapSceneRenderer {
       return tfragStats;
     }
 
-    this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Loading glTF' });
-    this.onStatus('Loading tfrag glTF');
-    const gltf = await this.loader.loadAsync(mapPackage.tfragGltfUrl);
-    const tfragRoot = gltf.scene;
-    tfragRoot.name = 'level_tfrag_lod0';
+    const tfragRoot = new THREE.Group();
+    tfragRoot.name = 'level_tfrag';
     root.add(tfragRoot);
     this.terrainRoot = tfragRoot;
+    this.onStatus(tfragSources.length === 1 ? 'Loading tfrag glTF' : `Loading ${tfragSources.length} tfrag glTFs`);
+
+    for (const [index, source] of tfragSources.entries()) {
+      this.onLoadProgress({
+        id: 'tfrag',
+        status: 'active',
+        detail: `Loading ${source.label}`,
+        loaded: index,
+        total: tfragSources.length
+      });
+      const gltf = await this.loader.loadAsync(source.url);
+      gltf.scene.name = source.name;
+      tfragRoot.add(gltf.scene);
+    }
 
     this.onLoadProgress({ id: 'tfrag', status: 'active', detail: 'Preparing materials' });
     await yieldToBrowser();
@@ -1248,8 +1266,43 @@ function sameTfragBakeOptions(a: TfragMaterialOptions, b: TfragMaterialOptions):
     && a.postScaleEnabled === b.postScaleEnabled;
 }
 
+function getTfragGltfSources(mapPackage: LoadedMapPackage): TfragGltfSource[] {
+  const sources: TfragGltfSource[] = [];
+  if (mapPackage.tfragGltfUrl) {
+    sources.push({
+      url: mapPackage.tfragGltfUrl,
+      name: 'level_tfrag_base',
+      label: 'base terrain'
+    });
+  }
+
+  for (const [index, url] of mapPackage.tfragChunkGltfUrls.entries()) {
+    const chunkIndex = numberValue(mapPackage.tfragChunkEntries[index]?.ModelId) ?? index + 1;
+    sources.push({
+      url,
+      name: `level_tfrag_chunk_${chunkIndex.toString().padStart(3, '0')}`,
+      label: `chunk ${chunkIndex}`
+    });
+  }
+
+  return sources;
+}
+
 function finiteNonNegative(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }
 
 function resolveFrameRateLimit(value: number): number {

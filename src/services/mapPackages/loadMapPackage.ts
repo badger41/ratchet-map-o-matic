@@ -70,6 +70,11 @@ export async function loadMapPackageFromAssetPackage(
     ? resolveAssetPath(manifestRootPath, tfragEntry.GltfPath)
     : null;
   const tfragGltfUrl = tfragGltfPath ? await assetPackage.resolveUrl(tfragGltfPath) : null;
+  const tfragChunkEntries = findTfragChunkGltfEntries(assetManifest, assetPackage, manifestRootPath);
+  const tfragChunkGltfPaths = tfragChunkEntries.map((entry) => {
+    return resolveAssetPath(manifestRootPath, requiredString(entry.GltfPath, 'tfrag chunk glTF path'));
+  });
+  const tfragChunkGltfUrls = await Promise.all(tfragChunkGltfPaths.map((path) => assetPackage.resolveUrl(path)));
   const skyboxEntry = findSkyboxGltfEntry(assetManifest);
   const skyboxGltfPath = skyboxEntry?.GltfPath
     ? resolveAssetPath(manifestRootPath, skyboxEntry.GltfPath)
@@ -115,6 +120,9 @@ export async function loadMapPackageFromAssetPackage(
     tfragEntry,
     tfragGltfPath,
     tfragGltfUrl,
+    tfragChunkEntries,
+    tfragChunkGltfPaths,
+    tfragChunkGltfUrls,
     tfragDiagnostics,
     tieEntries,
     tieClassIdsPath: tieClassIdsPackagePath,
@@ -171,14 +179,107 @@ export function parseDirectionalLightRecords(buffer: BinaryBuffer): DirectionalL
 }
 
 function findTfragGltfEntry(assetManifest: AssetManifest): GltfExportEntry | null {
-  return assetManifest.GltfExports?.find((candidate) => {
+  const entries = findWrittenTfragGltfEntries(assetManifest);
+  return entries.find((entry) => !isTfragChunkGltfEntry(entry)) ?? null;
+}
+
+function findTfragChunkGltfEntries(
+  assetManifest: AssetManifest,
+  assetPackage: MapAssetPackage,
+  manifestRootPath: string
+): GltfExportEntry[] {
+  const manifestEntries = findWrittenTfragGltfEntries(assetManifest)
+    .filter(isTfragChunkGltfEntry)
+    .sort(compareGltfExportEntries);
+
+  if (manifestEntries.length > 0) {
+    return manifestEntries;
+  }
+
+  return findPackedTfragChunkGltfEntries(assetPackage, manifestRootPath);
+}
+
+function findWrittenTfragGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
+  return (assetManifest.GltfExports ?? []).filter((candidate) => {
     return (
       candidate.Family?.toLowerCase() === 'tfrag' &&
       candidate.Status?.toLowerCase() === 'written' &&
       typeof candidate.GltfPath === 'string' &&
       candidate.GltfPath.length > 0
     );
-  }) ?? null;
+  });
+}
+
+function isTfragChunkGltfEntry(entry: GltfExportEntry): boolean {
+  return numberValue(entry.ModelId) !== null ||
+    isChunkPath(entry.GltfPath) ||
+    isChunkPath(entry.SourcePath);
+}
+
+function isChunkPath(path: string | null | undefined): boolean {
+  if (typeof path !== 'string' || path.length === 0) {
+    return false;
+  }
+
+  const normalized = normalizePackagePath(path).toLowerCase();
+  return normalized.startsWith('chunks/') || normalized.includes('/chunks/');
+}
+
+function compareGltfExportEntries(a: GltfExportEntry, b: GltfExportEntry): number {
+  const leftModelId = numberValue(a.ModelId);
+  const rightModelId = numberValue(b.ModelId);
+  if (leftModelId !== null || rightModelId !== null) {
+    return (leftModelId ?? Number.MAX_SAFE_INTEGER) - (rightModelId ?? Number.MAX_SAFE_INTEGER);
+  }
+
+  return (a.GltfPath ?? '').localeCompare(b.GltfPath ?? '');
+}
+
+function findPackedTfragChunkGltfEntries(
+  assetPackage: MapAssetPackage,
+  manifestRootPath: string
+): GltfExportEntry[] {
+  return assetPackage.listEntries()
+    .map((entry) => createTfragChunkEntryFromPackagePath(entry.path, manifestRootPath))
+    .filter((entry): entry is GltfExportEntry => entry !== null)
+    .sort(compareGltfExportEntries);
+}
+
+function createTfragChunkEntryFromPackagePath(
+  packagePath: string,
+  manifestRootPath: string
+): GltfExportEntry | null {
+  const assetPath = toManifestAssetPath(packagePath, manifestRootPath);
+  const match = assetPath.match(/^tfrag\/chunks\/chunk(\d+)\/tfrag\.gltf$/i);
+  if (!match) {
+    return null;
+  }
+
+  const modelId = Number(match[1]);
+  const chunkDirectory = dirnamePackagePath(assetPath);
+  return {
+    Family: 'tfrag',
+    ModelId: Number.isFinite(modelId) ? modelId : null,
+    SourcePath: `${chunkDirectory}/tfrag.bin`,
+    GltfPath: assetPath,
+    BufferPath: `${chunkDirectory}/tfrag.buffer.bin`,
+    Status: 'written'
+  };
+}
+
+function toManifestAssetPath(packagePath: string, manifestRootPath: string): string {
+  const normalizedPath = normalizePackagePath(packagePath);
+  const assetRootPath = joinPackagePath(manifestRootPath, 'assets');
+  if (!assetRootPath) {
+    return normalizedPath.startsWith('assets/')
+      ? normalizedPath.slice('assets/'.length)
+      : normalizedPath;
+  }
+
+  const prefix = `${assetRootPath}/`;
+  return normalizedPath.startsWith(prefix)
+    ? normalizedPath.slice(prefix.length)
+    : normalizedPath;
 }
 
 function findSkyboxGltfEntry(assetManifest: AssetManifest): GltfExportEntry | null {
