@@ -49,13 +49,19 @@ import {
   updateTieRenderOptionUniforms
 } from './TieMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
+import type { SceneCameraStart } from '../camera/SceneCameraFraming';
 import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
 import {
   lightSelectorAttributeName,
   emptyTieStats,
   instanceMirrorMatrix,
   tieAmbientInstanceRowAttributeName,
+  tieAveragePositionUserDataKey,
   tieClassLoadConcurrency,
+  tieFirstRecordIndexUserDataKey,
+  tieFirstRecordLocalIndexUserDataKey,
+  tieFirstRecordPositionUserDataKey,
+  tieGlowBloomLayer,
   tieGlowColorRowAttributeName,
   tieLoadFrameBudgetMs,
   type PreparedTieRecord,
@@ -95,6 +101,10 @@ export class TieInstanceController {
   private hasGlowBloom = false;
   private glowBloomCenters: number[] = [];
   private tieGroupByRecordIndex = new Map<number, number>();
+  private startupCameraAnchor: THREE.Vector3 | null = null;
+  private startupCameraAnchorRecordIndex = Number.POSITIVE_INFINITY;
+  private readonly startupCameraLookAtSum = new THREE.Vector3();
+  private startupCameraLookAtWeight = 0;
   private readonly composeMatrix = new THREE.Matrix4();
   private readonly groupTransformMatrix = new THREE.Matrix4();
   private readonly toPivotMatrix = new THREE.Matrix4();
@@ -183,6 +193,7 @@ export class TieInstanceController {
     this.directionalLightBinding = null;
     this.skyboxReflectionTexture = null;
     this.modelDisplayOptions = null;
+    this.clearStartupCameraStart();
 
     if (!this.group && !this.alphaBlendGroup) {
       this.meshBindings = [];
@@ -230,6 +241,45 @@ export class TieInstanceController {
 
   getStats(): TieStats {
     return { ...this.stats };
+  }
+
+  getStartupCameraStart(): SceneCameraStart | null {
+    const anchor = this.startupCameraAnchor;
+    if (!anchor) {
+      return null;
+    }
+
+    const lookAt = this.startupCameraLookAtWeight > 0
+      ? this.startupCameraLookAtSum.clone().multiplyScalar(1 / this.startupCameraLookAtWeight)
+      : null;
+
+    return {
+      anchor: anchor.clone(),
+      lookAt: lookAt && lookAt.distanceToSquared(anchor) > 1 ? lookAt : null
+    };
+  }
+
+  private clearStartupCameraStart(): void {
+    this.startupCameraAnchor = null;
+    this.startupCameraAnchorRecordIndex = Number.POSITIVE_INFINITY;
+    this.startupCameraLookAtSum.set(0, 0, 0);
+    this.startupCameraLookAtWeight = 0;
+  }
+
+  private captureStartupCameraStart(
+    firstRecord: { recordIndex: number; position: THREE.Vector3 } | null,
+    batchAverage: THREE.Vector3,
+    weight: number
+  ): void {
+    if (firstRecord && firstRecord.recordIndex < this.startupCameraAnchorRecordIndex) {
+      this.startupCameraAnchorRecordIndex = firstRecord.recordIndex;
+      this.startupCameraAnchor = firstRecord.position.clone();
+    }
+
+    if (weight > 0) {
+      this.startupCameraLookAtSum.addScaledVector(batchAverage, weight);
+      this.startupCameraLookAtWeight += weight;
+    }
   }
 
   setOptions(options: TieRenderOptions): TieStats | null {
@@ -292,22 +342,6 @@ export class TieInstanceController {
 
   getGlowBloomSourceCount(): number {
     return this.glowBloomCenters.length / 4;
-  }
-
-  hasGlowBloomSourceNear(position: THREE.Vector3, distance: number): boolean {
-    const centers = this.glowBloomCenters;
-    for (let index = 0; index < centers.length; index += 4) {
-      const radius = centers[index + 3];
-      const maxDistance = distance + radius;
-      const dx = centers[index] - position.x;
-      const dy = centers[index + 1] - position.y;
-      const dz = centers[index + 2] - position.z;
-      if ((dx * dx) + (dy * dy) + (dz * dz) <= maxDistance * maxDistance) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   setTieGroupRotation(groupIndex: number, rotation: THREE.Matrix4 | null, pivot: THREE.Vector3 | null = null): void {
@@ -460,12 +494,19 @@ export class TieInstanceController {
       records.length
     );
     mesh.name = `tie_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
+    const firstRecord = findEarliestTieRecord(records);
+    if (firstRecord) {
+      mesh.userData[tieFirstRecordIndexUserDataKey] = firstRecord.recordIndex;
+      mesh.userData[tieFirstRecordLocalIndexUserDataKey] = firstRecord.localIndex;
+      mesh.userData[tieFirstRecordPositionUserDataKey] = firstRecord.position.toArray();
+    }
     mesh.renderOrder = primitive.renderOrder;
     mesh.frustumCulled = !this.bundleEnabled;
     mesh.static = !glowColorBinding;
     mesh.matrixAutoUpdate = false;
     if (usesGlowBloom) {
       this.hasGlowBloom = true;
+      mesh.layers.enable(tieGlowBloomLayer);
     }
 
     if (fullMirrored) {
@@ -476,7 +517,9 @@ export class TieInstanceController {
     const composeMatrix = new THREE.Matrix4();
     const bloomSphere = usesGlowBloom ? resolveGeometryBoundingSphere(geometry) : null;
     const bloomCenter = new THREE.Vector3();
+    const averagePosition = new THREE.Vector3();
     for (let index = 0; index < records.length; index += 1) {
+      averagePosition.add(setFromMatrixPosition(records[index].instanceMatrix, bloomCenter));
       composeMatrix.multiplyMatrices(records[index].instanceMatrix, primitive.matrixWorld);
       if (fullMirrored) {
         composeMatrix.premultiply(instanceMirrorMatrix);
@@ -494,6 +537,9 @@ export class TieInstanceController {
       }
     }
 
+    const batchAverage = averagePosition.multiplyScalar(1 / records.length);
+    mesh.userData[tieAveragePositionUserDataKey] = batchAverage.toArray();
+    this.captureStartupCameraStart(firstRecord, batchAverage, records.length);
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
@@ -803,6 +849,31 @@ function tieMaterialSetUsesAlphaBlend(materialSet: TieMaterialSet): boolean {
   return modelMaterialUsesAlphaBlend(materialSet.flatMaterial)
     || (materialSet.coloredMaterial !== null && modelMaterialUsesAlphaBlend(materialSet.coloredMaterial))
     || modelMaterialUsesAlphaBlend(materialSet.textureMaterial);
+}
+
+function findEarliestTieRecord(records: PreparedTieRecord[]): { recordIndex: number; localIndex: number; position: THREE.Vector3 } | null {
+  let first: { recordIndex: number; localIndex: number; position: THREE.Vector3 } | null = null;
+  for (let localIndex = 0; localIndex < records.length; localIndex += 1) {
+    const recordIndex = records[localIndex].source.index;
+    if (!Number.isFinite(recordIndex)) {
+      continue;
+    }
+
+    if (!first || recordIndex < first.recordIndex) {
+      first = {
+        recordIndex,
+        localIndex,
+        position: setFromMatrixPosition(records[localIndex].instanceMatrix, new THREE.Vector3())
+      };
+    }
+  }
+
+  return first;
+}
+
+function setFromMatrixPosition(matrix: THREE.Matrix4, target: THREE.Vector3): THREE.Vector3 {
+  const elements = matrix.elements;
+  return target.set(elements[12], elements[13], elements[14]);
 }
 
 function resolveGeometryBoundingSphere(geometry: THREE.BufferGeometry): THREE.Sphere | null {

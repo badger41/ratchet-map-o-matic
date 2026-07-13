@@ -176,7 +176,6 @@ export class WaterPlaneMobyClass extends MobyClass {
         );
       }
     }
-    (this.group as THREE.BundleGroup).needsUpdate = true;
   }
 
   override dispose(): void {

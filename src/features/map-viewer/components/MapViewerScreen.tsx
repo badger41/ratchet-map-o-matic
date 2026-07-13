@@ -13,6 +13,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks';
 import { AlertCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import { dirnamePackagePath, joinPackagePath } from '../../../services/mapAssets/mapAssetPackage';
 import type { MapLoadResult } from '../../../services/mapLoading/mapLoadPipeline';
@@ -303,7 +304,12 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       },
       onLoadProgress: (update) => {
         if (!disposed) {
-          setStages((current) => applyViewerStageUpdate(current, update));
+          const applyUpdate = () => setStages((current) => applyViewerStageUpdate(current, update));
+          if (update.id === 'compile') {
+            flushSync(applyUpdate);
+          } else {
+            applyUpdate();
+          }
         }
       },
       onTfragStats: (stats) => {

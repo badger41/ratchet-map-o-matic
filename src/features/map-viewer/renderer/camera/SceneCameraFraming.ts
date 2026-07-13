@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
 
 export interface SceneCameraFrame {
-  bounds: THREE.Box3;
   position: THREE.Vector3;
   target: THREE.Vector3;
   radius: number;
@@ -9,19 +8,22 @@ export interface SceneCameraFrame {
   far: number;
 }
 
-interface SceneMeasurement {
-  bounds: THREE.Box3;
-  instancedFocus: THREE.Vector3 | null;
-  meshFocus: THREE.Vector3 | null;
+export interface SceneCameraStart {
+  anchor: THREE.Vector3;
+  lookAt: THREE.Vector3 | null;
 }
 
 const fallbackSceneRadius = 400;
+const startupSceneRadius = 4000;
+const startupCameraDistance = 90;
+const startupCameraElevation = 36;
+const startupTargetElevation = 24;
+const startupFar = 80000;
 const fallbackCameraPosition = new THREE.Vector3(0, 150, 300);
 const fallbackCameraTarget = new THREE.Vector3(0, 0, 0);
 
 export function createFallbackCameraFrame(): SceneCameraFrame {
   return {
-    bounds: new THREE.Box3().setFromCenterAndSize(fallbackCameraTarget, new THREE.Vector3(1, 1, 1)),
     position: fallbackCameraPosition.clone(),
     target: fallbackCameraTarget.clone(),
     radius: fallbackSceneRadius,
@@ -30,130 +32,47 @@ export function createFallbackCameraFrame(): SceneCameraFrame {
   };
 }
 
-export function createInitialSceneCameraFrame(root: THREE.Object3D): SceneCameraFrame {
-  root.updateWorldMatrix(true, true);
-
-  const { bounds, instancedFocus, meshFocus } = measureScene(root);
-  if (bounds.isEmpty()) {
+export function createInitialSceneCameraFrame(start: SceneCameraStart | null): SceneCameraFrame {
+  if (!start || !isFiniteVector(start.anchor)) {
     return createFallbackCameraFrame();
   }
 
-  const size = bounds.getSize(new THREE.Vector3());
-  const radius = Math.max(size.x, size.y, size.z) * 0.5;
-  const focus = instancedFocus ?? meshFocus ?? bounds.getCenter(new THREE.Vector3());
-  const horizontalSpan = Math.max(size.x, size.z, 1);
-  const horizontalOffset = clamp(horizontalSpan * 0.055, 160, 760);
-  const elevation = clamp(Math.max(horizontalSpan * 0.035, size.y * 0.35), 120, 460);
-  const position = new THREE.Vector3(
-    focus.x + horizontalOffset,
-    focus.y + elevation,
-    focus.z + horizontalOffset
-  );
+  const target = createStartupTarget(start);
+  const position = createStartupCameraPosition(start.anchor, target);
 
   return {
-    bounds,
     position,
-    target: focus,
-    radius,
+    target,
+    radius: startupSceneRadius,
     near: 0.1,
-    far: Math.max(5000, radius * 20)
+    far: startupFar
   };
 }
 
-function measureScene(root: THREE.Object3D): SceneMeasurement {
-  const bounds = new THREE.Box3().makeEmpty();
-  const instancedAverage = createVectorAverage();
-  const meshAverage = createVectorAverage();
-  const localBox = new THREE.Box3();
-  const instanceMatrix = new THREE.Matrix4();
-  const worldMatrix = new THREE.Matrix4();
-  const placement = new THREE.Vector3();
-  const center = new THREE.Vector3();
-
-  root.traverse((object) => {
-    if (!isMesh(object)) {
-      return;
-    }
-
-    const objectBounds = getObjectLocalBounds(object, localBox);
-    if (!objectBounds) {
-      return;
-    }
-
-    localBox.applyMatrix4(object.matrixWorld);
-    bounds.union(localBox);
-
-    if (isInstancedMesh(object)) {
-      for (let index = 0; index < object.count; index += 1) {
-        object.getMatrixAt(index, instanceMatrix);
-        worldMatrix.multiplyMatrices(object.matrixWorld, instanceMatrix);
-        placement.setFromMatrixPosition(worldMatrix);
-        instancedAverage.add(placement);
-      }
-      return;
-    }
-
-    meshAverage.add(localBox.getCenter(center));
-  });
-
-  return {
-    bounds,
-    instancedFocus: instancedAverage.value(),
-    meshFocus: meshAverage.value()
-  };
+function createStartupTarget(start: SceneCameraStart): THREE.Vector3 {
+  const target = start.lookAt && isFiniteVector(start.lookAt) && !samePosition(start.anchor, start.lookAt)
+    ? start.lookAt.clone()
+    : start.anchor.clone().add(new THREE.Vector3(1, 0, 1));
+  target.y = start.anchor.y + startupTargetElevation;
+  return target;
 }
 
-function getObjectLocalBounds(object: THREE.Mesh, target: THREE.Box3): THREE.Box3 | null {
-  if (isInstancedMesh(object)) {
-    if (!object.boundingBox) {
-      object.computeBoundingBox();
-    }
-    if (object.boundingBox) {
-      return target.copy(object.boundingBox);
-    }
+function createStartupCameraPosition(anchor: THREE.Vector3, target: THREE.Vector3): THREE.Vector3 {
+  const direction = target.clone().sub(anchor);
+  direction.y = 0;
+  if (direction.lengthSq() < 1) {
+    direction.set(1, 0, 1);
   }
 
-  const geometry = object.geometry;
-  if (!geometry) {
-    return null;
-  }
-
-  if (!geometry.boundingBox) {
-    geometry.computeBoundingBox();
-  }
-
-  return geometry.boundingBox ? target.copy(geometry.boundingBox) : null;
-}
-
-function createVectorAverage(): { add: (value: THREE.Vector3) => void; value: () => THREE.Vector3 | null } {
-  const sum = new THREE.Vector3();
-  let count = 0;
-
-  return {
-    add: (value) => {
-      if (!isFiniteVector(value)) {
-        return;
-      }
-
-      sum.add(value);
-      count += 1;
-    },
-    value: () => count > 0 ? sum.divideScalar(count) : null
-  };
-}
-
-function isMesh(object: THREE.Object3D): object is THREE.Mesh {
-  return (object as THREE.Mesh).isMesh === true;
-}
-
-function isInstancedMesh(object: THREE.Object3D): object is THREE.InstancedMesh {
-  return (object as THREE.InstancedMesh).isInstancedMesh === true;
+  return anchor.clone()
+    .addScaledVector(direction.normalize(), -startupCameraDistance)
+    .add(new THREE.Vector3(0, startupCameraElevation, 0));
 }
 
 function isFiniteVector(value: THREE.Vector3): boolean {
   return Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z);
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+function samePosition(a: THREE.Vector3, b: THREE.Vector3): boolean {
+  return a.distanceToSquared(b) < 0.0001;
 }

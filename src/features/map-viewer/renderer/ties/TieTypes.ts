@@ -145,6 +145,11 @@ export const tieAmbientAttributeAliases = [
 ];
 export const tieAmbientInstanceRowAttributeName = 'tieAmbientRow';
 export const tieGlowColorRowAttributeName = 'tieGlowColorRow';
+export const tieGlowBloomLayer = 1;
+export const tieAveragePositionUserDataKey = 'mapOmaticTieAveragePosition';
+export const tieFirstRecordIndexUserDataKey = 'mapOmaticTieFirstRecordIndex';
+export const tieFirstRecordLocalIndexUserDataKey = 'mapOmaticTieFirstRecordLocalIndex';
+export const tieFirstRecordPositionUserDataKey = 'mapOmaticTieFirstRecordPosition';
 export const tieAmbientPs2NeutralByte = 128;
 export const tieAmbientRawIntensityScale = 255 / tieAmbientPs2NeutralByte;
 export const tieEnvironmentPassMask = 0x06;

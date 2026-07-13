@@ -40,9 +40,10 @@ import type {
   DlRgb96
 } from '../../../services/wasm/ratchetPs2Wasm';
 import {
-  createInitialSceneCameraFrame
+  createInitialSceneCameraFrame,
+  type SceneCameraStart
 } from './camera/SceneCameraFraming';
-import { TfragMaterialController } from './TfragMaterialController';
+import { tagTfragTextureSourceKeys, TfragMaterialController } from './TfragMaterialController';
 import {
   FpsCameraController,
   type CameraVirtualMoveInput
@@ -52,8 +53,7 @@ import {
   createRendererDeviceLostError,
   createRendererInitializationError,
   createRendererRuntimeError,
-  type RendererDeviceLostInfo,
-  shouldSkipGpuPipelineWarmup
+  type RendererDeviceLostInfo
 } from './RendererCompatibility';
 import {
   disposeObject3D,
@@ -121,7 +121,8 @@ interface TfragGltfSource {
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
-const firstFrameSetupStepCount = 7;
+const firstFrameSetupStepCount = 4;
+const firstFrameGpuWaitTimeoutMs = 3000;
 const defaultWorldDisplayLift = 2.4;
 const dlWorldPositionScale = 1 / 1024;
 const dlFogDistanceScale = dlWorldPositionScale;
@@ -213,6 +214,23 @@ type MapRenderPipeline = {
   bloomVersion: string;
 };
 
+interface StartupScenePart {
+  key: string;
+  label: string;
+  objects: THREE.Object3D[];
+}
+
+interface StartupBundlePart {
+  key: string;
+  label: string;
+}
+
+type WebGpuRendererWithBackend = WebGPURenderer & {
+  backend?: {
+    device?: GPUDevice;
+  };
+};
+
 export class MapSceneRenderer {
   private readonly container: HTMLElement;
   private readonly onLoadProgress: (update: MapSceneLoadStageUpdate) => void;
@@ -251,7 +269,6 @@ export class MapSceneRenderer {
   private pendingResizeFrame: number | null = null;
   private currentRoot: THREE.Object3D | null = null;
   private terrainRoot: THREE.Object3D | null = null;
-  private sceneBoundsSphere: THREE.Sphere | null = null;
   private currentPackage: LoadedMapPackage | null = null;
   private readonly worldDisplayLift = uniform(defaultWorldDisplayLift);
   private readonly sceneHazeStrength = uniform(subtleSceneFogStrength);
@@ -447,6 +464,7 @@ export class MapSceneRenderer {
         total: tfragSources.length
       });
       const gltf = await this.loader.loadAsync(source.url);
+      tagTfragTextureSourceKeys(gltf, source.url);
       gltf.scene.name = source.name;
       tfragRoot.add(gltf.scene);
     }
@@ -599,44 +617,123 @@ export class MapSceneRenderer {
   }
 
   private async prepareFirstFrame(root: THREE.Object3D): Promise<void> {
-    this.reportFirstFrameProgress('Attaching scene', 1);
+    const hasBloomPipeline = this.shouldPrepareBloomPipeline();
+    const startupParts = this.getStartupSceneParts(root);
+    const bundleParts = this.instanceBundleEnabled ? this.getStartupBundleParts(startupParts) : [];
+    const totalSteps = firstFrameSetupStepCount + startupParts.length + bundleParts.length + (hasBloomPipeline ? 1 : 0);
+
+    this.reportFirstFrameProgress('Attaching scene', 1, totalSteps);
     await yieldToBrowser();
+    let stepStartMs = performance.now();
     this.scene.add(root);
     this.currentRoot = root;
+    this.reportFirstFrameProgress(`Attached scene (${formatElapsedMs(stepStartMs)})`, 1, totalSteps);
 
-    this.reportFirstFrameProgress('Framing camera', 2);
+    this.reportFirstFrameProgress('Framing camera', 2, totalSteps);
     await yieldToBrowser();
-    this.frameObject(root);
+    stepStartMs = performance.now();
+    this.frameObject();
+    this.reportFirstFrameProgress(`Framed camera (${formatElapsedMs(stepStartMs)})`, 2, totalSteps);
 
-    this.reportFirstFrameProgress('Drawing preview frame', 3);
-    await yieldToBrowser();
-    this.renderWithPipeline(false);
-    await yieldToBrowser();
-
-    const skipPipelineWarmup = shouldSkipGpuPipelineWarmup();
-    if (!skipPipelineWarmup) {
-      await this.warmupScenePipelines();
-    } else {
-      this.reportFirstFrameProgress('Skipping GPU warmup', 6);
-      await yieldToBrowser();
+    for (const part of bundleParts) {
+      this.setStartupBundleEnabled(part.key, false);
     }
 
-    this.reportFirstFrameProgress('Submitting first frame', 7);
+    this.setStartupScenePartsVisible(startupParts, []);
+    this.reportFirstFrameProgress('Drawing terrain frame', 3, totalSteps);
     await yieldToBrowser();
-    this.renderFrame(performance.now());
+    stepStartMs = performance.now();
+    await this.prepareRenderPipeline(false);
+    this.reportFirstFrameProgress(`Rendered terrain frame (${formatElapsedMs(stepStartMs)})`, 3, totalSteps);
+
+    let nextStep = 4;
+    const visibleStartupParts: StartupScenePart[] = [];
+    for (const part of startupParts) {
+      visibleStartupParts.push(part);
+      this.setStartupScenePartsVisible(startupParts, visibleStartupParts);
+      this.reportFirstFrameProgress(`Adding ${part.label}`, nextStep, totalSteps);
+      await yieldToBrowser();
+      stepStartMs = performance.now();
+      await this.prepareRenderPipeline(false);
+      this.reportFirstFrameProgress(`Added ${part.label} (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      nextStep += 1;
+    }
+
+    for (const part of bundleParts) {
+      this.reportFirstFrameProgress(`Building ${part.label} bundles`, nextStep, totalSteps);
+      await yieldToBrowser();
+      stepStartMs = performance.now();
+      this.setStartupBundleEnabled(part.key, true);
+      await this.prepareRenderPipeline(false);
+      this.reportFirstFrameProgress(`Built ${part.label} bundles (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      nextStep += 1;
+    }
+
+    if (hasBloomPipeline) {
+      this.reportFirstFrameProgress('Enabling bloom overlay', nextStep, totalSteps);
+      await yieldToBrowser();
+      stepStartMs = performance.now();
+      await this.prepareRenderPipeline(true);
+      this.reportFirstFrameProgress(`Enabled bloom overlay (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+    }
+
+    this.reportFirstFrameProgress('Waiting for GPU queue', totalSteps, totalSteps);
+    await yieldToBrowser();
+    stepStartMs = performance.now();
+    await this.waitForSubmittedGpuWork();
+    this.reportFirstFrameProgress(`GPU queue ready (${formatElapsedMs(stepStartMs)})`, totalSteps, totalSteps);
+    await yieldToBrowser();
+    this.lastFrameTime = performance.now();
+    this.lastStatsUpdateTime = this.lastFrameTime;
+    this.resetMobySimulationClock(this.lastFrameTime);
     this.animationRenderSuspended = false;
     this.lastRenderSubmitTime = 0;
   }
 
-  private reportFirstFrameProgress(detail: string, loaded: number): void {
+  private reportFirstFrameProgress(detail: string, loaded: number, total: number): void {
     this.onLoadProgress({
       id: 'compile',
       status: 'active',
       detail,
       loaded,
-      total: firstFrameSetupStepCount
+      total
     });
     this.onStatus(detail);
+  }
+
+  private getStartupSceneParts(root: THREE.Object3D): StartupScenePart[] {
+    return [
+      createStartupScenePart('skybox', 'skybox', this.skyScene.getObjectByName('skybox')),
+      createStartupScenePart('ties', 'ties', root.getObjectByName('tie_instances'), root.getObjectByName('tie_alpha_blend_instances')),
+      createStartupScenePart('shrubs', 'shrubs', root.getObjectByName('shrub_instances'), root.getObjectByName('shrub_alpha_blend_instances')),
+      createStartupScenePart('mobys', 'mobys', root.getObjectByName('moby_instances'), root.getObjectByName('moby_alpha_blend_instances'), root.getObjectByName('moby_simulation'))
+    ].filter((part): part is StartupScenePart => part !== null);
+  }
+
+  private getStartupBundleParts(parts: StartupScenePart[]): StartupBundlePart[] {
+    return parts
+      .filter((part) => part.key === 'ties' || part.key === 'shrubs' || part.key === 'mobys')
+      .map((part) => ({ key: part.key, label: part.label }));
+  }
+
+  private setStartupScenePartsVisible(parts: StartupScenePart[], visibleParts: StartupScenePart[]): void {
+    const visibleKeys = new Set(visibleParts.map((part) => part.key));
+    for (const part of parts) {
+      const visible = visibleKeys.has(part.key);
+      for (const object of part.objects) {
+        object.visible = visible;
+      }
+    }
+  }
+
+  private setStartupBundleEnabled(key: string, enabled: boolean): void {
+    if (key === 'ties') {
+      this.tieController.setBundleEnabled(enabled);
+    } else if (key === 'shrubs') {
+      this.shrubController.setBundleEnabled(enabled);
+    } else if (key === 'mobys') {
+      this.mobyController.setBundleEnabled(enabled);
+    }
   }
 
   dispose(): void {
@@ -1046,19 +1143,11 @@ export class MapSceneRenderer {
       return this.glowBloomEnabled ? 'none' : 'off';
     }
 
-    if (!this.cameraCanReachSceneBloom()) {
-      return 'scene-range';
-    }
-    if (!this.tieController.hasGlowBloomSourceNear(this.camera.position, this.glowBloomFalloffDistance)) {
-      return 'source-range';
-    }
-
     return 'rendered';
   }
 
-  private frameObject(root: THREE.Object3D): void {
-    const frame = createInitialSceneCameraFrame(root);
-    this.sceneBoundsSphere = frame.bounds.getBoundingSphere(new THREE.Sphere());
+  private frameObject(): void {
+    const frame = createInitialSceneCameraFrame(this.resolveStartupCameraStart());
     this.camera.near = frame.near;
     this.camera.far = frame.far;
     this.camera.updateProjectionMatrix();
@@ -1068,55 +1157,53 @@ export class MapSceneRenderer {
     this.controls?.syncFromCamera();
   }
 
-  private async warmupScenePipelines(): Promise<void> {
+  private resolveStartupCameraStart(): SceneCameraStart | null {
+    return this.tieController.getStartupCameraStart() ?? this.tfragController.getStartupCameraStart();
+  }
+
+  private async prepareRenderPipeline(includeBloom: boolean): Promise<void> {
     if (!this.renderer) {
       return;
     }
 
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
-    if (this.skyboxController.isVisible()) {
-      this.reportFirstFrameProgress('Compiling skybox materials', 4);
-      await yieldToBrowser();
-      await this.renderer.compileAsync(this.skyScene, this.skyCamera);
-      await yieldToBrowser();
-    } else {
-      this.reportFirstFrameProgress('Skipping skybox materials', 4);
-      await yieldToBrowser();
+    if (includeBloom) {
+      this.syncBloomFadeRange();
     }
-
-    this.reportFirstFrameProgress('Compiling scene materials', 5);
-    await yieldToBrowser();
-    await this.renderer.compileAsync(this.scene, this.camera);
-    await yieldToBrowser();
-    await this.warmupBloomRenderPipeline();
+    await this.compileRenderPipeline(includeBloom);
+    this.renderWithPipeline(includeBloom);
   }
 
-  private async warmupBloomRenderPipeline(): Promise<void> {
-    if (!this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
-      this.reportFirstFrameProgress('Skipping bloom pipeline', 6);
-      await yieldToBrowser();
+  private async compileRenderPipeline(includeBloom: boolean): Promise<void> {
+    if (!this.renderer) {
       return;
     }
 
-    this.reportFirstFrameProgress('Preparing bloom pipeline', 6);
-    await yieldToBrowser();
-    this.syncBloomFadeRange();
-    this.renderWithPipeline(true);
-    await yieldToBrowser();
+    const pipeline = this.ensureRenderPipeline(includeBloom);
+    if (!pipeline) {
+      return;
+    }
+
+    await pipeline.skyPass.compileAsync(this.renderer);
+    await pipeline.scenePass.compileAsync(this.renderer);
+  }
+
+  private shouldPrepareBloomPipeline(): boolean {
+    return this.glowBloomEnabled && this.tieController.hasGlowBloomSources();
+  }
+
+  private async waitForSubmittedGpuWork(): Promise<void> {
+    const device = (this.renderer as WebGpuRendererWithBackend | null)?.backend?.device;
+    if (!device) {
+      return;
+    }
+
+    await waitForGpuQueue(device.queue, firstFrameGpuWaitTimeoutMs);
   }
 
   private syncBloomFadeRange(): void {
     const bloomFar = Math.max(this.camera.near, this.glowBloomFalloffDistance);
     setTieBloomDistanceFadeRange(bloomFar * glowBloomFullStrengthRatio, bloomFar);
-  }
-
-  private cameraCanReachSceneBloom(): boolean {
-    if (!this.sceneBoundsSphere) {
-      return true;
-    }
-
-    const distanceToScene = Math.max(0, this.camera.position.distanceTo(this.sceneBoundsSphere.center) - this.sceneBoundsSphere.radius);
-    return distanceToScene <= this.glowBloomFalloffDistance;
   }
 
   private disposeRenderPipelines(): void {
@@ -1157,7 +1244,6 @@ export class MapSceneRenderer {
 
   private cleanupFailedPackageLoad(root: THREE.Object3D, mapPackage: LoadedMapPackage): void {
     this.terrainRoot = null;
-    this.sceneBoundsSphere = null;
     runRendererCleanup('shrub controller', () => this.shrubController.dispose());
     runRendererCleanup('tie controller', () => this.tieController.dispose());
     runRendererCleanup('skybox controller', () => this.skyboxController.dispose());
@@ -1175,7 +1261,6 @@ export class MapSceneRenderer {
     const currentPackage = this.currentPackage;
     this.currentPackage = null;
     this.terrainRoot = null;
-    this.sceneBoundsSphere = null;
     this.tfragController.dispose();
     this.skyboxController.dispose();
     this.tieController.dispose();
@@ -1288,6 +1373,15 @@ function getTfragGltfSources(mapPackage: LoadedMapPackage): TfragGltfSource[] {
   return sources;
 }
 
+function createStartupScenePart(key: string, label: string, ...objects: Array<THREE.Object3D | undefined>): StartupScenePart | null {
+  const visibleObjects = objects.filter((object): object is THREE.Object3D => object?.visible === true && hasRenderableObject(object));
+  return visibleObjects.length > 0 ? { key, label, objects: visibleObjects } : null;
+}
+
+function hasRenderableObject(object: THREE.Object3D): boolean {
+  return (object as THREE.Mesh).isMesh === true || object.children.length > 0;
+}
+
 function finiteNonNegative(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
@@ -1327,6 +1421,32 @@ function resolveFrameRateLimit(value: number): number {
 
 function frameIntervalForLimit(limit: number): number {
   return 1000 / limit;
+}
+
+function formatElapsedMs(startMs: number): string {
+  return `${Math.round(performance.now() - startMs).toLocaleString()} ms`;
+}
+
+async function waitForGpuQueue(queue: GPUQueue, timeoutMs: number): Promise<void> {
+  let timeoutId: number | null = null;
+  let timedOut = false;
+  const done = queue.onSubmittedWorkDone().catch((error: unknown) => {
+    if (timedOut) {
+      return;
+    }
+    throw error;
+  });
+  const timeout = new Promise<void>((resolve) => {
+    timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      resolve();
+    }, timeoutMs);
+  });
+
+  await Promise.race([done, timeout]);
+  if (timeoutId !== null) {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function createWorldLiftNode(sceneColor: PassTextureNode, lift: UniformNode<'float', number>) {

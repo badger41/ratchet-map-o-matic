@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { texture, uv, vertexColor } from 'three/tsl';
 import type { DirectionalLightRecord, TfragMaterialOptions, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
 import {
@@ -6,6 +7,7 @@ import {
   applyTfragDisplayLiftNode,
   type ModelDisplayNodeOptions
 } from './ModelFog';
+import type { SceneCameraStart } from './camera/SceneCameraFraming';
 
 type AnyAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 type TypedArray =
@@ -22,6 +24,8 @@ type TypedArray =
 type GeometryWithAttributes = THREE.BufferGeometry & {
   attributes: Record<string, AnyAttribute | undefined>;
 };
+
+type PositionAttribute = Pick<THREE.BufferAttribute | THREE.InterleavedBufferAttribute, 'count' | 'getX' | 'getY' | 'getZ'>;
 
 interface PreparedTfrag {
   geometry: THREE.BufferGeometry;
@@ -95,9 +99,56 @@ const postScaleAttributeNames = [
 ];
 
 const sourceCacheColorUserDataKey = 'mapOMaticSourceTfragCacheColor';
+const tfragTextureSourceKeyUserDataKey = 'mapOMaticTfragTextureSourceKey';
+
+interface GltfTextureJson {
+  source?: unknown;
+}
+
+interface GltfImageJson {
+  uri?: unknown;
+}
+
+interface GltfParserJson {
+  textures?: GltfTextureJson[];
+  images?: GltfImageJson[];
+}
+
+export function tagTfragTextureSourceKeys(gltf: GLTF, gltfUrl: string): void {
+  const json = gltf.parser.json as GltfParserJson | undefined;
+  const textures = json?.textures;
+  const images = json?.images;
+  if (!Array.isArray(textures) || !Array.isArray(images)) {
+    return;
+  }
+
+  for (const [object, reference] of gltf.parser.associations) {
+    if (!isTexture(object)) {
+      continue;
+    }
+
+    const textureIndex = numberValue(reference.textures);
+    if (textureIndex === null || !Number.isInteger(textureIndex)) {
+      continue;
+    }
+
+    const imageIndex = numberValue(textures[textureIndex]?.source);
+    const uri = imageIndex === null ? null : stringValue(images[imageIndex]?.uri);
+    if (!uri || uri.startsWith('data:')) {
+      continue;
+    }
+
+    const sourceKey = resolveTfragTextureSourceKey(uri, gltfUrl);
+    if (sourceKey) {
+      object.userData[tfragTextureSourceKeyUserDataKey] = sourceKey;
+    }
+  }
+}
+
 export class TfragMaterialController {
   private prepared: PreparedTfrag[] = [];
   private materialRebakes = 0;
+  private startupCameraStart: SceneCameraStart | null = null;
 
   prepare(
     root: THREE.Object3D,
@@ -123,6 +174,7 @@ export class TfragMaterialController {
       const mesh = object as THREE.Mesh;
       sourceMeshes.push(mesh);
       mesh.updateWorldMatrix(true, false);
+      this.captureStartupCameraStart(mesh);
 
       const sourceMaterial = mesh.material ?? null;
       const materialKey = materialBatchKey(sourceMaterial);
@@ -220,12 +272,14 @@ export class TfragMaterialController {
   }
 
   dispose(): void {
+    const disposedMaterials = new Set<THREE.Material>();
     for (const prepared of this.prepared) {
       prepared.geometry.dispose();
-      disposeMaterial(prepared.mesh.material);
+      disposeMaterial(prepared.mesh.material, disposedMaterials);
     }
 
     this.prepared = [];
+    this.startupCameraStart = null;
   }
 
   getStats(directionalLightRecords: number): TfragStats {
@@ -244,6 +298,35 @@ export class TfragMaterialController {
       lod0Triangles: triangles || null,
       directionalLightRecords,
       materialRebakes: this.materialRebakes
+    };
+  }
+
+  getStartupCameraStart(): SceneCameraStart | null {
+    const start = this.startupCameraStart;
+    if (!start) {
+      return null;
+    }
+
+    return {
+      anchor: start.anchor.clone(),
+      lookAt: start.lookAt?.clone() ?? null
+    };
+  }
+
+  private captureStartupCameraStart(mesh: THREE.Mesh): void {
+    if (this.startupCameraStart?.lookAt) {
+      return;
+    }
+
+    const anchor = this.startupCameraStart?.anchor ?? readGeometryPosition(mesh.geometry, 0, mesh.matrixWorld);
+    if (!anchor) {
+      return;
+    }
+
+    const lookAt = findDistinctGeometryPosition(mesh.geometry, mesh.matrixWorld, anchor);
+    this.startupCameraStart = {
+      anchor,
+      lookAt: lookAt ?? this.startupCameraStart?.lookAt ?? null
     };
   }
 }
@@ -491,7 +574,60 @@ function materialBatchKey(sourceMaterial: THREE.Material | THREE.Material[] | nu
     return 'null-material';
   }
 
-  return firstMaterial.uuid;
+  const source = firstMaterial as Partial<THREE.MeshBasicMaterial>;
+  return [
+    'material',
+    textureBatchKey(source.map ?? null),
+    firstMaterial.transparent ? 'transparent' : 'opaque',
+    firstMaterial.opacity.toString(),
+    firstMaterial.alphaTest.toString(),
+    firstMaterial.depthTest ? 'depth-test' : 'no-depth-test',
+    firstMaterial.depthWrite ? 'depth-write' : 'no-depth-write'
+  ].join('|');
+}
+
+function textureBatchKey(source: THREE.Texture | null): string {
+  if (!source) {
+    return 'no-map';
+  }
+
+  const sourceKey = source.userData?.[tfragTextureSourceKeyUserDataKey];
+  if (typeof sourceKey !== 'string' || !sourceKey) {
+    return `texture:${source.uuid}`;
+  }
+
+  return [
+    `source:${sourceKey}`,
+    source.wrapS.toString(),
+    source.wrapT.toString(),
+    source.magFilter.toString(),
+    source.minFilter.toString()
+  ].join('|');
+}
+
+function isTexture(value: unknown): value is THREE.Texture {
+  return (value as THREE.Texture | null)?.isTexture === true;
+}
+
+function resolveTfragTextureSourceKey(uri: string, gltfUrl: string): string | null {
+  try {
+    if (uri.startsWith('/') || hasUrlScheme(uri)) {
+      return new URL(uri, window.location.href).toString();
+    }
+
+    const gltfAbsoluteUrl = new URL(gltfUrl, window.location.href);
+    if (gltfAbsoluteUrl.protocol === 'blob:') {
+      return null;
+    }
+
+    return new URL(uri, new URL('.', gltfAbsoluteUrl)).toString();
+  } catch {
+    return null;
+  }
+}
+
+function hasUrlScheme(value: string): boolean {
+  return /^[a-z][a-z\d+.-]*:/i.test(value);
 }
 
 function isIdentityMatrix(matrix: THREE.Matrix4): boolean {
@@ -514,6 +650,82 @@ function isIdentityMatrix(matrix: THREE.Matrix4): boolean {
     elements[14] === 0 &&
     elements[15] === 1
   );
+}
+
+function findDistinctGeometryPosition(
+  geometry: THREE.BufferGeometry,
+  matrixWorld: THREE.Matrix4,
+  anchor: THREE.Vector3
+): THREE.Vector3 | null {
+  const position = getPositionAttribute(geometry);
+  if (!position) {
+    return null;
+  }
+
+  const candidateCount = Math.min(3, geometry.getIndex()?.count ?? position.count);
+  for (let vertexIndex = 0; vertexIndex < candidateCount; vertexIndex += 1) {
+    const point = readGeometryPosition(geometry, vertexIndex, matrixWorld);
+    if (point && point.distanceToSquared(anchor) > 1) {
+      return point;
+    }
+  }
+
+  return null;
+}
+
+function readGeometryPosition(
+  geometry: THREE.BufferGeometry,
+  vertexIndex: number,
+  matrixWorld: THREE.Matrix4
+): THREE.Vector3 | null {
+  const position = getPositionAttribute(geometry);
+  if (!position) {
+    return null;
+  }
+
+  const index = geometry.getIndex();
+  if (index && vertexIndex >= index.count) {
+    return null;
+  }
+
+  const positionIndex = index ? Math.trunc(index.getX(vertexIndex)) : vertexIndex;
+  if (positionIndex < 0 || positionIndex >= position.count) {
+    return null;
+  }
+
+  const point = new THREE.Vector3(
+    position.getX(positionIndex),
+    position.getY(positionIndex),
+    position.getZ(positionIndex)
+  ).applyMatrix4(matrixWorld);
+
+  return isFiniteVector(point) ? point : null;
+}
+
+function getPositionAttribute(geometry: THREE.BufferGeometry): PositionAttribute | null {
+  const position = geometry.getAttribute('position') as PositionAttribute | undefined;
+  return position && position.count > 0 ? position : null;
+}
+
+function isFiniteVector(value: THREE.Vector3): boolean {
+  return Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z);
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null;
 }
 
 function mergeTfragGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
@@ -828,13 +1040,18 @@ function isMesh(object: THREE.Object3D): object is THREE.Mesh {
   return (object as THREE.Mesh).isMesh === true;
 }
 
-function disposeMaterial(material: THREE.Material | THREE.Material[]): void {
+function disposeMaterial(material: THREE.Material | THREE.Material[], disposedMaterials?: Set<THREE.Material>): void {
   if (Array.isArray(material)) {
     for (const item of material) {
-      item.dispose();
+      disposeMaterial(item, disposedMaterials);
     }
     return;
   }
 
+  if (disposedMaterials?.has(material)) {
+    return;
+  }
+
+  disposedMaterials?.add(material);
   material.dispose();
 }

@@ -17,6 +17,7 @@ export function MapViewerStageList({ stages }: MapViewerStageListProps) {
 
   const color = viewerStageColor(stage.status);
   const progressText = formatStageProgressText(stage);
+  const progressValue = viewerStageProgressValue(stage);
   const detail = progressText && progressText !== stage.detail
     ? `${stage.detail || 'Working'} - ${progressText}`
     : stage.detail || progressText || 'Waiting';
@@ -42,11 +43,12 @@ export function MapViewerStageList({ stages }: MapViewerStageListProps) {
           </Badge>
         </Group>
         <Progress
-          value={viewerStageProgressValue(stage)}
+          key={`${stage.id}:${stage.status}:${stage.loaded ?? ''}:${stage.total ?? ''}`}
+          value={progressValue}
           color={color}
           radius="xs"
           size="xs"
-          transitionDuration={stage.status === 'active' ? 180 : 0}
+          transitionDuration={0}
         />
       </Stack>
     </Paper>

@@ -27,10 +27,6 @@ export async function assertWebGpuAvailable(): Promise<void> {
   }
 }
 
-export function shouldSkipGpuPipelineWarmup(): boolean {
-  return isAppleWebKitBrowser();
-}
-
 export function createRendererInitializationError(error: unknown): Error {
   const originalMessage = error instanceof Error ? error.message : String(error);
   const message = originalMessage.includes('this.gl is null') || originalMessage.includes('WebGPUBackend')
@@ -68,18 +64,6 @@ export function createRendererDeviceLostError(info?: RendererDeviceLostInfo): Er
   const nextError = new Error(message);
   nextError.name = 'MapSceneRendererDeviceLostError';
   return nextError;
-}
-
-function isAppleWebKitBrowser(): boolean {
-  const userAgent = navigator.userAgent;
-  const vendor = navigator.vendor;
-  const isAppleVendor = /Apple/i.test(vendor);
-  const isIosLike = /\b(iPad|iPhone|iPod)\b/i.test(userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const isSafari = /Safari\//i.test(userAgent) &&
-    !/(Chrome|Chromium|CriOS|FxiOS|Edg|OPR|OPiOS)\//i.test(userAgent);
-
-  return isAppleVendor && (isSafari || isIosLike);
 }
 
 function createSafariRendererCompatibilityError(error: unknown): Error {
