@@ -274,7 +274,7 @@ export class FpsCameraController {
       return 850 * this.sceneScale;
     }
 
-    return 280 * this.sceneScale;
+    return 120 * this.sceneScale;
   }
 
   private resolveMaxSpeed(): number {
@@ -282,7 +282,7 @@ export class FpsCameraController {
       return 900 * this.sceneScale;
     }
 
-    return 310 * this.sceneScale;
+    return 145 * this.sceneScale;
   }
 
   private applyRotation(): void {

@@ -86,10 +86,11 @@ function isKnownWebGpuAttributeDisposalError(error: unknown): boolean {
   return message.includes('buffer.destroy') && message.includes('_getBufferAttribute');
 }
 
-function isKnownGpuDeviceLostError(error: unknown): boolean {
+export function isKnownGpuDeviceLostError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
   return normalized.includes('device lost') ||
     normalized.includes('context lost') ||
-    normalized.includes('gpu state invalid');
+    normalized.includes('gpu state invalid') ||
+    normalized.includes('external instance reference no longer exists');
 }

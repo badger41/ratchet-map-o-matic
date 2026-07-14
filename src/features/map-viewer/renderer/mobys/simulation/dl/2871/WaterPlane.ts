@@ -134,7 +134,7 @@ export class WaterPlaneMobyClass extends MobyClass {
     context: MobyClassContext,
     private readonly configs: WaterPvar[]
   ) {
-    super(context, waterPlaneMobyClassId, new THREE.BundleGroup());
+    super(context, waterPlaneMobyClassId);
     context.root.renderOrder = Math.max(context.root.renderOrder, waterPlaneRenderOrder);
     this.group.renderOrder = waterPlaneRenderOrder;
   }
@@ -167,6 +167,7 @@ export class WaterPlaneMobyClass extends MobyClass {
       this.updateWaterPatchScale(this.viewerPosition.y);
       layer.object.position.copy(this.viewerPosition);
       layer.object.position.y += layer.heightOffset;
+      layer.object.visible = this.context.camera.position.y >= layer.object.position.y;
       updateWaterPatchMesh(layer.object, this.waterPatchRight, this.waterPatchForward, this.waterPatchScale);
       if (layer.texture && layer.textureMode === 'world') {
         // DL water VU packet uses overlay UVs in a rotated PS2 basis: u = -Y, v = X.

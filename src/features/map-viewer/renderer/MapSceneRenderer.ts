@@ -53,6 +53,7 @@ import {
   createRendererDeviceLostError,
   createRendererInitializationError,
   createRendererRuntimeError,
+  isKnownGpuDeviceLostError,
   type RendererDeviceLostInfo
 } from './RendererCompatibility';
 import {
@@ -275,6 +276,7 @@ export class MapSceneRenderer {
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
   private glowBloomEnabled: boolean;
+  private glowBloomRuntimeDisabled = false;
   private glowBloomFalloffDistance: number;
   private mobySimulationEnabled: boolean;
   private mobySimulationAccumulatorSeconds = 0;
@@ -673,8 +675,16 @@ export class MapSceneRenderer {
       this.reportFirstFrameProgress('Enabling bloom overlay', nextStep, totalSteps);
       await yieldToBrowser();
       stepStartMs = performance.now();
-      await this.prepareRenderPipeline(true);
-      this.reportFirstFrameProgress(`Enabled bloom overlay (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      try {
+        await this.prepareRenderPipeline(true);
+        this.reportFirstFrameProgress(`Enabled bloom overlay (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      } catch (error: unknown) {
+        if (!this.disableBloomAfterError(error)) {
+          throw error;
+        }
+
+        this.reportFirstFrameProgress(`Disabled bloom overlay (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      }
     }
 
     this.reportFirstFrameProgress('Waiting for GPU queue', totalSteps, totalSteps);
@@ -688,6 +698,7 @@ export class MapSceneRenderer {
     this.resetMobySimulationClock(this.lastFrameTime);
     this.animationRenderSuspended = false;
     this.lastRenderSubmitTime = 0;
+    this.resize();
   }
 
   private reportFirstFrameProgress(detail: string, loaded: number, total: number): void {
@@ -835,6 +846,9 @@ export class MapSceneRenderer {
 
   setGlowBloomEnabled(enabled: boolean): void {
     this.glowBloomEnabled = enabled;
+    if (enabled) {
+      this.glowBloomRuntimeDisabled = false;
+    }
     if (!enabled) {
       this.disposeRenderPipeline(true);
     }
@@ -1028,7 +1042,15 @@ export class MapSceneRenderer {
     if (includeBloom) {
       this.syncBloomFadeRange();
     }
-    this.renderWithPipeline(includeBloom);
+    try {
+      this.renderWithPipeline(includeBloom);
+    } catch (error: unknown) {
+      if (!includeBloom || !this.disableBloomAfterError(error)) {
+        throw error;
+      }
+
+      this.renderWithPipeline(false);
+    }
     if (collectDetails) {
       this.bloomSampleTotalMs += performance.now() - bloomStartMs;
     }
@@ -1063,6 +1085,10 @@ export class MapSceneRenderer {
 
   private resize(): void {
     if (!this.renderer || this.rendererUnavailable) {
+      return;
+    }
+    if (this.animationRenderSuspended) {
+      this.lastRenderSubmitTime = 0;
       return;
     }
 
@@ -1142,6 +1168,9 @@ export class MapSceneRenderer {
     if (!this.renderer || !this.glowBloomEnabled || !this.tieController.hasGlowBloomSources()) {
       return this.glowBloomEnabled ? 'none' : 'off';
     }
+    if (this.glowBloomRuntimeDisabled) {
+      return 'failed';
+    }
 
     return 'rendered';
   }
@@ -1189,7 +1218,20 @@ export class MapSceneRenderer {
   }
 
   private shouldPrepareBloomPipeline(): boolean {
-    return this.glowBloomEnabled && this.tieController.hasGlowBloomSources();
+    return this.glowBloomEnabled && !this.glowBloomRuntimeDisabled && this.tieController.hasGlowBloomSources();
+  }
+
+  private disableBloomAfterError(error: unknown): boolean {
+    if (isKnownGpuDeviceLostError(error)) {
+      return false;
+    }
+
+    console.warn('Disabling glow bloom after WebGPU bloom pipeline failure.', error);
+    this.glowBloomRuntimeDisabled = true;
+    this.lastBloomStatus = 'failed';
+    this.disposeRenderPipeline(true);
+    this.lastRenderSubmitTime = 0;
+    return true;
   }
 
   private async waitForSubmittedGpuWork(): Promise<void> {

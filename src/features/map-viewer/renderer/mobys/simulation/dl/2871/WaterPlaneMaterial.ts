@@ -462,7 +462,7 @@ function createWaterUnderlayQuadrantUv(waves?: WaterWaveSettings): Node<'vec2'> 
   const quadrant = floor(scaledUv).clamp(0, 1);
   const localUv = scaledUv.sub(quadrant).clamp(0, 1);
   const rotatedLocalUv = vec2(1).sub(localUv);
-  return quadrant.add(rotatedLocalUv).mul(float(0.5)).clamp(0, 1);
+  return vec2(1).sub(quadrant.add(rotatedLocalUv).mul(float(0.5))).clamp(0, 1);
 }
 
 function createWaterUnderlaySourceUv(): Node<'vec2'> {
