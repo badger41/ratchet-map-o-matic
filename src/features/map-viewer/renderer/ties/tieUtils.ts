@@ -30,11 +30,11 @@ export class LoadYieldController {
       return;
     }
 
-    await waitForNextFrame();
+    await yieldToMainThread();
     this.lastYieldTime = performance.now();
   }
 }
 
-function waitForNextFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }

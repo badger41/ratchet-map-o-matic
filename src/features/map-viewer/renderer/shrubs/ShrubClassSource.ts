@@ -9,6 +9,7 @@ import type {
   LoadedMapPackage
 } from '../../../../services/mapPackages/mapPackageTypes';
 import type { ShrubPrimitive } from './ShrubTypes';
+import { mergeAdjacentModelPrimitives } from '../ModelPrimitiveMerge';
 
 export async function loadShrubClassSource(
   loader: GLTFLoader,
@@ -50,7 +51,10 @@ export function collectShrubPrimitives(source: THREE.Object3D): ShrubPrimitive[]
     });
   });
 
-  return primitives;
+  return mergeAdjacentModelPrimitives(
+    primitives,
+    (left, right) => left.isBillboard === right.isBillboard
+  );
 }
 
 export function createInstancedGeometry(source: THREE.BufferGeometry): THREE.BufferGeometry {

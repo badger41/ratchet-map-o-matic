@@ -64,6 +64,8 @@ export class ShrubInstanceController {
   private options: ShrubRenderOptions = { ...defaultShrubRenderOptions };
   private bundleEnabled = false;
   private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
+  private readonly lightSelectorsByChunk = new WeakMap<PreparedShrubRecord[], THREE.InstancedBufferAttribute>();
+  private readonly ambientColorsByChunk = new WeakMap<PreparedShrubRecord[], THREE.InstancedBufferAttribute>();
 
   async load(
     parent: THREE.Object3D,
@@ -294,6 +296,8 @@ export class ShrubInstanceController {
       const preparedRecords = classRecords.map(prepareShrubRecord);
       const normalRecords = preparedRecords.filter((record) => record.mirroredKey === 'normal');
       const mirroredRecords = preparedRecords.filter((record) => record.mirroredKey === 'mirrored');
+      const normalChunks = chunkShrubRecords(normalRecords);
+      const mirroredChunks = chunkShrubRecords(mirroredRecords);
 
       for (const primitive of primitives) {
         const displayOptions = this.modelDisplayOptions;
@@ -302,11 +306,11 @@ export class ShrubInstanceController {
         }
 
         const material = cloneShrubMaterial(primitive.material, this.directionalLightBinding, this.options, displayOptions);
-        for (const [chunkIndex, records] of chunkShrubRecords(normalRecords).entries()) {
+        for (const [chunkIndex, records] of normalChunks.entries()) {
           this.addInstancedPrimitive(group, classId, 'normal', records, primitive, chunkIndex, material);
         }
 
-        for (const [chunkIndex, records] of chunkShrubRecords(mirroredRecords).entries()) {
+        for (const [chunkIndex, records] of mirroredChunks.entries()) {
           this.addInstancedPrimitive(group, classId, 'mirrored', records, primitive, chunkIndex, material);
         }
 
@@ -330,9 +334,14 @@ export class ShrubInstanceController {
   ): void {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
-    geometry.setAttribute(lightSelectorAttributeName, createLightSelectorInstanceAttribute(records));
-    geometry.setAttribute(shrubAmbientAttributeName, createShrubAmbientColorInstanceAttribute(records));
-
+    geometry.setAttribute(
+      lightSelectorAttributeName,
+      this.getChunkAttribute(this.lightSelectorsByChunk, records, () => createLightSelectorInstanceAttribute(records))
+    );
+    geometry.setAttribute(
+      shrubAmbientAttributeName,
+      this.getChunkAttribute(this.ambientColorsByChunk, records, () => createShrubAmbientColorInstanceAttribute(records))
+    );
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);
     mesh.name = `shrub_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
@@ -368,5 +377,20 @@ export class ShrubInstanceController {
     this.stats.batches += 1;
     this.stats.billboardBatches += primitive.isBillboard ? 1 : 0;
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;
+  }
+
+  private getChunkAttribute(
+    cache: WeakMap<PreparedShrubRecord[], THREE.InstancedBufferAttribute>,
+    records: PreparedShrubRecord[],
+    create: () => THREE.InstancedBufferAttribute
+  ): THREE.InstancedBufferAttribute {
+    const existing = cache.get(records);
+    if (existing) {
+      return existing;
+    }
+
+    const attribute = create();
+    cache.set(records, attribute);
+    return attribute;
   }
 }

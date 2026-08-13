@@ -32,6 +32,7 @@ import {
   groupRecordsByClassId,
   prepareTieRecord
 } from './TieData';
+import { hasTieBloomSourceNear } from './TieBloomRange';
 import {
   disposeInactiveMaterial,
   disposeObject3D
@@ -42,7 +43,6 @@ import {
   disposeTieDirectionalLightBinding
 } from './TieLighting';
 import {
-  applyTieRenderOptions,
   cloneTieMaterial,
   cloneTieTextureMaterial,
   tieMaterialUsesGlowEmission,
@@ -83,6 +83,29 @@ type TieGroup = THREE.Group & {
   needsUpdate?: boolean;
 };
 
+type TieClassTimingStatus = 'loaded' | 'missing entry' | 'missing source' | 'empty' | 'failed';
+
+interface TieClassTiming {
+  classId: number;
+  records: number;
+  primitives: number;
+  batches: number;
+  elapsedMs: number;
+  sourceMs: number;
+  prepareMs: number;
+  materialMs: number;
+  instanceMs: number;
+  status: TieClassTimingStatus;
+}
+
+interface TieClassTimingAccumulator {
+  sourceMs: number;
+  prepareMs: number;
+  materialMs: number;
+  instanceMs: number;
+  classTimings: TieClassTiming[];
+}
+
 // ponytail: C66 local-origin ties sat slightly low; keep this fixed so rotation does not bounce.
 const tieLocalOriginRotationLiftRatio = 0.0075;
 
@@ -114,6 +137,9 @@ export class TieInstanceController {
   private readonly instanceScale = new THREE.Vector3();
   private readonly rotationQuaternion = new THREE.Quaternion();
   private readonly baselineBox = new THREE.Box3();
+  private readonly ambientRowsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
+  private readonly glowRowsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
+  private readonly lightSelectorsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
 
   async load(
     parent: THREE.Object3D,
@@ -124,6 +150,8 @@ export class TieInstanceController {
     modelDisplayOptions: ModelDisplayNodeOptions,
     onProgress?: TieLoadProgressCallback
   ): Promise<TieStats> {
+    const loadStartMs = performance.now();
+    logTieTimingStart('load');
     this.dispose();
     this.options = { ...defaultTieRenderOptions, ...options };
     this.skyboxReflectionTexture = skyboxReflectionTexture;
@@ -147,9 +175,11 @@ export class TieInstanceController {
     this.directionalLightBinding = createTieDirectionalLightBinding(mapPackage.directionalLights);
 
     if (!mapPackage.tieClassIdsPath || !mapPackage.tieInstancesPath || mapPackage.tieEntries.length === 0) {
+      logTieTimingEnd('load skipped', loadStartMs);
       return this.getStats();
     }
 
+    let stepStartMs = performance.now();
     const [classIdsBytes, instancesBytes, colorBytes, groupBytes] = await Promise.all([
       mapPackage.assetPackage.readBytes(mapPackage.tieClassIdsPath),
       mapPackage.assetPackage.readBytes(mapPackage.tieInstancesPath),
@@ -160,6 +190,9 @@ export class TieInstanceController {
         ? mapPackage.assetPackage.readOptionalBytes(mapPackage.tieGroupsPath)
         : Promise.resolve(null)
     ]);
+    logTieTimingEnd('read records/colors/groups', stepStartMs);
+
+    stepStartMs = performance.now();
     const classIds = parseTieClassIds(classIdsBytes);
     const records = parseTieInstanceRecords(instancesBytes, mapPackage.tieInstanceCountExpected);
     const colorTable = colorBytes
@@ -174,7 +207,9 @@ export class TieInstanceController {
     this.stats.classIds = classIds.length || mapPackage.tieClassCountExpected || 0;
     this.stats.instances = records.length;
     this.stats.colorEntries = colorTable?.entryCount ?? 0;
+    logTieTimingEnd('parse and group records', stepStartMs);
 
+    stepStartMs = performance.now();
     await this.loadTieClassGroups(
       group,
       mapPackage,
@@ -184,6 +219,8 @@ export class TieInstanceController {
       colorTable,
       onProgress
     );
+    logTieTimingEnd(`load ${recordsByClassId.size.toLocaleString()} class groups`, stepStartMs);
+    logTieTimingEnd('load total', loadStartMs);
 
     return this.getStats();
   }
@@ -209,11 +246,15 @@ export class TieInstanceController {
     const disposedMaterials = new Set<THREE.Material>();
     const disposedTextures = new Set<THREE.Texture>();
     for (const binding of this.meshBindings) {
-      disposeInactiveMaterial(binding.mesh.material, binding.flatMaterial, disposedMaterials, disposedTextures);
+      if (binding.flatMaterial) {
+        disposeInactiveMaterial(binding.mesh.material, binding.flatMaterial, disposedMaterials, disposedTextures);
+      }
       if (binding.coloredMaterial) {
         disposeInactiveMaterial(binding.mesh.material, binding.coloredMaterial, disposedMaterials, disposedTextures);
       }
-      disposeInactiveMaterial(binding.mesh.material, binding.textureMaterial, disposedMaterials, disposedTextures);
+      if (binding.textureMaterial) {
+        disposeInactiveMaterial(binding.mesh.material, binding.textureMaterial, disposedMaterials, disposedTextures);
+      }
     }
 
     if (this.group) {
@@ -344,6 +385,14 @@ export class TieInstanceController {
     return this.glowBloomCenters.length / 4;
   }
 
+  hasGlowBloomSourceNear(position: THREE.Vector3, distance: number): boolean {
+    if (this.group?.visible !== true && this.alphaBlendGroup?.visible !== true) {
+      return false;
+    }
+
+    return hasTieBloomSourceNear(this.glowBloomCenters, position, distance);
+  }
+
   setTieGroupRotation(groupIndex: number, rotation: THREE.Matrix4 | null, pivot: THREE.Vector3 | null = null): void {
     if (!this.group || groupIndex < 0) {
       return;
@@ -381,9 +430,11 @@ export class TieInstanceController {
     const b = clampByte((color?.b ?? 1) * 255);
     const a = color ? 255 : 0;
     let changed = false;
+    const updatedChunks = new Set<PreparedTieRecord[]>();
+    const updatedBindings = new Set<TieGlowColorBinding>();
     for (const binding of this.meshBindings) {
       const glowColorBinding = binding.glowColorBinding;
-      if (!glowColorBinding) {
+      if (!glowColorBinding || updatedChunks.has(binding.records)) {
         continue;
       }
 
@@ -391,6 +442,7 @@ export class TieInstanceController {
       if (!localIndices || localIndices.length === 0) {
         continue;
       }
+      updatedChunks.add(binding.records);
 
       for (const localIndex of localIndices) {
         const row = glowColorBinding.rowByRecord.get(binding.records[localIndex]);
@@ -405,8 +457,12 @@ export class TieInstanceController {
         glowColorBinding.data[offset + 3] = a;
       }
 
-      glowColorBinding.texture.needsUpdate = true;
+      updatedBindings.add(glowColorBinding);
       changed = true;
+    }
+
+    for (const binding of updatedBindings) {
+      binding.texture.needsUpdate = true;
     }
 
     if (changed) {
@@ -423,9 +479,11 @@ export class TieInstanceController {
     }
 
     let changed = false;
+    const updatedChunks = new Set<PreparedTieRecord[]>();
+    const updatedBindings = new Set<TieGlowColorBinding>();
     for (const binding of this.meshBindings) {
       const glowColorBinding = binding.glowColorBinding;
-      if (!glowColorBinding) {
+      if (!glowColorBinding || updatedChunks.has(binding.records)) {
         continue;
       }
 
@@ -433,6 +491,7 @@ export class TieInstanceController {
       if (!localIndices || localIndices.length === 0) {
         continue;
       }
+      updatedChunks.add(binding.records);
 
       for (const localIndex of localIndices) {
         const record = binding.records[localIndex];
@@ -449,8 +508,12 @@ export class TieInstanceController {
         glowColorBinding.data[offset + 3] = color ? 255 : 0;
       }
 
-      glowColorBinding.texture.needsUpdate = true;
+      updatedBindings.add(glowColorBinding);
       changed = true;
+    }
+
+    for (const binding of updatedBindings) {
+      binding.texture.needsUpdate = true;
     }
 
     if (changed) {
@@ -470,27 +533,34 @@ export class TieInstanceController {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
     const { ambientBinding, glowColorBinding, flatMaterial, coloredMaterial, textureMaterial } = materialSet;
-    const usesGlowBloom = tieMaterialUsesGlowEmission(primitive.material);
+    const initialMaterial = coloredMaterial ?? flatMaterial;
+    if (!initialMaterial) {
+      throw new Error('Tie material set has no display material.');
+    }
+    const usesGlowBloom = materialSet.usesGlowEmission;
     if (ambientBinding) {
       geometry.setAttribute(
         tieAmbientInstanceRowAttributeName,
-        new THREE.InstancedBufferAttribute(createTieAmbientRowAttribute(records, ambientBinding), 1)
+        this.getChunkAttribute(this.ambientRowsByChunk, records, () => createTieAmbientRowAttribute(records, ambientBinding))
       );
     }
 
     if (!primitive.isGlowOverlay && this.directionalLightBinding) {
-      geometry.setAttribute(lightSelectorAttributeName, createLightSelectorInstanceAttribute(records));
+      geometry.setAttribute(
+        lightSelectorAttributeName,
+        this.getChunkAttribute(this.lightSelectorsByChunk, records, () => createLightSelectorInstanceAttribute(records))
+      );
     }
     if (glowColorBinding) {
       geometry.setAttribute(
         tieGlowColorRowAttributeName,
-        new THREE.InstancedBufferAttribute(createTieGlowRowAttribute(records, glowColorBinding), 1)
+        this.getChunkAttribute(this.glowRowsByChunk, records, () => createTieGlowRowAttribute(records, glowColorBinding))
       );
     }
 
     const mesh = new THREE.InstancedMesh(
       geometry,
-      this.options.colorsEnabled && coloredMaterial ? coloredMaterial : flatMaterial,
+      initialMaterial,
       records.length
     );
     mesh.name = `tie_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
@@ -563,7 +633,7 @@ export class TieInstanceController {
     this.applyBindingMaterial(binding);
 
     this.stats.batches += 1;
-    this.stats.ambientBatches += coloredMaterial ? 1 : 0;
+    this.stats.ambientBatches += ambientBinding ? 1 : 0;
     if (ambientBinding && !ambientBinding.statsCounted) {
       ambientBinding.statsCounted = true;
       this.stats.ambientRecipes += ambientBinding.recipeCount;
@@ -662,11 +732,48 @@ export class TieInstanceController {
     }
 
     if (this.materialMode === 'texture') {
+      binding.textureMaterial ??= cloneTieTextureMaterial(this.getBindingMaterialSource(binding));
       binding.mesh.material = binding.textureMaterial;
       return;
     }
 
-    applyTieRenderOptions(binding, this.options);
+    const ambientBinding = this.options.colorsEnabled ? binding.ambientBinding : null;
+    if (ambientBinding) {
+      binding.coloredMaterial ??= this.cloneBindingDisplayMaterial(binding, ambientBinding);
+      binding.mesh.material = binding.coloredMaterial;
+    } else {
+      binding.flatMaterial ??= this.cloneBindingDisplayMaterial(binding, null);
+      binding.mesh.material = binding.flatMaterial;
+    }
+    updateTieRenderOptionUniforms(binding, this.options);
+  }
+
+  private cloneBindingDisplayMaterial(
+    binding: TieInstancedMeshBinding,
+    ambientBinding: TieInstancedMeshBinding['ambientBinding']
+  ): THREE.Material | THREE.Material[] {
+    const displayOptions = this.modelDisplayOptions;
+    if (!displayOptions) {
+      throw new Error('Tie material display options are not initialized.');
+    }
+
+    return cloneTieMaterial(
+      this.getBindingMaterialSource(binding),
+      binding.mesh.geometry,
+      ambientBinding,
+      binding.glowColorBinding,
+      this.directionalLightBinding,
+      this.skyboxReflectionTexture,
+      this.options,
+      displayOptions);
+  }
+
+  private getBindingMaterialSource(binding: TieInstancedMeshBinding): THREE.Material | THREE.Material[] {
+    const source = binding.coloredMaterial ?? binding.flatMaterial ?? binding.textureMaterial;
+    if (!source) {
+      throw new Error('Tie material binding has no source material.');
+    }
+    return source;
   }
 
   private getPlainMaterial(): THREE.MeshBasicNodeMaterial {
@@ -674,7 +781,7 @@ export class TieInstanceController {
       this.plainMaterial = new THREE.MeshBasicNodeMaterial({
         name: 'tie_plain_debug_material',
         color: 0xd8d8d8,
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide,
         toneMapped: false
       });
     }
@@ -707,28 +814,38 @@ export class TieInstanceController {
     }
   }
 
-  private createTieMaterialSet(records: PreparedTieRecord[], primitive: TiePrimitive): TieMaterialSet {
+  private getChunkAttribute(
+    cache: WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>,
+    records: PreparedTieRecord[],
+    create: () => Float32Array | THREE.InstancedBufferAttribute
+  ): THREE.InstancedBufferAttribute {
+    const existing = cache.get(records);
+    if (existing) {
+      return existing;
+    }
+
+    const value = create();
+    const attribute = value instanceof THREE.InstancedBufferAttribute
+      ? value
+      : new THREE.InstancedBufferAttribute(value, 1);
+    cache.set(records, attribute);
+    return attribute;
+  }
+
+  private createTieMaterialSet(
+    records: PreparedTieRecord[],
+    primitive: TiePrimitive,
+    glowColorBinding: TieGlowColorBinding | null,
+    usesGlowEmission: boolean
+  ): TieMaterialSet {
     const ambientBinding = createTieAmbientTextureBinding(records, primitive);
-    const glowColorBinding = tieMaterialUsesGlowEmission(primitive.material)
-      ? createTieGlowColorBinding(records)
-      : null;
     const displayOptions = this.modelDisplayOptions;
     if (!displayOptions) {
       throw new Error('Tie material display options are not initialized.');
     }
 
-    return {
-      flatMaterial: cloneTieMaterial(
-        primitive.material,
-        primitive.geometry,
-        null,
-        glowColorBinding,
-        this.directionalLightBinding,
-        this.skyboxReflectionTexture,
-        this.options,
-        displayOptions),
-      coloredMaterial: ambientBinding
-        ? cloneTieMaterial(
+    const coloredMaterial = ambientBinding && this.options.colorsEnabled
+      ? cloneTieMaterial(
           primitive.material,
           primitive.geometry,
           ambientBinding,
@@ -737,10 +854,24 @@ export class TieInstanceController {
           this.skyboxReflectionTexture,
           this.options,
           displayOptions)
-        : null,
-      textureMaterial: cloneTieTextureMaterial(primitive.material),
+      : null;
+    return {
+      flatMaterial: coloredMaterial
+        ? null
+        : cloneTieMaterial(
+          primitive.material,
+          primitive.geometry,
+          null,
+          glowColorBinding,
+          this.directionalLightBinding,
+          this.skyboxReflectionTexture,
+          this.options,
+          displayOptions),
+      coloredMaterial,
+      textureMaterial: null,
       ambientBinding,
-      glowColorBinding
+      glowColorBinding,
+      usesGlowEmission
     };
   }
 
@@ -758,6 +889,13 @@ export class TieInstanceController {
     let completedGroups = 0;
     const workerCount = Math.min(tieClassLoadConcurrency, classGroups.length);
     const yieldController = new LoadYieldController(tieLoadFrameBudgetMs);
+    const timingAccumulator: TieClassTimingAccumulator = {
+      sourceMs: 0,
+      prepareMs: 0,
+      materialMs: 0,
+      instanceMs: 0,
+      classTimings: []
+    };
     onProgress?.(0, classGroups.length);
 
     const loadNext = async () => {
@@ -773,7 +911,8 @@ export class TieInstanceController {
           colorTable,
           classId,
           classRecords,
-          yieldController
+          yieldController,
+          timingAccumulator
         );
         completedGroups += 1;
         onProgress?.(completedGroups, classGroups.length);
@@ -782,6 +921,7 @@ export class TieInstanceController {
     };
 
     await Promise.all(Array.from({ length: workerCount }, loadNext));
+    logTieClassTimingSummary(timingAccumulator);
   }
 
   private async loadTieClassGroup(
@@ -792,63 +932,116 @@ export class TieInstanceController {
     colorTable: TieColorTable | null,
     classId: number,
     classRecords: TieInstanceRecord[],
-    yieldController: LoadYieldController
+    yieldController: LoadYieldController,
+    timingAccumulator: TieClassTimingAccumulator
   ): Promise<void> {
-    const entry = entriesByClassId.get(classId);
-    if (!entry) {
-      this.stats.missingClasses += classRecords.length;
-      return;
-    }
-
-    const source = await loadTieClassSource(loader, mapPackage, entry);
-    if (!source) {
-      this.stats.missingClasses += classRecords.length;
-      return;
-    }
-
+    const classStartMs = performance.now();
+    const timing: TieClassTiming = {
+      classId,
+      records: classRecords.length,
+      primitives: 0,
+      batches: 0,
+      elapsedMs: 0,
+      sourceMs: 0,
+      prepareMs: 0,
+      materialMs: 0,
+      instanceMs: 0,
+      status: 'failed'
+    };
     try {
-      pruneToLod0(source);
-      const primitives = collectTiePrimitives(source);
-      if (primitives.length === 0) {
+      const entry = entriesByClassId.get(classId);
+      if (!entry) {
         this.stats.missingClasses += classRecords.length;
+        timing.status = 'missing entry';
         return;
       }
 
-      this.stats.loadedClasses += 1;
-      this.stats.primitives += primitives.length;
-      const preparedRecords = classRecords.map((record) => prepareTieRecord(record, colorTable));
-      this.stats.coloredInstances += preparedRecords.filter((record) => record.colorEntry !== null).length;
-      const normalRecords = preparedRecords.filter((record) => record.mirroredKey === 'normal');
-      const mirroredRecords = preparedRecords.filter((record) => record.mirroredKey === 'mirrored');
-
-      for (const primitive of primitives) {
-        const materialSet = this.createTieMaterialSet(preparedRecords, primitive);
-        if (normalRecords.length > 0) {
-          for (const [chunkIndex, records] of chunkTieRecords(normalRecords).entries()) {
-            this.addInstancedPrimitive(group, classId, 'normal', records, primitive, chunkIndex, materialSet);
-          }
-        }
-
-        if (mirroredRecords.length > 0) {
-          for (const [chunkIndex, records] of chunkTieRecords(mirroredRecords).entries()) {
-            this.addInstancedPrimitive(group, classId, 'mirrored', records, primitive, chunkIndex, materialSet);
-          }
-        }
-
-        await yieldController.maybeYield();
+      let stepStartMs = performance.now();
+      let source: THREE.Object3D | null = null;
+      try {
+        source = await loadTieClassSource(loader, mapPackage, entry);
+      } finally {
+        timing.sourceMs += elapsedDurationMs(stepStartMs);
+      }
+      if (!source) {
+        this.stats.missingClasses += classRecords.length;
+        timing.status = 'missing source';
+        return;
       }
 
-      this.stats.renderedInstances += classRecords.length;
+      try {
+        stepStartMs = performance.now();
+        pruneToLod0(source);
+        const primitives = collectTiePrimitives(source);
+        timing.primitives = primitives.length;
+        if (primitives.length === 0) {
+          this.stats.missingClasses += classRecords.length;
+          timing.status = 'empty';
+          return;
+        }
+
+        this.stats.loadedClasses += 1;
+        this.stats.primitives += primitives.length;
+        const preparedRecords = classRecords.map((record) => prepareTieRecord(record, colorTable));
+        this.stats.coloredInstances += preparedRecords.filter((record) => record.colorEntry !== null).length;
+        const normalRecords = preparedRecords.filter((record) => record.mirroredKey === 'normal');
+        const mirroredRecords = preparedRecords.filter((record) => record.mirroredKey === 'mirrored');
+        const normalChunks = chunkTieRecords(normalRecords);
+        const mirroredChunks = chunkTieRecords(mirroredRecords);
+        const glowEmissionByPrimitive = new Map(
+          primitives.map((primitive) => [primitive, tieMaterialUsesGlowEmission(primitive.material)] as const)
+        );
+        const glowColorBinding = [...glowEmissionByPrimitive.values()].some(Boolean)
+          ? createTieGlowColorBinding(preparedRecords)
+          : null;
+        timing.prepareMs += elapsedDurationMs(stepStartMs);
+
+        for (const primitive of primitives) {
+          stepStartMs = performance.now();
+          const usesGlowEmission = glowEmissionByPrimitive.get(primitive) === true;
+          const materialSet = this.createTieMaterialSet(
+            preparedRecords,
+            primitive,
+            usesGlowEmission ? glowColorBinding : null,
+            usesGlowEmission);
+          timing.materialMs += elapsedDurationMs(stepStartMs);
+
+          if (normalChunks.length > 0) {
+            for (const [chunkIndex, records] of normalChunks.entries()) {
+              stepStartMs = performance.now();
+              this.addInstancedPrimitive(group, classId, 'normal', records, primitive, chunkIndex, materialSet);
+              timing.instanceMs += elapsedDurationMs(stepStartMs);
+              timing.batches += 1;
+            }
+          }
+
+          if (mirroredChunks.length > 0) {
+            for (const [chunkIndex, records] of mirroredChunks.entries()) {
+              stepStartMs = performance.now();
+              this.addInstancedPrimitive(group, classId, 'mirrored', records, primitive, chunkIndex, materialSet);
+              timing.instanceMs += elapsedDurationMs(stepStartMs);
+              timing.batches += 1;
+            }
+          }
+
+          await yieldController.maybeYield();
+        }
+
+        this.stats.renderedInstances += classRecords.length;
+        timing.status = 'loaded';
+      } finally {
+        disposeObject3D(source);
+      }
     } finally {
-      disposeObject3D(source);
+      timing.elapsedMs = elapsedDurationMs(classStartMs);
+      recordTieClassTiming(timingAccumulator, timing);
     }
   }
 }
 
 function tieMaterialSetUsesAlphaBlend(materialSet: TieMaterialSet): boolean {
-  return modelMaterialUsesAlphaBlend(materialSet.flatMaterial)
-    || (materialSet.coloredMaterial !== null && modelMaterialUsesAlphaBlend(materialSet.coloredMaterial))
-    || modelMaterialUsesAlphaBlend(materialSet.textureMaterial);
+  const material = materialSet.coloredMaterial ?? materialSet.flatMaterial;
+  return material ? modelMaterialUsesAlphaBlend(material) : false;
 }
 
 function findEarliestTieRecord(records: PreparedTieRecord[]): { recordIndex: number; localIndex: number; position: THREE.Vector3 } | null {
@@ -882,6 +1075,66 @@ function resolveGeometryBoundingSphere(geometry: THREE.BufferGeometry): THREE.Sp
   }
 
   return geometry.boundingSphere;
+}
+
+function logTieTimingStart(label: string): void {
+  console.log(`[TieInstanceController timing] ${label} started`);
+}
+
+function logTieTimingEnd(label: string, startMs: number): void {
+  console.log(`[TieInstanceController timing] ${label}: ${formatElapsedMs(startMs)}`);
+}
+
+function logTieClassTimingSummary(timingAccumulator: TieClassTimingAccumulator): void {
+  if (timingAccumulator.classTimings.length === 0) {
+    return;
+  }
+
+  console.log(
+    `[TieInstanceController timing] class groups cumulative: source ${formatDurationMs(timingAccumulator.sourceMs)}, `
+    + `prepare ${formatDurationMs(timingAccumulator.prepareMs)}, `
+    + `materials ${formatDurationMs(timingAccumulator.materialMs)}, `
+    + `instances ${formatDurationMs(timingAccumulator.instanceMs)}`
+  );
+
+  const slowest = [...timingAccumulator.classTimings]
+    .sort((left, right) => right.elapsedMs - left.elapsedMs)
+    .slice(0, 8)
+    .map(formatTieClassTiming);
+  if (slowest.length > 0) {
+    console.log(`[TieInstanceController timing] slowest classes: ${slowest.join('; ')}`);
+  }
+}
+
+function recordTieClassTiming(timingAccumulator: TieClassTimingAccumulator, timing: TieClassTiming): void {
+  timingAccumulator.sourceMs += timing.sourceMs;
+  timingAccumulator.prepareMs += timing.prepareMs;
+  timingAccumulator.materialMs += timing.materialMs;
+  timingAccumulator.instanceMs += timing.instanceMs;
+  timingAccumulator.classTimings.push(timing);
+}
+
+function formatTieClassTiming(timing: TieClassTiming): string {
+  return [
+    `class ${timing.classId}`,
+    formatDurationMs(timing.elapsedMs),
+    `${timing.records.toLocaleString()} records`,
+    `${timing.primitives.toLocaleString()} primitives`,
+    `${timing.batches.toLocaleString()} batches`,
+    timing.status
+  ].join(' / ');
+}
+
+function formatElapsedMs(startMs: number): string {
+  return formatDurationMs(elapsedDurationMs(startMs));
+}
+
+function elapsedDurationMs(startMs: number): number {
+  return performance.now() - startMs;
+}
+
+function formatDurationMs(durationMs: number): string {
+  return `${Math.round(durationMs).toLocaleString()} ms`;
 }
 
 function createTieGlowColorBinding(records: PreparedTieRecord[]): TieGlowColorBinding {

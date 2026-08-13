@@ -106,17 +106,12 @@ export function tieMaterialUsesGlowEmission(material: THREE.Material | THREE.Mat
 }
 
 export function updateTieRenderOptionUniforms(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
-  updateTieMaterialLightingUniforms(binding.flatMaterial, options, false);
+  if (binding.flatMaterial) {
+    updateTieMaterialLightingUniforms(binding.flatMaterial, options, false);
+  }
   if (binding.coloredMaterial) {
     updateTieMaterialLightingUniforms(binding.coloredMaterial, options, true);
   }
-}
-
-export function applyTieRenderOptions(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
-  updateTieRenderOptionUniforms(binding, options);
-  binding.mesh.material = options.colorsEnabled && binding.coloredMaterial
-    ? binding.coloredMaterial
-    : binding.flatMaterial;
 }
 
 function createTieTextureMaterial(source: THREE.Material): THREE.Material {
@@ -133,7 +128,6 @@ function createTieTextureMaterial(source: THREE.Material): THREE.Material {
     alphaTest: source.alphaTest,
     depthTest: source.depthTest,
     depthWrite: source.depthWrite,
-    side: THREE.DoubleSide,
     toneMapped: false
   });
   if (material.map) {
@@ -143,7 +137,13 @@ function createTieTextureMaterial(source: THREE.Material): THREE.Material {
     material.alphaMap.colorSpace = THREE.SRGBColorSpace;
   }
 
+  material.userData = {
+    ...source.userData,
+    mapOmaticModelMaterialInfo: modelMaterialInfo
+  };
+
   configureModelMaterialTransparency(material, modelMaterialInfo);
+  material.side = THREE.FrontSide;
   if (modelMaterialInfo.usesGlowEmission) {
     material.colorNode = createTieGlowNode(material, modelMaterialInfo, null);
   }
@@ -179,7 +179,6 @@ function createTieDisplayMaterial(
     alphaTest: source.alphaTest,
     depthTest: source.depthTest,
     depthWrite: source.depthWrite,
-    side: THREE.DoubleSide,
     toneMapped: false
   });
 
@@ -207,6 +206,7 @@ function createTieDisplayMaterial(
   }
 
   configureModelMaterialTransparency(material, modelMaterialInfo);
+  material.side = THREE.FrontSide;
   material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
   if (modelMaterialInfo.usesGlowEmission) {
     const glowNode = createTieGlowNode(material, modelMaterialInfo, glowColorBinding);
@@ -249,6 +249,11 @@ function resolveTieReflectionTexture(
     return fallbackTexture;
   }
 
+  const cachedTexture = source.userData.mapOmaticTieReflectionTexture;
+  if (cachedTexture instanceof THREE.Texture) {
+    return cachedTexture;
+  }
+
   const sourceMaterial = source as Partial<THREE.MeshStandardMaterial>;
   const texture = sourceMaterial.emissiveMap ?? null;
   if (!texture) {
@@ -283,21 +288,27 @@ function createTieColorNode(
   const directionalColorNode = directionalLightBinding
     ? createTieDirectionalColorNode(directionalLightBinding, lightingUniforms)
     : null;
+  const staticCombined = !displayOptions.dynamic && options.lightingMode === 'combined';
+  const directionalScale = staticCombined
+    ? float(Math.max(0, options.directionalIntensity))
+    : lightingUniforms.directionalScale;
   const directionalTermNode = directionalLightNode
     ? applyModelColorStrengthNode(
       directionalLightNode,
       displayOptions.dynamic ? lightingUniforms.directionalColorStrength : options.directionalColorStrength)
-      .mul(lightingUniforms.directionalScale)
+      .mul(directionalScale)
       .mul(float(0.5))
     : vec3(0, 0, 0);
   const directionalLitNode = directionalLightNode
     ? baseColorNode.mul(directionalTermNode)
     : vec3(0, 0, 0);
   let litColorNode: Node<'vec3'> = directionalLightNode
-    ? directionalLitNode.add(directionalLightNode.mul(lightingUniforms.rawDirectionalScale))
+    ? staticCombined
+      ? directionalLitNode
+      : directionalLitNode.add(directionalLightNode.mul(lightingUniforms.rawDirectionalScale))
     : baseColorNode;
 
-  if (directionalColorNode) {
+  if (directionalColorNode && !staticCombined) {
     litColorNode = litColorNode.add(
       directionalColorNode.mul(lightingUniforms.rawDirectionalColorScale)
     );
@@ -308,24 +319,31 @@ function createTieColorNode(
     const ambientColorNode = rawAmbientColorNode.mul(float(tieAmbientRawIntensityScale));
     const ambientTermNode = applyTieColorStrength(
       ambientColorNode,
-      lightingUniforms.colorStrength
-    ).mul(lightingUniforms.ambientScale);
+      staticCombined ? float(Math.max(0, options.colorStrength)) : lightingUniforms.colorStrength
+    ).mul(staticCombined ? float(Math.max(0, options.ambientIntensity)) : lightingUniforms.ambientScale);
     const ambientLitNode = baseColorNode.mul(ambientTermNode);
     const combinedLightTermNode = ambientTermNode.add(directionalTermNode).clamp(0, 1);
     const additiveLitNode = directionalLitNode.add(ambientLitNode);
     const tintedWorldLitNode = baseColorNode.mul(ambientTermNode).mul(vec3(1, 1, 1).add(directionalTermNode));
     const modulateLitNode = applyModelDisplayModulateNode(baseColorNode, combinedLightTermNode);
     const maxLightLitNode = baseColorNode.mul(max(ambientTermNode, directionalTermNode));
-    const blendedLitNode = additiveLitNode.mul(lightingUniforms.blendAdditiveScale)
-      .add(tintedWorldLitNode.mul(lightingUniforms.blendTintedWorldScale))
-      .add(modulateLitNode.mul(lightingUniforms.blendModulateScale))
-      .add(maxLightLitNode.mul(lightingUniforms.blendMaxLightScale));
+    const blendedLitNode = staticCombined
+      ? directionalLightNode
+        ? selectStaticTieBlendNode(options.blendMode, additiveLitNode, tintedWorldLitNode, modulateLitNode, maxLightLitNode)
+        : additiveLitNode
+      : additiveLitNode.mul(lightingUniforms.blendAdditiveScale)
+        .add(tintedWorldLitNode.mul(lightingUniforms.blendTintedWorldScale))
+        .add(modulateLitNode.mul(lightingUniforms.blendModulateScale))
+        .add(maxLightLitNode.mul(lightingUniforms.blendMaxLightScale));
 
     litColorNode = litColorNode
       .sub(directionalLitNode)
-      .add(blendedLitNode)
-      .add(ambientColorNode.mul(lightingUniforms.rawColorScale))
-      .add(rawAmbientColorNode.mul(lightingUniforms.rawByteScale));
+      .add(blendedLitNode);
+    if (!staticCombined) {
+      litColorNode = litColorNode
+        .add(ambientColorNode.mul(lightingUniforms.rawColorScale))
+        .add(rawAmbientColorNode.mul(lightingUniforms.rawByteScale));
+    }
   }
 
   const featureColorNode = applyModelMaterialFeatureColorNode(
@@ -347,8 +365,28 @@ function createTieColorNode(
   );
 }
 
+function selectStaticTieBlendNode(
+  blendMode: TieRenderOptions['blendMode'],
+  additive: Node<'vec3'>,
+  tintedWorld: Node<'vec3'>,
+  modulate: Node<'vec3'>,
+  maxLight: Node<'vec3'>
+): Node<'vec3'> {
+  switch (blendMode) {
+    case 'additive':
+      return additive;
+    case 'modulate':
+      return modulate;
+    case 'max-light':
+      return maxLight;
+    case 'tinted-world':
+    default:
+      return tintedWorld;
+  }
+}
+
 function createTieBaseColorNode(material: THREE.MeshBasicNodeMaterial): Node<'vec3'> {
-  const materialColorNode = vec3(material.color.r, material.color.g, material.color.b);
+  const materialColorNode = uniform(new THREE.Vector3(material.color.r, material.color.g, material.color.b));
   if (!material.map) {
     return materialColorNode;
   }
@@ -362,8 +400,12 @@ function createTieGlowNode(
   glowColorBinding: TieGlowColorBinding | null
 ): Node<'vec3'> {
   const baseColor = createTieBaseColorNode(material);
-  const exportedTint = vec3(modelMaterialInfo.glowTint.r, modelMaterialInfo.glowTint.g, modelMaterialInfo.glowTint.b);
-  const glowStrength = float(modelMaterialInfo.glowEmissionStrength);
+  const exportedTint = uniform(new THREE.Vector3(
+    modelMaterialInfo.glowTint.r,
+    modelMaterialInfo.glowTint.g,
+    modelMaterialInfo.glowTint.b
+  ));
+  const glowStrength = uniform(modelMaterialInfo.glowEmissionStrength);
   if (!glowColorBinding) {
     return baseColor.mul(exportedTint).mul(glowStrength);
   }
@@ -371,7 +413,7 @@ function createTieGlowNode(
   const row = attribute<'float'>(tieGlowColorRowAttributeName, 'float');
   const runtimeTint = vertexStage(texture(
     glowColorBinding.texture,
-    vec2(float(0.5), row.add(float(0.5)).div(float(glowColorBinding.instanceCount)).clamp(0, 1))
+    vec2(float(0.5), row.add(float(0.5)).div(uniform(Math.max(1, glowColorBinding.instanceCount))).clamp(0, 1))
   ));
   return baseColor.mul(mix(exportedTint, runtimeTint.rgb.mul(float(255 / 128)), runtimeTint.a)).mul(glowStrength);
 }

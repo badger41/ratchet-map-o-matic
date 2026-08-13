@@ -8,6 +8,12 @@ import {
   type ModelDisplayNodeOptions
 } from './ModelFog';
 import type { SceneCameraStart } from './camera/SceneCameraFraming';
+import {
+  createTfragAtlas,
+  remapTfragAtlasUv,
+  type TfragAtlas,
+  type TfragAtlasRegion
+} from './TfragAtlas';
 
 type AnyAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 type TypedArray =
@@ -149,6 +155,7 @@ export class TfragMaterialController {
   private prepared: PreparedTfrag[] = [];
   private materialRebakes = 0;
   private startupCameraStart: SceneCameraStart | null = null;
+  private atlasTexture: THREE.Texture | null = null;
 
   prepare(
     root: THREE.Object3D,
@@ -161,6 +168,8 @@ export class TfragMaterialController {
     this.prepared = [];
 
     root.updateWorldMatrix(true, true);
+    const atlas = createTfragAtlas(root);
+    this.atlasTexture = atlas?.texture ?? null;
     const bakeContext = createTfragBakeContext(directionalLights, options);
     const batches = new Map<string, TfragGeometryBatch>();
     const materialCache = new Map<string, THREE.Material>();
@@ -177,10 +186,17 @@ export class TfragMaterialController {
       this.captureStartupCameraStart(mesh);
 
       const sourceMaterial = mesh.material ?? null;
-      const materialKey = materialBatchKey(sourceMaterial);
+      const atlasRegion = mesh.geometry.getAttribute('uv')
+        ? resolveTfragAtlasRegion(sourceMaterial, atlas)
+        : null;
+      const materialKey = materialBatchKey(sourceMaterial, atlasRegion !== null);
       let material = materialCache.get(materialKey);
       if (!material) {
-        material = createTfragDisplayMaterial(sourceMaterial, displayOptions);
+        material = createTfragDisplayMaterial(
+          sourceMaterial,
+          displayOptions,
+          atlasRegion ? atlas!.texture : null
+        );
         materialCache.set(materialKey, material);
       }
 
@@ -195,6 +211,9 @@ export class TfragMaterialController {
       const geometry = clonedGeometry.index ? clonedGeometry.toNonIndexed() : clonedGeometry;
       if (geometry !== clonedGeometry) {
         clonedGeometry.dispose();
+      }
+      if (atlasRegion) {
+        applyTfragAtlasUvs(geometry, sourceMaterial, atlasRegion);
       }
 
       bakeTfragGeometryColors(geometry, bakeContext);
@@ -280,6 +299,8 @@ export class TfragMaterialController {
 
     this.prepared = [];
     this.startupCameraStart = null;
+    this.atlasTexture?.dispose();
+    this.atlasTexture = null;
   }
 
   getStats(directionalLightRecords: number): TfragStats {
@@ -332,9 +353,11 @@ export class TfragMaterialController {
 }
 
 function createMergedTfragMesh(geometry: THREE.BufferGeometry, material: THREE.Material, index: number): THREE.Mesh {
+  if (!geometry.boundingSphere) {
+    geometry.computeBoundingSphere();
+  }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = `tfrag_lod0_merged_${index.toString().padStart(3, '0')}`;
-  mesh.frustumCulled = false;
   return mesh;
 }
 
@@ -537,13 +560,14 @@ function evaluatePreparedLightRecord(
 
 function createTfragDisplayMaterial(
   sourceMaterial: THREE.Material | THREE.Material[] | null,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  atlasTexture: THREE.Texture | null = null
 ): THREE.Material {
   const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
   const source = firstMaterial as Partial<THREE.MeshBasicMaterial> | null;
   const material = new THREE.MeshBasicNodeMaterial({
     name: `${firstMaterial?.name ?? 'tfrag'}_vertex_lit`,
-    map: source?.map ?? null,
+    map: atlasTexture ?? source?.map ?? null,
     vertexColors: true,
     transparent: firstMaterial?.transparent ?? false,
     opacity: firstMaterial?.opacity ?? 1,
@@ -568,7 +592,47 @@ function createTfragDisplayMaterial(
   return material;
 }
 
-function materialBatchKey(sourceMaterial: THREE.Material | THREE.Material[] | null): string {
+function resolveTfragAtlasRegion(
+  sourceMaterial: THREE.Material | THREE.Material[] | null,
+  atlas: TfragAtlas | null
+): TfragAtlasRegion | null {
+  if (!atlas) {
+    return null;
+  }
+
+  const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
+  if (!firstMaterial || firstMaterial.transparent || firstMaterial.opacity !== 1 || firstMaterial.alphaTest !== 0) {
+    return null;
+  }
+  const map = (firstMaterial as Partial<THREE.MeshBasicMaterial> | null)?.map ?? null;
+  return map ? atlas.regionsByTexture.get(map.uuid) ?? null : null;
+}
+
+function applyTfragAtlasUvs(
+  geometry: THREE.BufferGeometry,
+  sourceMaterial: THREE.Material | THREE.Material[] | null,
+  region: TfragAtlasRegion
+): void {
+  const sourceUv = geometry.getAttribute('uv');
+  const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
+  const map = (firstMaterial as Partial<THREE.MeshBasicMaterial> | null)?.map ?? null;
+  if (!map || !sourceUv) {
+    return;
+  }
+
+  const atlasUv = new Float32Array(sourceUv.count * 2);
+  for (let index = 0; index < sourceUv.count; index += 1) {
+    atlasUv[index * 2] = remapTfragAtlasUv(sourceUv.getX(index), region.offsetX, region.scaleX, map.wrapS);
+    atlasUv[index * 2 + 1] = remapTfragAtlasUv(sourceUv.getY(index), region.offsetY, region.scaleY, map.wrapT);
+  }
+
+  geometry.setAttribute('uv', new THREE.BufferAttribute(atlasUv, 2));
+}
+
+function materialBatchKey(
+  sourceMaterial: THREE.Material | THREE.Material[] | null,
+  usesAtlas = false
+): string {
   const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
   if (!firstMaterial) {
     return 'null-material';
@@ -577,7 +641,7 @@ function materialBatchKey(sourceMaterial: THREE.Material | THREE.Material[] | nu
   const source = firstMaterial as Partial<THREE.MeshBasicMaterial>;
   return [
     'material',
-    textureBatchKey(source.map ?? null),
+    usesAtlas ? 'tfrag-atlas' : textureBatchKey(source.map ?? null),
     firstMaterial.transparent ? 'transparent' : 'opaque',
     firstMaterial.opacity.toString(),
     firstMaterial.alphaTest.toString(),

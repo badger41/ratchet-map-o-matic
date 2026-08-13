@@ -10,7 +10,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'packed-gameplay-metadata-tfrag-chunks-v1';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'main-level-render-packages-v2';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;

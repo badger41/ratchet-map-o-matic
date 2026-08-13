@@ -3,6 +3,7 @@ import {
   attribute,
   float,
   texture,
+  uniform,
   vec2,
   vertexStage
 } from 'three/tsl';
@@ -63,9 +64,11 @@ export function createTieAmbientRawColorNode(
 ): Node<'vec3'> {
   const ambientIndex = attribute<'float'>(tieAmbientAttributeName, 'float');
   const ambientRow = attribute<'float'>(tieAmbientInstanceRowAttributeName, 'float');
+  const wordCount = uniform(Math.max(1, ambientBinding.wordCount));
+  const instanceCount = uniform(Math.max(1, ambientBinding.instanceCount));
   const ambientUv = vec2(
-    ambientIndex.add(float(0.5)).div(float(ambientBinding.wordCount)).clamp(0, 1),
-    ambientRow.add(float(0.5)).div(float(ambientBinding.instanceCount)).clamp(0, 1)
+    ambientIndex.add(float(0.5)).div(wordCount).clamp(0, 1),
+    ambientRow.add(float(0.5)).div(instanceCount).clamp(0, 1)
   );
   return vertexStage(texture(ambientBinding.texture, ambientUv).rgb);
 }

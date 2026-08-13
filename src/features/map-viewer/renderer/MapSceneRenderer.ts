@@ -122,8 +122,6 @@ interface TfragGltfSource {
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
-const firstFrameSetupStepCount = 4;
-const firstFrameGpuWaitTimeoutMs = 3000;
 const defaultWorldDisplayLift = 2.4;
 const dlWorldPositionScale = 1 / 1024;
 const dlFogDistanceScale = dlWorldPositionScale;
@@ -215,21 +213,13 @@ type MapRenderPipeline = {
   bloomVersion: string;
 };
 
-interface StartupScenePart {
-  key: string;
+interface SceneCompilePart {
   label: string;
   objects: THREE.Object3D[];
 }
 
-interface StartupBundlePart {
-  key: string;
-  label: string;
-}
-
-type WebGpuRendererWithBackend = WebGPURenderer & {
-  backend?: {
-    device?: GPUDevice;
-  };
+type BundleFlaggedObject = THREE.Object3D & {
+  isBundleGroup?: boolean;
 };
 
 export class MapSceneRenderer {
@@ -282,7 +272,7 @@ export class MapSceneRenderer {
   private mobySimulationAccumulatorSeconds = 0;
   private lastMobySimulationTime = performance.now();
   private frameStatsDetailEnabled: boolean;
-  private instanceBundleEnabled = true;
+  private instanceBundleEnabled = false;
   private animationRenderSuspended = false;
   private rendererUnavailable = false;
   private disposed = false;
@@ -316,7 +306,7 @@ export class MapSceneRenderer {
     this.debugTuning = resolveMapSceneDebugTuning(this.lightingDebugEnabled ? options.debugTuning : undefined);
     setModelFog(this.sceneEnvironment.fog);
     this.applyDebugTuning();
-    this.glowBloomEnabled = options.glowBloomEnabled ?? true;
+    this.glowBloomEnabled = options.glowBloomEnabled ?? false;
     this.glowBloomFalloffDistance = resolveGlowBloomFalloffDistance(options.glowBloomFalloffDistance);
     this.mobySimulationEnabled = options.mobySimulationEnabled ?? true;
     this.mobySimulationController.setEnabled(this.mobySimulationEnabled);
@@ -381,6 +371,8 @@ export class MapSceneRenderer {
       throw new Error('Renderer has not initialized');
     }
 
+    const loadStartMs = performance.now();
+    this.logTimingStart('load package');
     this.animationRenderSuspended = true;
     this.disposeCurrentRoot();
     this.currentPackage = mapPackage;
@@ -390,26 +382,37 @@ export class MapSceneRenderer {
     const modelDisplayOptions = this.createModelDisplayNodeOptions();
 
     try {
-      const tfragStats = await this.loadTerrain(root, mapPackage, modelDisplayOptions);
-      const skyboxStats = await this.loadSkybox(mapPackage);
-      const tieStats = await this.loadTies(root, mapPackage, modelDisplayOptions);
-      const shrubStats = await this.loadShrubs(root, mapPackage, modelDisplayOptions);
-      const mobyStats = await this.loadMobys(root, mapPackage, modelDisplayOptions);
-      await this.mobySimulationController.load(
+      const skyboxPromise = this.timeAsyncStep('load skybox', () => this.loadSkybox(mapPackage));
+      const loadPromises = [
+        this.timeAsyncStep('load terrain', () => this.loadTerrain(root, mapPackage, modelDisplayOptions)),
+        skyboxPromise,
+        skyboxPromise.then(() => this.timeAsyncStep('load ties', () => this.loadTies(root, mapPackage, modelDisplayOptions))),
+        this.timeAsyncStep('load shrubs', () => this.loadShrubs(root, mapPackage, modelDisplayOptions)),
+        this.timeAsyncStep('load mobys', () => this.loadMobys(root, mapPackage, modelDisplayOptions))
+      ] as const;
+      let loadResults;
+      try {
+        loadResults = await Promise.all(loadPromises);
+      } catch (error: unknown) {
+        await Promise.allSettled(loadPromises);
+        throw error;
+      }
+      const [tfragStats, skyboxStats, tieStats, shrubStats, mobyStats] = loadResults;
+      await this.timeAsyncStep('load moby simulation', () => this.mobySimulationController.load(
         root,
         mapPackage,
         this.mobyInstances,
         this.mobyController,
         this.tieController,
         this.camera
-      );
+      ));
       this.tieController.moveAlphaBlendPassToEnd();
       this.shrubController.moveAlphaBlendPassToEnd();
       this.mobyController.moveAlphaBlendPassToEnd();
       this.mobySimulationController.setEnabled(this.mobySimulationEnabled);
       this.resetMobySimulationClock(performance.now());
 
-      await this.prepareFirstFrame(root);
+      await this.timeAsyncStep('first frame setup', () => this.prepareFirstFrame(root));
       this.onLoadProgress({
         id: 'compile',
         status: 'done',
@@ -422,8 +425,10 @@ export class MapSceneRenderer {
         shrubStats.renderedInstances > 0 ? `${shrubStats.renderedInstances.toLocaleString()} shrub instances` : null,
         mobyStats.renderedInstances > 0 ? `${mobyStats.renderedInstances.toLocaleString()} moby instances` : null
       ].filter(Boolean).join(', '));
+      this.logTimingEnd('load package', loadStartMs);
       return tfragStats;
     } catch (error: unknown) {
+      this.logTimingEnd('load package failed', loadStartMs);
       const loadError = createRendererRuntimeError(error);
       this.animationRenderSuspended = false;
       this.cleanupFailedPackageLoad(root, mapPackage);
@@ -619,86 +624,133 @@ export class MapSceneRenderer {
   }
 
   private async prepareFirstFrame(root: THREE.Object3D): Promise<void> {
-    const hasBloomPipeline = this.shouldPrepareBloomPipeline();
-    const startupParts = this.getStartupSceneParts(root);
-    const bundleParts = this.instanceBundleEnabled ? this.getStartupBundleParts(startupParts) : [];
-    const totalSteps = firstFrameSetupStepCount + startupParts.length + bundleParts.length + (hasBloomPipeline ? 1 : 0);
+    const compileParts = this.getSceneCompileParts(root);
+    const compileStepCount = compileParts.length + (this.skyboxController.isVisible() ? 1 : 0);
+    const mayPrepareBloom = this.glowBloomEnabled && this.tieController.hasGlowBloomSources();
+    const buildsCompleteSceneWithMobys = compileParts.at(-1)?.label === 'mobys';
+    const totalSteps = (buildsCompleteSceneWithMobys ? 2 : 3) + compileStepCount + (mayPrepareBloom ? 1 : 0);
 
     this.reportFirstFrameProgress('Attaching scene', 1, totalSteps);
     await yieldToBrowser();
-    let stepStartMs = performance.now();
+    let stepStartMs = this.startTiming('first frame attach scene');
     this.scene.add(root);
     this.currentRoot = root;
     this.reportFirstFrameProgress(`Attached scene (${formatElapsedMs(stepStartMs)})`, 1, totalSteps);
+    this.logTimingEnd('first frame attach scene', stepStartMs);
 
     this.reportFirstFrameProgress('Framing camera', 2, totalSteps);
     await yieldToBrowser();
-    stepStartMs = performance.now();
+    stepStartMs = this.startTiming('first frame camera framing');
+    this.resize(false);
     this.frameObject();
     this.reportFirstFrameProgress(`Framed camera (${formatElapsedMs(stepStartMs)})`, 2, totalSteps);
+    this.logTimingEnd('first frame camera framing', stepStartMs);
 
-    for (const part of bundleParts) {
-      this.setStartupBundleEnabled(part.key, false);
+    const hasBloomPipeline = this.shouldPrepareBloomPipeline();
+    const pipeline = this.ensureRenderPipeline(false);
+    let nextStep = 3;
+    let completeSceneDrawn = false;
+    if (pipeline) {
+      const bundleGroups = this.disableVisibleBundleGroupsForCompile();
+      const visibleObjects = new Map(
+        compileParts.flatMap((part) => part.objects).map((object) => [object, object.visible] as const)
+      );
+      try {
+        for (const object of visibleObjects.keys()) {
+          object.visible = false;
+        }
+
+        if (this.skyboxController.isVisible()) {
+          this.reportFirstFrameProgress('Compiling skybox', nextStep, totalSteps);
+          await yieldToBrowser();
+          stepStartMs = this.startTiming('first frame compile skybox');
+          await pipeline.skyPass.compileAsync(this.renderer!);
+          this.logTimingEnd('first frame compile skybox', stepStartMs);
+          nextStep += 1;
+        }
+
+        for (const part of compileParts) {
+          for (const object of part.objects) {
+            object.visible = visibleObjects.get(object) ?? false;
+          }
+          const buildsInstances = part.label === 'ties' || part.label === 'mobys';
+          const batchCount = part.label === 'ties'
+            ? this.tieController.getStats().batches
+            : this.mobyController.getStats().batches;
+          const buildsCompleteScene = buildsCompleteSceneWithMobys && part.label === 'mobys';
+          const compileDetail = buildsInstances
+            ? `Building ${batchCount.toLocaleString()} ${part.label} batches${buildsCompleteScene ? ' and complete scene' : ''}`
+            : `Compiling ${part.label}`;
+          this.reportFirstFrameProgress(compileDetail, nextStep, totalSteps);
+          await yieldToBrowser();
+          const timingLabel = `first frame ${buildsInstances ? 'build' : 'compile'} ${part.label}`;
+          stepStartMs = this.startTiming(timingLabel);
+          if (buildsInstances) {
+            if (buildsCompleteScene) {
+              for (const [object, visible] of visibleObjects) {
+                object.visible = visible;
+              }
+            }
+            const programCount = this.renderer!.info.memory.programs;
+            this.renderWithPipeline(false);
+            console.log(
+              `[MapSceneRenderer timing] ${part.label} GPU programs created: ${(this.renderer!.info.memory.programs - programCount).toLocaleString()}`
+            );
+            completeSceneDrawn = buildsCompleteScene;
+          } else {
+            await pipeline.scenePass.compileAsync(this.renderer!);
+          }
+          this.logTimingEnd(timingLabel, stepStartMs);
+          if (!buildsCompleteScene) {
+            for (const object of part.objects) {
+              object.visible = false;
+            }
+          }
+          nextStep += 1;
+        }
+      } finally {
+        for (const [object, visible] of visibleObjects) {
+          object.visible = visible;
+        }
+        this.restoreBundleGroupsAfterCompile(bundleGroups);
+      }
     }
 
-    this.setStartupScenePartsVisible(startupParts, []);
-    this.reportFirstFrameProgress('Drawing terrain frame', 3, totalSteps);
-    await yieldToBrowser();
-    stepStartMs = performance.now();
-    await this.prepareRenderPipeline(false);
-    this.reportFirstFrameProgress(`Rendered terrain frame (${formatElapsedMs(stepStartMs)})`, 3, totalSteps);
-
-    let nextStep = 4;
-    const visibleStartupParts: StartupScenePart[] = [];
-    for (const part of startupParts) {
-      visibleStartupParts.push(part);
-      this.setStartupScenePartsVisible(startupParts, visibleStartupParts);
-      this.reportFirstFrameProgress(`Adding ${part.label}`, nextStep, totalSteps);
+    if (!completeSceneDrawn) {
+      this.reportFirstFrameProgress('Drawing complete scene', nextStep, totalSteps);
       await yieldToBrowser();
-      stepStartMs = performance.now();
-      await this.prepareRenderPipeline(false);
-      this.reportFirstFrameProgress(`Added ${part.label} (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
-      nextStep += 1;
-    }
-
-    for (const part of bundleParts) {
-      this.reportFirstFrameProgress(`Building ${part.label} bundles`, nextStep, totalSteps);
-      await yieldToBrowser();
-      stepStartMs = performance.now();
-      this.setStartupBundleEnabled(part.key, true);
-      await this.prepareRenderPipeline(false);
-      this.reportFirstFrameProgress(`Built ${part.label} bundles (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      stepStartMs = this.startTiming('first frame scene draw');
+      this.renderWithPipeline(false);
+      this.reportFirstFrameProgress(`Drew complete scene (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+      this.logTimingEnd('first frame scene draw', stepStartMs);
       nextStep += 1;
     }
 
     if (hasBloomPipeline) {
       this.reportFirstFrameProgress('Enabling bloom overlay', nextStep, totalSteps);
       await yieldToBrowser();
-      stepStartMs = performance.now();
+      stepStartMs = this.startTiming('first frame bloom pipeline');
       try {
-        await this.prepareRenderPipeline(true);
+        await this.prepareRenderPipeline(true, 'first frame bloom');
         this.reportFirstFrameProgress(`Enabled bloom overlay (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+        this.logTimingEnd('first frame bloom pipeline', stepStartMs);
       } catch (error: unknown) {
         if (!this.disableBloomAfterError(error)) {
           throw error;
         }
 
         this.reportFirstFrameProgress(`Disabled bloom overlay (${formatElapsedMs(stepStartMs)})`, nextStep, totalSteps);
+        this.logTimingEnd('first frame bloom disabled', stepStartMs);
       }
+      nextStep += 1;
     }
 
-    this.reportFirstFrameProgress('Waiting for GPU queue', totalSteps, totalSteps);
-    await yieldToBrowser();
-    stepStartMs = performance.now();
-    await this.waitForSubmittedGpuWork();
-    this.reportFirstFrameProgress(`GPU queue ready (${formatElapsedMs(stepStartMs)})`, totalSteps, totalSteps);
-    await yieldToBrowser();
     this.lastFrameTime = performance.now();
     this.lastStatsUpdateTime = this.lastFrameTime;
     this.resetMobySimulationClock(this.lastFrameTime);
     this.animationRenderSuspended = false;
+    // ponytail: submitted work is enough for readiness; wait for the GPU queue only if callers require completion semantics.
     this.lastRenderSubmitTime = 0;
-    this.resize();
   }
 
   private reportFirstFrameProgress(detail: string, loaded: number, total: number): void {
@@ -712,39 +764,42 @@ export class MapSceneRenderer {
     this.onStatus(detail);
   }
 
-  private getStartupSceneParts(root: THREE.Object3D): StartupScenePart[] {
+  private async timeAsyncStep<T>(label: string, run: () => Promise<T>): Promise<T> {
+    const startMs = this.startTiming(label);
+    try {
+      const result = await run();
+      this.logTimingEnd(label, startMs);
+      return result;
+    } catch (error: unknown) {
+      this.logTimingEnd(`${label} failed`, startMs);
+      throw error;
+    }
+  }
+
+  private startTiming(label: string): number {
+    this.logTimingStart(label);
+    return performance.now();
+  }
+
+  private logTimingStart(label: string): void {
+    console.log(`[MapSceneRenderer timing] ${label} started`);
+  }
+
+  private logTimingEnd(label: string, startMs: number): void {
+    console.log(`[MapSceneRenderer timing] ${label}: ${formatElapsedMs(startMs)}`);
+  }
+
+  private getSceneCompileParts(root: THREE.Object3D): SceneCompilePart[] {
     return [
-      createStartupScenePart('skybox', 'skybox', this.skyScene.getObjectByName('skybox')),
-      createStartupScenePart('ties', 'ties', root.getObjectByName('tie_instances'), root.getObjectByName('tie_alpha_blend_instances')),
-      createStartupScenePart('shrubs', 'shrubs', root.getObjectByName('shrub_instances'), root.getObjectByName('shrub_alpha_blend_instances')),
-      createStartupScenePart('mobys', 'mobys', root.getObjectByName('moby_instances'), root.getObjectByName('moby_alpha_blend_instances'), root.getObjectByName('moby_simulation'))
-    ].filter((part): part is StartupScenePart => part !== null);
-  }
-
-  private getStartupBundleParts(parts: StartupScenePart[]): StartupBundlePart[] {
-    return parts
-      .filter((part) => part.key === 'ties' || part.key === 'shrubs' || part.key === 'mobys')
-      .map((part) => ({ key: part.key, label: part.label }));
-  }
-
-  private setStartupScenePartsVisible(parts: StartupScenePart[], visibleParts: StartupScenePart[]): void {
-    const visibleKeys = new Set(visibleParts.map((part) => part.key));
-    for (const part of parts) {
-      const visible = visibleKeys.has(part.key);
-      for (const object of part.objects) {
-        object.visible = visible;
-      }
-    }
-  }
-
-  private setStartupBundleEnabled(key: string, enabled: boolean): void {
-    if (key === 'ties') {
-      this.tieController.setBundleEnabled(enabled);
-    } else if (key === 'shrubs') {
-      this.shrubController.setBundleEnabled(enabled);
-    } else if (key === 'mobys') {
-      this.mobyController.setBundleEnabled(enabled);
-    }
+      createSceneCompilePart('terrain', this.terrainRoot),
+      createSceneCompilePart('ties', root.getObjectByName('tie_instances'), root.getObjectByName('tie_alpha_blend_instances')),
+      createSceneCompilePart('shrubs', root.getObjectByName('shrub_instances'), root.getObjectByName('shrub_alpha_blend_instances')),
+      createSceneCompilePart(
+        'mobys',
+        root.getObjectByName('moby_instances'),
+        root.getObjectByName('moby_alpha_blend_instances'),
+        root.getObjectByName('moby_simulation'))
+    ].filter((part): part is SceneCompilePart => part !== null);
   }
 
   dispose(): void {
@@ -1083,11 +1138,11 @@ export class MapSceneRenderer {
     }
   }
 
-  private resize(): void {
+  private resize(render = true): void {
     if (!this.renderer || this.rendererUnavailable) {
       return;
     }
-    if (this.animationRenderSuspended) {
+    if (this.animationRenderSuspended && render) {
       this.lastRenderSubmitTime = 0;
       return;
     }
@@ -1102,7 +1157,9 @@ export class MapSceneRenderer {
       this.renderer.setSize(width, height, false);
 
       this.lastRenderSubmitTime = 0;
-      this.renderFrame(performance.now());
+      if (render) {
+        this.renderFrame(performance.now());
+      }
     } catch (error: unknown) {
       this.reportRendererRuntimeError(error);
     }
@@ -1171,6 +1228,9 @@ export class MapSceneRenderer {
     if (this.glowBloomRuntimeDisabled) {
       return 'failed';
     }
+    if (!this.tieController.hasGlowBloomSourceNear(this.camera.position, this.glowBloomFalloffDistance)) {
+      return 'source-range';
+    }
 
     return 'rendered';
   }
@@ -1190,7 +1250,7 @@ export class MapSceneRenderer {
     return this.tieController.getStartupCameraStart() ?? this.tfragController.getStartupCameraStart();
   }
 
-  private async prepareRenderPipeline(includeBloom: boolean): Promise<void> {
+  private async prepareRenderPipeline(includeBloom: boolean, timingLabel: string): Promise<void> {
     if (!this.renderer) {
       return;
     }
@@ -1199,8 +1259,13 @@ export class MapSceneRenderer {
     if (includeBloom) {
       this.syncBloomFadeRange();
     }
+    const pipelineLabel = includeBloom ? 'bloom' : 'base';
+    let stepStartMs = this.startTiming(`${timingLabel} ${pipelineLabel} pipeline compile`);
     await this.compileRenderPipeline(includeBloom);
+    this.logTimingEnd(`${timingLabel} ${pipelineLabel} pipeline compile`, stepStartMs);
+    stepStartMs = this.startTiming(`${timingLabel} ${pipelineLabel} pipeline render`);
     this.renderWithPipeline(includeBloom);
+    this.logTimingEnd(`${timingLabel} ${pipelineLabel} pipeline render`, stepStartMs);
   }
 
   private async compileRenderPipeline(includeBloom: boolean): Promise<void> {
@@ -1213,12 +1278,35 @@ export class MapSceneRenderer {
       return;
     }
 
-    await pipeline.skyPass.compileAsync(this.renderer);
-    await pipeline.scenePass.compileAsync(this.renderer);
+    const bundleGroups = this.disableVisibleBundleGroupsForCompile();
+    try {
+      await pipeline.skyPass.compileAsync(this.renderer);
+      await pipeline.scenePass.compileAsync(this.renderer);
+    } finally {
+      this.restoreBundleGroupsAfterCompile(bundleGroups);
+    }
+  }
+
+  private disableVisibleBundleGroupsForCompile(): BundleFlaggedObject[] {
+    const bundleGroups: BundleFlaggedObject[] = [];
+    this.scene.traverseVisible((object) => {
+      const bundleGroup = object as BundleFlaggedObject;
+      if (bundleGroup.isBundleGroup === true) {
+        bundleGroup.isBundleGroup = false;
+        bundleGroups.push(bundleGroup);
+      }
+    });
+    return bundleGroups;
+  }
+
+  private restoreBundleGroupsAfterCompile(bundleGroups: BundleFlaggedObject[]): void {
+    for (const bundleGroup of bundleGroups) {
+      bundleGroup.isBundleGroup = true;
+    }
   }
 
   private shouldPrepareBloomPipeline(): boolean {
-    return this.glowBloomEnabled && !this.glowBloomRuntimeDisabled && this.tieController.hasGlowBloomSources();
+    return this.resolveGlowBloomStatus() === 'rendered';
   }
 
   private disableBloomAfterError(error: unknown): boolean {
@@ -1232,15 +1320,6 @@ export class MapSceneRenderer {
     this.disposeRenderPipeline(true);
     this.lastRenderSubmitTime = 0;
     return true;
-  }
-
-  private async waitForSubmittedGpuWork(): Promise<void> {
-    const device = (this.renderer as WebGpuRendererWithBackend | null)?.backend?.device;
-    if (!device) {
-      return;
-    }
-
-    await waitForGpuQueue(device.queue, firstFrameGpuWaitTimeoutMs);
   }
 
   private syncBloomFadeRange(): void {
@@ -1415,9 +1494,9 @@ function getTfragGltfSources(mapPackage: LoadedMapPackage): TfragGltfSource[] {
   return sources;
 }
 
-function createStartupScenePart(key: string, label: string, ...objects: Array<THREE.Object3D | undefined>): StartupScenePart | null {
-  const visibleObjects = objects.filter((object): object is THREE.Object3D => object?.visible === true && hasRenderableObject(object));
-  return visibleObjects.length > 0 ? { key, label, objects: visibleObjects } : null;
+function createSceneCompilePart(label: string, ...objects: Array<THREE.Object3D | null | undefined>): SceneCompilePart | null {
+  const renderableObjects = objects.filter((object): object is THREE.Object3D => object?.visible === true && hasRenderableObject(object));
+  return renderableObjects.length > 0 ? { label, objects: renderableObjects } : null;
 }
 
 function hasRenderableObject(object: THREE.Object3D): boolean {
@@ -1467,28 +1546,6 @@ function frameIntervalForLimit(limit: number): number {
 
 function formatElapsedMs(startMs: number): string {
   return `${Math.round(performance.now() - startMs).toLocaleString()} ms`;
-}
-
-async function waitForGpuQueue(queue: GPUQueue, timeoutMs: number): Promise<void> {
-  let timeoutId: number | null = null;
-  let timedOut = false;
-  const done = queue.onSubmittedWorkDone().catch((error: unknown) => {
-    if (timedOut) {
-      return;
-    }
-    throw error;
-  });
-  const timeout = new Promise<void>((resolve) => {
-    timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      resolve();
-    }, timeoutMs);
-  });
-
-  await Promise.race([done, timeout]);
-  if (timeoutId !== null) {
-    window.clearTimeout(timeoutId);
-  }
 }
 
 function createWorldLiftNode(sceneColor: PassTextureNode, lift: UniformNode<'float', number>) {

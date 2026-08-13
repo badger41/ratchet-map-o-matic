@@ -19,6 +19,7 @@ import {
   smoothstep,
   sqrt,
   texture,
+  uniform,
   uv,
   vec2,
   vec3
@@ -93,6 +94,11 @@ const tieTextureMatrixPassMask = 0x01;
 const tieEnvironmentPassMask = 0x06;
 
 export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMaterialFamily): ModelMaterialInfo {
+  const cached = source.userData.mapOmaticModelMaterialInfo as ModelMaterialInfo | undefined;
+  if (cached?.family === family) {
+    return cached;
+  }
+
   const alphaUsage = resolveAlphaUsage(source, family);
   const alphaMode = alphaUsage === 'Opaque'
     ? null
@@ -277,7 +283,7 @@ export function createModelOpacityNode(
   }
 
   return texture(material.map, uv()).a
-    .div(float(info.fullOpacityAlpha))
+    .div(uniform(info.fullOpacityAlpha))
     .clamp(0, 1);
 }
 
@@ -315,7 +321,7 @@ function createModelGlowNode(
   baseColorNode: Node<'vec3'>
 ): Node<'vec3'> {
   return baseColorNode
-    .mul(vec3(info.glowTint.r, info.glowTint.g, info.glowTint.b));
+    .mul(uniform(new THREE.Vector3(info.glowTint.r, info.glowTint.g, info.glowTint.b)));
 }
 
 function createModelShineNode(
@@ -377,14 +383,15 @@ function createModelReflectionSecondPassNode(
   const fresnel = pow(float(1).sub(viewFacing), float(2.4));
   const reflectionScale = options.skyboxReflectionScaleNode ?? float(options.skyboxTexture ? 1 : 0);
   const shineScale = options.shineScaleNode ?? float(1);
-  const bleedAlpha = clamp(float(info.reflectiveBleedAlpha), float(0), float(2));
+  const bleedAlpha = clamp(uniform(info.reflectiveBleedAlpha), float(0), float(2));
+  const maxBlend = uniform(info.reflectiveMaxBlend * 1.15);
   const secondPassAmount = clamp(
     mask
       .mul(fresnel.mul(float(0.45)).add(float(0.65)))
       .mul(reflectionScale)
       .mul(shineScale),
     float(0),
-    float(info.reflectiveMaxBlend * 1.15)
+    maxBlend
   );
   const lightTintSource = clamp(
     options.tintNode ?? vec3(1, 1, 1),
@@ -406,7 +413,11 @@ function createModelReflectionSecondPassNode(
     vec3(1, 1, 1)
   );
   const rawBleedTint = clamp(
-    vec3(info.reflectiveBleedColor.r, info.reflectiveBleedColor.g, info.reflectiveBleedColor.b),
+    uniform(new THREE.Vector3(
+      info.reflectiveBleedColor.r,
+      info.reflectiveBleedColor.g,
+      info.reflectiveBleedColor.b
+    )),
     vec3(0, 0, 0),
     vec3(2, 2, 2)
   );
@@ -429,7 +440,7 @@ function createModelReflectionSecondPassNode(
     vec3(1.2, 1.2, 1.25)
   );
   const envColor = clamp(
-    boostedReflection.mul(float(info.reflectiveEnvironmentStrength * 1.15)),
+    boostedReflection.mul(uniform(info.reflectiveEnvironmentStrength * 1.15)),
     vec3(0, 0, 0),
     vec3(1.25, 1.25, 1.32)
   );
@@ -451,7 +462,7 @@ function createModelReflectionSecondPassNode(
   const reflectionBlend = clamp(
     secondPassAmount.mul(bleedAlpha),
     float(0),
-    float(info.reflectiveMaxBlend * 1.15)
+    maxBlend
   );
   // FUN_00593d90 and FUN_00595168 route these materials through the generated
   // environment second-pass path. Model that as an overlay signal with a small
@@ -656,7 +667,7 @@ function createReflectiveMaskNode(
   const normalizedAlpha = texture(material.map, uv()).a
     .div(float(modelFullOpacityAlphaByte / 255))
     .clamp(0, 1);
-  return pow(normalizedAlpha, float(Math.max(1.05, Math.min(1.65, focusPower * 1.15))));
+  return pow(normalizedAlpha, uniform(Math.max(1.05, Math.min(1.65, focusPower * 1.15))));
 }
 
 function inferTieSecondPassMode(passFlags: number, environmentPassBits: number): string {

@@ -17,6 +17,7 @@ import {
   isRecord,
   numberValue
 } from './tieUtils';
+import { mergeAdjacentTiePrimitives } from './TiePrimitiveMerge';
 
 interface TieGltfMeshJson {
   extras?: Record<string, unknown>;
@@ -87,7 +88,7 @@ export function collectTiePrimitives(source: THREE.Object3D): TiePrimitive[] {
     });
   });
 
-  return primitives;
+  return mergeAdjacentTiePrimitives(primitives);
 }
 
 export function pruneToLod0(root: THREE.Object3D): void {

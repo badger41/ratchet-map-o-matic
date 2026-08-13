@@ -1,0 +1,96 @@
+import * as THREE from 'three/webgpu';
+import type { TiePrimitive } from './TieTypes';
+
+export function mergeAdjacentTiePrimitives(primitives: TiePrimitive[]): TiePrimitive[] {
+  const merged: TiePrimitive[] = [];
+  for (const primitive of primitives) {
+    const previous = merged.at(-1);
+    if (previous && canMerge(previous, primitive)) {
+      previous.geometry = mergeGeometry(previous.geometry, primitive.geometry);
+    } else {
+      merged.push(primitive);
+    }
+  }
+
+  return merged;
+}
+
+function canMerge(left: TiePrimitive, right: TiePrimitive): boolean {
+  return sameMaterial(left.material, right.material)
+    && left.renderOrder === right.renderOrder
+    && left.isGlowOverlay === right.isGlowOverlay
+    && left.hasAmbientAttribute === right.hasAmbientAttribute
+    && left.ambientSlotCount === right.ambientSlotCount
+    && left.ambientWordCount === right.ambientWordCount
+    && sameRecipes(left, right)
+    && left.matrixWorld.equals(right.matrixWorld)
+    && sameGeometryStreams(left.geometry, right.geometry);
+}
+
+function sameMaterial(
+  left: THREE.Material | THREE.Material[],
+  right: THREE.Material | THREE.Material[]
+): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right)) {
+    return left === right;
+  }
+
+  return left.length === right.length && left.every((material, index) => material === right[index]);
+}
+
+function sameRecipes(left: TiePrimitive, right: TiePrimitive): boolean {
+  return left.ambientColorRecipes.length === right.ambientColorRecipes.length
+    && left.ambientColorRecipes.every((recipe, index) => {
+      const other = right.ambientColorRecipes[index];
+      return recipe.targetIndex === other.targetIndex
+        && recipe.divisor === other.divisor
+        && recipe.sourceIndices.length === other.sourceIndices.length
+        && recipe.sourceIndices.every((sourceIndex, sourceIndexIndex) => sourceIndex === other.sourceIndices[sourceIndexIndex]);
+    });
+}
+
+function sameGeometryStreams(left: THREE.BufferGeometry, right: THREE.BufferGeometry): boolean {
+  if (!left.index || !right.index
+    || left.groups.length > 0 || right.groups.length > 0
+    || left.drawRange.start !== 0 || right.drawRange.start !== 0
+    || left.drawRange.count < left.index.count || right.drawRange.count < right.index.count) {
+    return false;
+  }
+
+  const leftNames = Object.keys(left.attributes);
+  const rightNames = Object.keys(right.attributes);
+  return leftNames.length === rightNames.length
+    && leftNames.every((name) => left.getAttribute(name) === right.getAttribute(name));
+}
+
+function mergeGeometry(left: THREE.BufferGeometry, right: THREE.BufferGeometry): THREE.BufferGeometry {
+  const leftIndex = left.index!;
+  const rightIndex = right.index!;
+  let maxIndex = 0;
+  for (let index = 0; index < leftIndex.count; index += 1) {
+    maxIndex = Math.max(maxIndex, leftIndex.getX(index));
+  }
+  for (let index = 0; index < rightIndex.count; index += 1) {
+    maxIndex = Math.max(maxIndex, rightIndex.getX(index));
+  }
+
+  const indices = maxIndex <= 0xffff
+    ? new Uint16Array(leftIndex.count + rightIndex.count)
+    : new Uint32Array(leftIndex.count + rightIndex.count);
+  for (let index = 0; index < leftIndex.count; index += 1) {
+    indices[index] = leftIndex.getX(index);
+  }
+  for (let index = 0; index < rightIndex.count; index += 1) {
+    indices[leftIndex.count + index] = rightIndex.getX(index);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.name = left.name;
+  for (const [name, attribute] of Object.entries(left.attributes)) {
+    geometry.setAttribute(name, attribute);
+  }
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.boundingBox = left.boundingBox?.clone() ?? null;
+  geometry.boundingSphere = left.boundingSphere?.clone() ?? null;
+  return geometry;
+}

@@ -117,8 +117,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [mobySimulationEnabled, setMobySimulationEnabled] = useState(true);
   const [tieMaterialMode, setTieMaterialMode] = useState<TieMaterialMode>('full');
   const [tieColorsEnabled, setTieColorsEnabled] = useState(true);
-  const [tieBundleEnabled, setTieBundleEnabled] = useState(true);
-  const [glowBloomEnabled, setGlowBloomEnabled] = useState(true);
+  const [tieBundleEnabled, setTieBundleEnabled] = useState(false);
+  const [glowBloomEnabled, setGlowBloomEnabled] = useState(false);
   const [glowBloomFalloffDistance, setGlowBloomFalloffDistance] = useState(defaultGlowBloomFalloffDistance);
   const [debugTuning, setDebugTuning] = useState<MapSceneDebugTuning>(readStoredDebugTuning);
   const detailedFrameStatsEnabled = debugModeEnabled && debugPanelsVisible;

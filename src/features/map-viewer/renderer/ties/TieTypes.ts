@@ -35,9 +35,9 @@ export interface TieInstancedMeshBinding {
   fullMirrored: boolean;
   tieGroupRecordIndices: Map<number, number[]>;
   glowColorBinding: TieGlowColorBinding | null;
-  flatMaterial: THREE.Material | THREE.Material[];
+  flatMaterial: THREE.Material | THREE.Material[] | null;
   coloredMaterial: THREE.Material | THREE.Material[] | null;
-  textureMaterial: THREE.Material | THREE.Material[];
+  textureMaterial: THREE.Material | THREE.Material[] | null;
   ambientBinding: TieAmbientTextureBinding | null;
 }
 
@@ -89,11 +89,12 @@ export interface TieGlowColorBinding {
 }
 
 export interface TieMaterialSet {
-  flatMaterial: THREE.Material | THREE.Material[];
+  flatMaterial: THREE.Material | THREE.Material[] | null;
   coloredMaterial: THREE.Material | THREE.Material[] | null;
-  textureMaterial: THREE.Material | THREE.Material[];
+  textureMaterial: THREE.Material | THREE.Material[] | null;
   ambientBinding: TieAmbientTextureBinding | null;
   glowColorBinding: TieGlowColorBinding | null;
+  usesGlowEmission: boolean;
 }
 
 export type TieMaterialMode = 'full' | 'texture' | 'plain';

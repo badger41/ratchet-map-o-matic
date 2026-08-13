@@ -8,23 +8,24 @@ export interface RendererDeviceLostInfo {
   originalEvent?: unknown;
 }
 
-type WebGpuAdapterOptions = GPURequestAdapterOptions & {
-  featureLevel?: 'core' | 'compatibility';
-};
-
-const webGpuAdapterOptions: WebGpuAdapterOptions = {
-  featureLevel: 'compatibility'
-};
-
 export async function assertWebGpuAvailable(): Promise<void> {
   if (!('gpu' in navigator)) {
-    throw new Error(webGpuUnavailableMessage);
+    throw createWebGpuUnavailableError('navigator.gpu is missing');
   }
 
-  const adapter = await navigator.gpu.requestAdapter(webGpuAdapterOptions);
+  const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
-    throw new Error(webGpuUnavailableMessage);
+    throw createWebGpuUnavailableError('navigator.gpu.requestAdapter() returned null');
   }
+}
+
+function createWebGpuUnavailableError(reason: string): Error {
+  const details = [
+    reason,
+    `secureContext=${String(window.isSecureContext)}`,
+    `origin=${window.location.origin}`
+  ].join('; ');
+  return new Error(`${webGpuUnavailableMessage} Details: ${details}.`);
 }
 
 export function createRendererInitializationError(error: unknown): Error {

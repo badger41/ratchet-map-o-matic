@@ -3,6 +3,7 @@ import {
   attribute,
   float,
   texture,
+  uniform,
   uv,
   vec3,
   vertexColor
@@ -60,6 +61,8 @@ import {
   type ShrubDirectionalLightBinding,
   type ShrubLightingUniforms
 } from '../shrubs/ShrubTypes';
+import { pruneMobyLods } from './MobyGltfSupport';
+import { mergeAdjacentModelPrimitives } from '../ModelPrimitiveMerge';
 
 type MobyGroup = THREE.Group & {
   isBundleGroup?: boolean;
@@ -116,6 +119,8 @@ export class MobyInstanceController {
   private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
   private bundleEnabled = false;
   private hiddenClassIds = new Set<number>();
+  private readonly lightSelectorsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
+  private readonly colorTonesByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
 
   async load(
     parent: THREE.Object3D,
@@ -325,6 +330,7 @@ export class MobyInstanceController {
     }
 
     try {
+      pruneMobyLods(source);
       const primitives = collectMobyPrimitives(source);
       if (primitives.length === 0) {
         this.stats.missingClasses += classRecords.length;
@@ -335,6 +341,7 @@ export class MobyInstanceController {
       this.stats.primitives += primitives.length;
       const useColorTone = isUyaMapPackage(mapPackage);
       const preparedRecords = classRecords.map(prepareMobyRecord);
+      const chunks = chunkMobyRecords(preparedRecords);
 
       for (const primitive of primitives) {
         const displayOptions = this.modelDisplayOptions;
@@ -343,7 +350,7 @@ export class MobyInstanceController {
         }
 
         const material = cloneMaterial(primitive, this.directionalLightBinding, this.options, displayOptions, useColorTone);
-        for (const [chunkIndex, records] of chunkMobyRecords(preparedRecords).entries()) {
+        for (const [chunkIndex, records] of chunks.entries()) {
           this.addInstancedPrimitive(group, classId, records, primitive, chunkIndex, material, useColorTone);
         }
 
@@ -366,11 +373,16 @@ export class MobyInstanceController {
     useColorTone: boolean
   ): void {
     const geometry = createMobyInstancedGeometry(primitive.geometry);
-    geometry.setAttribute(lightSelectorAttributeName, createMobyLightSelectorInstanceAttribute(records));
+    geometry.setAttribute(
+      lightSelectorAttributeName,
+      this.getChunkAttribute(this.lightSelectorsByChunk, records, () => createMobyLightSelectorInstanceAttribute(records))
+    );
     if (useColorTone) {
-      geometry.setAttribute(mobyColorToneAttributeName, createMobyColorToneInstanceAttribute(records));
+      geometry.setAttribute(
+        mobyColorToneAttributeName,
+        this.getChunkAttribute(this.colorTonesByChunk, records, () => createMobyColorToneInstanceAttribute(records))
+      );
     }
-
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);
     mesh.name = `moby_${String(classId).padStart(5, '0')}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
@@ -396,6 +408,21 @@ export class MobyInstanceController {
 
     this.stats.batches += 1;
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;
+  }
+
+  private getChunkAttribute(
+    cache: WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>,
+    records: PreparedMobyRecord[],
+    create: () => THREE.InstancedBufferAttribute
+  ): THREE.InstancedBufferAttribute {
+    const existing = cache.get(records);
+    if (existing) {
+      return existing;
+    }
+
+    const attribute = create();
+    cache.set(records, attribute);
+    return attribute;
   }
 }
 
@@ -438,7 +465,7 @@ function collectMobyPrimitives(source: THREE.Object3D): MobyPrimitive[] {
     });
   });
 
-  return primitives;
+  return mergeAdjacentModelPrimitives(primitives);
 }
 
 function buildMobyEntryMap(entries: GltfExportEntry[]): Map<number, GltfExportEntry> {
@@ -642,7 +669,7 @@ function createMobyColorNode(
   displayOptions: ModelDisplayNodeOptions,
   useColorTone: boolean
 ) {
-  const materialColorNode = vec3(material.color.r, material.color.g, material.color.b);
+  const materialColorNode = uniform(new THREE.Vector3(material.color.r, material.color.g, material.color.b));
   const textureColorNode = material.map
     ? texture(material.map, uv()).rgb.mul(materialColorNode)
     : materialColorNode;
