@@ -1,5 +1,5 @@
 import { Badge, Button, Checkbox, Group, Menu, Stack, Text } from '@mantine/core';
-import { Bug, FileArchive, Images, RotateCcw } from 'lucide-react';
+import { Boxes, Bug, FileArchive, Images, RotateCcw } from 'lucide-react';
 import { useAppChrome } from '../features/app-chrome/AppChromeProvider';
 
 export function AppHeader() {
@@ -61,6 +61,13 @@ export function AppHeader() {
                 </Button>
               </Menu.Target>
               <Menu.Dropdown>
+                <Menu.Item
+                  leftSection={<Boxes size={14} />}
+                  disabled={!viewerChrome.onOpenMobys}
+                  onClick={viewerChrome.onOpenMobys}
+                >
+                  Mobys
+                </Menu.Item>
                 <Menu.Item
                   leftSection={<Images size={14} />}
                   disabled={!viewerChrome.onOpenFxTextures}

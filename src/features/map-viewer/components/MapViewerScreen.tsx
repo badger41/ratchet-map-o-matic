@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { AlertCircle } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useAppChrome } from '../../../features/app-chrome/AppChromeProvider';
 import { dirnamePackagePath, joinPackagePath } from '../../../services/mapAssets/mapAssetPackage';
@@ -52,6 +52,8 @@ import { WaterDebugPanel } from './debug/WaterDebugPanel';
 import { FxTextureWindow, type FxTextureView } from './FxTextureWindow';
 import { MapViewerStageList } from './MapViewerStageList';
 import { MobileCameraControls } from './MobileCameraControls';
+
+const MobyWindow = lazy(() => import('./MobyWindow'));
 
 interface MapViewerScreenProps {
   result: MapLoadResult;
@@ -107,6 +109,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [fxTextures, setFxTextures] = useState<FxTextureView[]>([]);
   const [fxTextureLoadError, setFxTextureLoadError] = useState<string | null>(null);
   const [fxTextureWindowOpen, setFxTextureWindowOpen] = useState(false);
+  const [mobyWindowOpen, setMobyWindowOpen] = useState(false);
+  const [mobyPackage, setMobyPackage] = useState<LoadedMapPackage | null>(null);
   const [ready, setReady] = useState(false);
   const [frameRateLimit, setFrameRateLimit] = useState(120);
   const [terrainVisible, setTerrainVisible] = useState(true);
@@ -138,6 +142,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
 
   const openFxTextureWindow = useCallback(() => {
     setFxTextureWindowOpen(true);
+  }, []);
+
+  const openMobyWindow = useCallback(() => {
+    setMobyWindowOpen(true);
   }, []);
 
   const handleMobileMoveInputChange = useCallback((input: CameraVirtualMoveInput) => {
@@ -183,12 +191,14 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       status,
       state: lastError ? 'failed' : ready ? 'ready' : 'loading',
       onChooseAnother,
-      onOpenFxTextures: ready ? openFxTextureWindow : undefined
+      onOpenFxTextures: ready ? openFxTextureWindow : undefined,
+      onOpenMobys: ready ? openMobyWindow : undefined
     });
   }, [
     lastError,
     onChooseAnother,
     openFxTextureWindow,
+    openMobyWindow,
     ready,
     result.map.label,
     setViewerChrome,
@@ -198,6 +208,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   useEffect(() => {
     rendererRef.current?.setFrameRateLimit(frameRateLimit);
   }, [frameRateLimit]);
+
+  useEffect(() => {
+    rendererRef.current?.setRenderPaused(fxTextureWindowOpen || mobyWindowOpen);
+  }, [fxTextureWindowOpen, mobyWindowOpen]);
 
   useEffect(() => {
     rendererRef.current?.setTerrainVisible(terrainVisible);
@@ -364,6 +378,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       setFxTextures([]);
       setFxTextureLoadError(null);
       setFxTextureWindowOpen(false);
+      setMobyWindowOpen(false);
+      setMobyPackage(null);
       setStages(createMapViewerStages('manifest'));
 
       try {
@@ -423,6 +439,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
           colorsEnabled: tieColorsEnabled
         });
         if (!disposed) {
+          setMobyPackage(loadedPackage);
           setReady(true);
         }
       } catch (error: unknown) {
@@ -682,6 +699,16 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         error={fxTextureLoadError}
         onClose={() => setFxTextureWindowOpen(false)}
       />
+      {mobyWindowOpen ? (
+        <Suspense fallback={null}>
+          <MobyWindow
+            opened
+            mapPackage={mobyPackage}
+            mobyInstances={result.mobyInstances}
+            onClose={() => setMobyWindowOpen(false)}
+          />
+        </Suspense>
+      ) : null}
     </Box>
   );
 }

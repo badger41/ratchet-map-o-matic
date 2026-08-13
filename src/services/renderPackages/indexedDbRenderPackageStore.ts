@@ -10,7 +10,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'main-level-render-packages-v2';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'mission-mobys-v3';
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;

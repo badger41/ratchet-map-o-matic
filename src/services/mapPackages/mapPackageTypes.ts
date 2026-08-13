@@ -19,7 +19,15 @@ export interface RootManifest {
   Game?: string;
   Level?: number;
   ExtractedAtUtc?: string;
+  Mobys?: MobyExportEntry[];
   [key: string]: unknown;
+}
+
+export interface MobyExportEntry {
+  Group?: string | null;
+  ClassId?: number | string | null;
+  Gltf?: string | null;
+  Status?: string | null;
 }
 
 export interface GltfExportEntry {

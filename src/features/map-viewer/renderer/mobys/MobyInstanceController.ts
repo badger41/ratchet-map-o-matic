@@ -647,7 +647,7 @@ function createMobyMaterial(
     material.alphaMap.colorSpace = THREE.SRGBColorSpace;
   }
 
-  configureModelMaterialTransparency(material, modelMaterialInfo);
+  configureModelMaterialTransparency(material, modelMaterialInfo, { alphaBlendDepthWrite: true });
   material.colorNode = createMobyColorNode(
     material,
     geometry.hasAttribute('color'),

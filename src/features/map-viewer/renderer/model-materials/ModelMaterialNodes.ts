@@ -241,7 +241,7 @@ export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMa
 export function configureModelMaterialTransparency(
   material: THREE.Material,
   info: ModelMaterialInfo,
-  options: { alphaCutoff?: number } = {}
+  options: { alphaCutoff?: number; alphaBlendDepthWrite?: boolean } = {}
 ): void {
   const alphaCutoff = options.alphaCutoff ?? modelDefaultAlphaCutoff;
   material.opacity = 1;
@@ -254,9 +254,10 @@ export function configureModelMaterialTransparency(
     material.depthWrite = true;
     material.alphaTest = 0;
   } else if (info.usesAlphaBlend) {
+    const alphaBlendDepthWrite = options.alphaBlendDepthWrite ?? false;
     material.transparent = true;
-    material.depthWrite = false;
-    material.alphaTest = 0;
+    material.depthWrite = alphaBlendDepthWrite;
+    material.alphaTest = alphaBlendDepthWrite ? alphaCutoff : 0;
   } else if (info.usesAlphaMask) {
     material.transparent = false;
     material.depthWrite = true;

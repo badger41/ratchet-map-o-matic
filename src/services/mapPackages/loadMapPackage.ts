@@ -10,6 +10,7 @@ import {
   createDataView,
   type BinaryBuffer
 } from './binaryBuffer';
+import { mergeMissionMobyEntries } from './mobyPackageEntries';
 import type {
   AssetManifest,
   DirectionalLightRecord,
@@ -81,7 +82,7 @@ export async function loadMapPackageFromAssetPackage(
     : null;
   const skyboxGltfUrl = skyboxGltfPath ? await assetPackage.resolveUrl(skyboxGltfPath) : null;
   const tieEntries = findTieGltfEntries(assetManifest);
-  const mobyEntries = findMobyGltfEntries(assetManifest);
+  const mobyEntries = findMobyGltfEntries(assetManifest, rootManifest);
   const shrubEntries = findShrubGltfEntries(assetManifest);
 
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
@@ -297,8 +298,11 @@ function findTieGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
   return findFamilyGltfEntries(assetManifest, 'tie');
 }
 
-function findMobyGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {
-  return findFamilyGltfEntries(assetManifest, 'moby');
+function findMobyGltfEntries(
+  assetManifest: AssetManifest,
+  rootManifest: RootManifest
+): GltfExportEntry[] {
+  return mergeMissionMobyEntries(findFamilyGltfEntries(assetManifest, 'moby'), rootManifest);
 }
 
 function findShrubGltfEntries(assetManifest: AssetManifest): GltfExportEntry[] {

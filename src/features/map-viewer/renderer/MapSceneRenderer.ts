@@ -273,6 +273,7 @@ export class MapSceneRenderer {
   private lastMobySimulationTime = performance.now();
   private frameStatsDetailEnabled: boolean;
   private instanceBundleEnabled = false;
+  private renderPaused = false;
   private animationRenderSuspended = false;
   private rendererUnavailable = false;
   private disposed = false;
@@ -848,6 +849,12 @@ export class MapSceneRenderer {
     });
   }
 
+  setRenderPaused(paused: boolean): void {
+    this.renderPaused = paused;
+    this.lastRenderSubmitTime = 0;
+    this.resetMobySimulationClock(performance.now());
+  }
+
   setFrameStatsDetailEnabled(enabled: boolean): void {
     this.frameStatsDetailEnabled = enabled;
     this.submitSampleTotalMs = 0;
@@ -1025,7 +1032,7 @@ export class MapSceneRenderer {
   };
 
   private handleAnimationFrame(time: DOMHighResTimeStamp): void {
-    if (this.animationRenderSuspended || this.rendererUnavailable) {
+    if (this.renderPaused || this.animationRenderSuspended || this.rendererUnavailable) {
       this.resetMobySimulationClock(time);
       return;
     }
