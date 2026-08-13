@@ -113,31 +113,27 @@ export function WelcomeScreen({
                       </ActionIcon>
                     ) : null}
                   </Group>
-                  {selectedGameId === 'UYA' ? (
-                    <>
-                      <Tooltip label="View custom UYA maps provided by Horizon" withArrow>
-                        <UnstyledButton
-                          aria-label="View custom UYA maps provided by Horizon"
-                          aria-pressed={isCustomSource}
-                          onClick={onCustomMapsSelect}
-                          style={{
-                            width: 140,
-                            height: 54,
-                            border: `1px solid ${isCustomSource ? 'rgba(91, 173, 255, 0.55)' : 'rgba(159, 174, 188, 0.22)'}`,
-                            borderRadius: 8,
-                            background: isCustomSource ? 'rgba(91, 173, 255, 0.12)' : '#0b1118',
-                            padding: '8px 12px'
-                          }}
-                        >
-                          <Image src={logoHorizonUrl} alt="Horizon" fit="contain" h={36} maw="100%" />
-                        </UnstyledButton>
-                      </Tooltip>
-                      {isCustomSource ? (
-                        <Button variant="default" size="xs" w={140} onClick={onVanillaMapsSelect}>
-                          Vanilla
-                        </Button>
-                      ) : null}
-                    </>
+                  <Tooltip label={`View custom ${selectedGameId} maps provided by Horizon`} withArrow>
+                    <UnstyledButton
+                      aria-label={`View custom ${selectedGameId} maps provided by Horizon`}
+                      aria-pressed={isCustomSource}
+                      onClick={onCustomMapsSelect}
+                      style={{
+                        width: 140,
+                        height: 54,
+                        border: `1px solid ${isCustomSource ? 'rgba(91, 173, 255, 0.55)' : 'rgba(159, 174, 188, 0.22)'}`,
+                        borderRadius: 8,
+                        background: isCustomSource ? 'rgba(91, 173, 255, 0.12)' : '#0b1118',
+                        padding: '8px 12px'
+                      }}
+                    >
+                      <Image src={logoHorizonUrl} alt="Horizon" fit="contain" h={36} maw="100%" />
+                    </UnstyledButton>
+                  </Tooltip>
+                  {isCustomSource ? (
+                    <Button variant="default" size="xs" w={140} onClick={onVanillaMapsSelect}>
+                      Vanilla
+                    </Button>
                   ) : null}
                 </Stack>
               </Group>

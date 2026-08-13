@@ -255,9 +255,16 @@ async function buildRenderPackage(
   map: MapDefinition,
   sourceBytes: Uint8Array
 ): Promise<PackedFilePackageResult> {
-  return map.sourceKind === 'customZip'
-    ? buildUyaCustomMapZipRenderPackage(wasm, sourceBytes)
-    : buildWadRenderPackage(wasm, map.gameId, sourceBytes);
+  if (map.sourceKind !== 'customZip') {
+    return buildWadRenderPackage(wasm, map.gameId, sourceBytes);
+  }
+
+  if (map.gameId === 'UYA') {
+    return buildUyaCustomMapZipRenderPackage(wasm, sourceBytes);
+  }
+
+  const { extractDlCustomMapWad, wrapDlCoreLevelWad } = await import('../customMaps/dlCustomMapZip');
+  return buildWadRenderPackage(wasm, 'DL', wrapDlCoreLevelWad(extractDlCustomMapWad(sourceBytes), map.level));
 }
 
 async function buildWadRenderPackage(
@@ -302,7 +309,9 @@ function hasRenderPackageEnvelope(
   map: MapDefinition
 ): boolean {
   if (map.sourceKind === 'customZip') {
-    return Boolean(wasm.buildUyaCustomMapZipRenderPackageEnvelope ?? wasm.buildUyaCustomMapRenderPackageEnvelope);
+    return map.gameId === 'UYA'
+      ? Boolean(wasm.buildUyaCustomMapZipRenderPackageEnvelope ?? wasm.buildUyaCustomMapRenderPackageEnvelope)
+      : Boolean(wasm.buildDlLevelWadRenderPackageEnvelope);
   }
 
   return map.gameId === 'UYA'

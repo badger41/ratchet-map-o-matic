@@ -7,7 +7,7 @@ import {
   type MapDefinition,
   type RatchetGameId
 } from '../../data/mapCatalog';
-import { fetchHorizonUyaCustomMaps } from '../../services/customMaps/horizonUyaMaps';
+import { fetchHorizonCustomMaps } from '../../services/customMaps/horizonMaps';
 import {
   loadMapRenderPackage,
   preloadMapConverter,
@@ -61,7 +61,7 @@ export function MapLoader() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [mapPickerOpen, setMapPickerOpen] = useState(false);
   const selectedMap = useMemo(() => {
-    if (selectedGameId === 'UYA' && selectedSource === 'custom') {
+    if (selectedGameId && selectedSource === 'custom') {
       return findCustomMap(customMaps, selectedCustomMapId)
         ?? customMaps[0]
         ?? firstMapForGame(selectedGameId)
@@ -73,7 +73,7 @@ export function MapLoader() {
       ?? defaultMap;
   }, [customMaps, selectedCustomMapId, selectedGameId, selectedMapId, selectedSource]);
   const mapOptions = useMemo(() => {
-    if (selectedGameId === 'UYA' && selectedSource === 'custom') {
+    if (selectedGameId && selectedSource === 'custom') {
       return customMaps.map((map) => ({
         value: map.id,
         label: map.name
@@ -99,6 +99,8 @@ export function MapLoader() {
       setSelectedSource(route.source);
       setSelectedMapId(route.map?.id ?? firstMapForGame(route.gameId)?.id ?? defaultMap.id);
       setSelectedCustomMapId(route.customMapId);
+      setCustomMaps([]);
+      setCustomMapsStatus('idle');
       setMapPickerOpen(false);
       setPhase('welcome');
       setResult(null);
@@ -111,14 +113,14 @@ export function MapLoader() {
   }, []);
 
   useEffect(() => {
-    if (selectedGameId !== 'UYA' || selectedSource !== 'custom' || customMaps.length > 0) {
+    if (!selectedGameId || selectedSource !== 'custom' || customMaps.length > 0) {
       return;
     }
 
     const controller = new AbortController();
     setCustomMapsStatus('loading');
     setCustomMapsError(null);
-    fetchHorizonUyaCustomMaps(controller.signal)
+    fetchHorizonCustomMaps(selectedGameId, controller.signal)
       .then((maps) => {
         setCustomMaps(maps);
         setCustomMapsStatus('ready');
@@ -160,7 +162,7 @@ export function MapLoader() {
     setLastError(null);
     setStages(createMapLoadStages('download'));
     if (selectedMap.sourceKind === 'customZip') {
-      writeCustomRoute(selectedMap);
+      writeCustomRoute(selectedMap.gameId, selectedMap);
     } else {
       writeMapRoute(selectedMap.gameId, selectedMap);
     }
@@ -198,6 +200,8 @@ export function MapLoader() {
     setSelectedSource('vanilla');
     setSelectedMapId(firstMap.id);
     setSelectedCustomMapId(null);
+    setCustomMaps([]);
+    setCustomMapsStatus('idle');
     setPhase('welcome');
     setResult(null);
     setLastError(null);
@@ -218,27 +222,33 @@ export function MapLoader() {
   }, []);
 
   const selectHorizonCustomMaps = useCallback(() => {
-    setSelectedGameId('UYA');
+    if (!selectedGameId) {
+      return;
+    }
+
     setSelectedSource('custom');
     setPhase('welcome');
     setResult(null);
     setLastError(null);
     setStages(createMapLoadStages());
     setCustomMapsRetryKey((value) => value + 1);
-    writeCustomRoute();
-  }, []);
+    writeCustomRoute(selectedGameId);
+  }, [selectedGameId]);
 
   const selectVanillaMaps = useCallback(() => {
-    const firstMap = firstMapForGame('UYA') ?? defaultMap;
-    setSelectedGameId('UYA');
+    if (!selectedGameId) {
+      return;
+    }
+
+    const firstMap = firstMapForGame(selectedGameId) ?? defaultMap;
     setSelectedSource('vanilla');
     setSelectedMapId(firstMap.id);
     setPhase('welcome');
     setResult(null);
     setLastError(null);
     setStages(createMapLoadStages());
-    writeMapRoute('UYA');
-  }, []);
+    writeMapRoute(selectedGameId);
+  }, [selectedGameId]);
 
   const selectCustomMap = useCallback((mapId: string | null) => {
     if (!mapId) {
@@ -246,8 +256,10 @@ export function MapLoader() {
     }
 
     setSelectedCustomMapId(mapId);
-    writeCustomRoute();
-  }, []);
+    if (selectedGameId) {
+      writeCustomRoute(selectedGameId);
+    }
+  }, [selectedGameId]);
 
   const returnToGameSelect = useCallback(() => {
     setSelectedGameId(null);
@@ -372,7 +384,7 @@ function readMapRoute(): MapRouteSeed {
 
   const maps = mapsForGame(gameId);
   const sourceSegment = sourceSlug?.toLowerCase();
-  if (gameId === 'UYA' && sourceSegment === customRouteSegment) {
+  if (sourceSegment === customRouteSegment) {
     return {
       gameId,
       source: 'custom',
@@ -426,11 +438,11 @@ function writeMapRoute(gameId: RatchetGameId | null, map?: MapDefinition): void 
   pushRoute(nextPath);
 }
 
-function writeCustomRoute(map?: MapDefinition): void {
+function writeCustomRoute(gameId: RatchetGameId, map?: MapDefinition): void {
   const routeId = map?.customMapRouteId ?? null;
   const nextPath = routeId
-    ? `/uya/${customRouteSegment}/${encodeURIComponent(routeId)}`
-    : `/uya/${customRouteSegment}`;
+    ? `/${gameId.toLowerCase()}/${customRouteSegment}/${encodeURIComponent(routeId)}`
+    : `/${gameId.toLowerCase()}/${customRouteSegment}`;
   pushRoute(nextPath);
 }
 
