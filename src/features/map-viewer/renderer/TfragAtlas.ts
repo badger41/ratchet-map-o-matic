@@ -86,11 +86,21 @@ export function packTfragAtlasRects(inputs: AtlasRectInput[]): {
   return { width, height: packed.height, rects: packed.rects };
 }
 
-export function remapTfragAtlasUv(value: number, offset: number, scale: number, wrapping: number): number {
-  const wrapped = wrapping === THREE.RepeatWrapping
-    ? value - Math.floor(value)
-    : Math.min(1, Math.max(0, value));
-  return offset + wrapped * scale;
+export function canRemapTfragAtlasUvs(
+  uv: Pick<THREE.BufferAttribute | THREE.InterleavedBufferAttribute, 'count' | 'getX' | 'getY'>
+): boolean {
+  for (let index = 0; index < uv.count; index += 1) {
+    const u = uv.getX(index);
+    const v = uv.getY(index);
+    if (!Number.isFinite(u) || u < 0 || u > 1 || !Number.isFinite(v) || v < 0 || v > 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function remapTfragAtlasUv(value: number, offset: number, scale: number): number {
+  return offset + value * scale;
 }
 
 function collectAtlasSources(root: THREE.Object3D): AtlasSource[] {

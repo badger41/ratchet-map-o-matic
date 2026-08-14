@@ -9,6 +9,7 @@ import {
 } from './ModelFog';
 import type { SceneCameraStart } from './camera/SceneCameraFraming';
 import {
+  canRemapTfragAtlasUvs,
   createTfragAtlas,
   remapTfragAtlasUv,
   type TfragAtlas,
@@ -186,9 +187,7 @@ export class TfragMaterialController {
       this.captureStartupCameraStart(mesh);
 
       const sourceMaterial = mesh.material ?? null;
-      const atlasRegion = mesh.geometry.getAttribute('uv')
-        ? resolveTfragAtlasRegion(sourceMaterial, atlas)
-        : null;
+      const atlasRegion = resolveTfragAtlasRegion(mesh.geometry, sourceMaterial, atlas);
       const materialKey = materialBatchKey(sourceMaterial, atlasRegion !== null);
       let material = materialCache.get(materialKey);
       if (!material) {
@@ -213,7 +212,7 @@ export class TfragMaterialController {
         clonedGeometry.dispose();
       }
       if (atlasRegion) {
-        applyTfragAtlasUvs(geometry, sourceMaterial, atlasRegion);
+        applyTfragAtlasUvs(geometry, atlasRegion);
       }
 
       bakeTfragGeometryColors(geometry, bakeContext);
@@ -593,10 +592,12 @@ function createTfragDisplayMaterial(
 }
 
 function resolveTfragAtlasRegion(
+  geometry: THREE.BufferGeometry,
   sourceMaterial: THREE.Material | THREE.Material[] | null,
   atlas: TfragAtlas | null
 ): TfragAtlasRegion | null {
-  if (!atlas) {
+  const uv = geometry.getAttribute('uv');
+  if (!atlas || !uv || !canRemapTfragAtlasUvs(uv)) {
     return null;
   }
 
@@ -610,20 +611,17 @@ function resolveTfragAtlasRegion(
 
 function applyTfragAtlasUvs(
   geometry: THREE.BufferGeometry,
-  sourceMaterial: THREE.Material | THREE.Material[] | null,
   region: TfragAtlasRegion
 ): void {
   const sourceUv = geometry.getAttribute('uv');
-  const firstMaterial = Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial;
-  const map = (firstMaterial as Partial<THREE.MeshBasicMaterial> | null)?.map ?? null;
-  if (!map || !sourceUv) {
+  if (!sourceUv) {
     return;
   }
 
   const atlasUv = new Float32Array(sourceUv.count * 2);
   for (let index = 0; index < sourceUv.count; index += 1) {
-    atlasUv[index * 2] = remapTfragAtlasUv(sourceUv.getX(index), region.offsetX, region.scaleX, map.wrapS);
-    atlasUv[index * 2 + 1] = remapTfragAtlasUv(sourceUv.getY(index), region.offsetY, region.scaleY, map.wrapT);
+    atlasUv[index * 2] = remapTfragAtlasUv(sourceUv.getX(index), region.offsetX, region.scaleX);
+    atlasUv[index * 2 + 1] = remapTfragAtlasUv(sourceUv.getY(index), region.offsetY, region.scaleY);
   }
 
   geometry.setAttribute('uv', new THREE.BufferAttribute(atlasUv, 2));

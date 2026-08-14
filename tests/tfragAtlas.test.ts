@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
-import { packTfragAtlasRects, remapTfragAtlasUv } from '../src/features/map-viewer/renderer/TfragAtlas.ts';
+import {
+  canRemapTfragAtlasUvs,
+  packTfragAtlasRects,
+  remapTfragAtlasUv
+} from '../src/features/map-viewer/renderer/TfragAtlas.ts';
 
 test('packs padded tfrag textures into an atlas with a power-of-two width and no overlap', () => {
   const packed = packTfragAtlasRects([
@@ -25,9 +29,11 @@ test('packs padded tfrag textures into an atlas with a power-of-two width and no
   }
 });
 
-test('remaps repeating and clamped tfrag UVs into an atlas region', () => {
-  assert.equal(remapTfragAtlasUv(-0.25, 0.5, 0.25, THREE.RepeatWrapping), 0.6875);
-  assert.equal(remapTfragAtlasUv(1.25, 0.5, 0.25, THREE.RepeatWrapping), 0.5625);
-  assert.equal(remapTfragAtlasUv(-1, 0.5, 0.25, THREE.ClampToEdgeWrapping), 0.5);
-  assert.equal(remapTfragAtlasUv(2, 0.5, 0.25, THREE.ClampToEdgeWrapping), 0.75);
+test('only remaps tfrag UVs that do not rely on texture wrapping', () => {
+  const contained = new THREE.Float32BufferAttribute([0, 0, 0.25, 0.75, 1, 1], 2);
+  const seamUnwrapped = new THREE.Float32BufferAttribute([0.95, 0, 1.05, 0.5, 1, 1], 2);
+
+  assert.equal(canRemapTfragAtlasUvs(contained), true);
+  assert.equal(canRemapTfragAtlasUvs(seamUnwrapped), false);
+  assert.equal(remapTfragAtlasUv(0.25, 0.5, 0.25), 0.5625);
 });
