@@ -17,6 +17,7 @@ export interface ViewerChromeState {
   onChooseAnother?: () => void;
   onOpenFxTextures?: () => void;
   onOpenMobys?: () => void;
+  onOpenTies?: () => void;
 }
 
 interface AppChromeContextValue {

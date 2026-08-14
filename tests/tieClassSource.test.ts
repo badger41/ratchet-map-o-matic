@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
+import { buildTieOptions } from '../src/features/map-viewer/components/tieWindowData.ts';
 import { mergeAdjacentTiePrimitives } from '../src/features/map-viewer/renderer/ties/TiePrimitiveMerge.ts';
 import type { TiePrimitive } from '../src/features/map-viewer/renderer/ties/TieTypes.ts';
 
@@ -39,4 +40,19 @@ test('adjacent compatible tie primitives share one exact index stream', () => {
   assert.equal(primitives.length, 2);
   assert.deepEqual(Array.from(primitives[0].geometry.index!.array), [0, 1, 2, 3, 4, 5]);
   assert.equal(primitives.reduce((sum, item) => sum + item.geometry.index!.count / 3, 0), 3);
+});
+
+test('tie viewer lists only loadable classes', () => {
+  const options = buildTieOptions([
+    { ModelId: 10, GltfPath: 'tie/00010/tie.gltf' },
+    { ModelId: '20', GltfPath: 'tie/00020/tie.gltf' },
+    { ModelId: null, GltfPath: 'tie/unknown/tie.gltf' },
+    { ModelId: ' ', GltfPath: 'tie/blank/tie.gltf' },
+    { ModelId: 30, GltfPath: null }
+  ]);
+
+  assert.deepEqual(options.map(({ modelId, label }) => ({ modelId, label })), [
+    { modelId: 10, label: 'Class 10 (0x000a)' },
+    { modelId: 20, label: 'Class 20 (0x0014)' }
+  ]);
 });
