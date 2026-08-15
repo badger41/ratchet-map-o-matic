@@ -35,15 +35,17 @@ interface TieWindowProps {
   onClose: () => void;
 }
 
+type TiePreviewSideMode = 'game' | 'front' | 'double';
+
 export default function TieWindow({
   opened,
   mapPackage,
   onClose
 }: TieWindowProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const previewRef = useRef<THREE.Object3D | null>(null);
+  const sideModeRef = useRef<TiePreviewSideMode>('game');
   const [selectedTieKey, setSelectedTieKey] = useState<string | null>(null);
-  const [doubleSided, setDoubleSided] = useState(false);
+  const [sideMode, setSideMode] = useState<TiePreviewSideMode>('game');
   const [thumbnails, setThumbnails] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +87,6 @@ export default function TieWindow({
 
     let disposed = false;
     let modelRoot: THREE.Object3D | null = null;
-    previewRef.current = null;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -117,6 +118,9 @@ export default function TieWindow({
     resize();
     renderer.setAnimationLoop(() => {
       controls.update();
+      if (modelRoot) {
+        setTiePreviewSideMode(modelRoot, camera, sideModeRef.current);
+      }
       renderer.render(scene, camera);
     });
 
@@ -136,10 +140,9 @@ export default function TieWindow({
       modelRoot = root;
       pruneToLod0(modelRoot);
       configureTiePreviewMaterials(modelRoot);
-      setTiePreviewDoubleSided(modelRoot, doubleSided);
-      previewRef.current = modelRoot;
       scene.add(modelRoot);
       frameTie(camera, controls, modelRoot);
+      setTiePreviewSideMode(modelRoot, camera, sideModeRef.current);
       setLoading(false);
     }
 
@@ -152,7 +155,6 @@ export default function TieWindow({
 
     return () => {
       disposed = true;
-      previewRef.current = null;
       renderer.setAnimationLoop(null);
       resizeObserver.disconnect();
       controls.dispose();
@@ -168,11 +170,9 @@ export default function TieWindow({
   }, [mapPackage, opened, selectedTie?.key]);
 
   const chooseSide = (value: string) => {
-    const nextDoubleSided = value === 'double';
-    setDoubleSided(nextDoubleSided);
-    if (previewRef.current) {
-      setTiePreviewDoubleSided(previewRef.current, nextDoubleSided);
-    }
+    const nextMode = value as TiePreviewSideMode;
+    sideModeRef.current = nextMode;
+    setSideMode(nextMode);
   };
 
   return (
@@ -261,9 +261,10 @@ export default function TieWindow({
                 <SegmentedControl
                   size="xs"
                   aria-label="Tie face rendering"
-                  value={doubleSided ? 'double' : 'front'}
+                  value={sideMode}
                   data={[
-                    { value: 'front', label: 'Front-side' },
+                    { value: 'game', label: 'Game distance' },
+                    { value: 'front', label: 'Front only' },
                     { value: 'double', label: 'Double-sided' }
                   ]}
                   onChange={chooseSide}
@@ -348,6 +349,7 @@ async function generateTieThumbnails(
         configureTiePreviewMaterials(root);
         scene.add(root);
         camera.lookAt(frameTieCamera(camera, root));
+        setTiePreviewSideMode(root, camera, 'game');
         renderer.render(scene, camera);
         onThumbnail(tie.key, renderer.domElement.toDataURL('image/webp', 0.82));
       } catch (thumbnailError) {
@@ -368,21 +370,19 @@ async function generateTieThumbnails(
 }
 
 function configureTiePreviewMaterials(root: THREE.Object3D): void {
-  const configuredMaterials = new Set<THREE.Material>();
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
       return;
     }
 
-    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      if (configuredMaterials.has(material)) {
-        continue;
-      }
-      configuredMaterials.add(material);
+    const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const materials = sourceMaterials.map((material) => material.clone());
+    mesh.material = Array.isArray(mesh.material) ? materials : materials[0];
+    for (const material of materials) {
       const info = resolveModelMaterialInfo(material, 'tie');
       configureModelMaterialTransparency(material, info, { alphaBlendDepthWrite: true });
-      material.side = THREE.FrontSide;
+      material.userData.mapOmaticTiePreviewSourceSide = material.side;
       const map = (material as THREE.MeshStandardMaterial).map;
       if (!map) {
         continue;
@@ -406,10 +406,19 @@ function configureTiePreviewMaterials(root: THREE.Object3D): void {
       material.needsUpdate = true;
     }
   });
+
+  root.updateMatrixWorld(true);
+  root.userData.mapOmaticTiePreviewSphere = new THREE.Box3()
+    .setFromObject(root)
+    .getBoundingSphere(new THREE.Sphere());
 }
 
-function setTiePreviewDoubleSided(root: THREE.Object3D, doubleSided: boolean): void {
-  const side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+function setTiePreviewSideMode(
+  root: THREE.Object3D,
+  camera: THREE.PerspectiveCamera,
+  mode: TiePreviewSideMode
+): void {
+  const distanceBucket = tiePreviewDistanceBucket(root, camera);
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
@@ -417,12 +426,57 @@ function setTiePreviewDoubleSided(root: THREE.Object3D, doubleSided: boolean): v
     }
 
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      const bfcDistance = Number(mesh.geometry?.userData?.BfcDistance);
+      const side = mode === 'double'
+        ? THREE.DoubleSide
+        : mode === 'front'
+          ? THREE.FrontSide
+          : Number.isFinite(bfcDistance)
+            ? distanceBucket < bfcDistance ? THREE.FrontSide : THREE.DoubleSide
+            : material.userData.mapOmaticTiePreviewSourceSide ?? THREE.FrontSide;
       if (material.side !== side) {
         material.side = side;
         material.needsUpdate = true;
       }
     }
   });
+}
+
+function tiePreviewDistanceBucket(root: THREE.Object3D, camera: THREE.PerspectiveCamera): number {
+  const sphere = root.userData.mapOmaticTiePreviewSphere as THREE.Sphere | undefined;
+  if (!sphere) {
+    return 0;
+  }
+
+  const sourceBounds: { radius: number | null; center: number[] | null } = {
+    radius: null,
+    center: null
+  };
+  root.traverse((object) => {
+    const value = Number(object.userData?.ScaledBoundingRadius);
+    if (sourceBounds.radius === null && Number.isFinite(value) && value > 0) {
+      sourceBounds.radius = value;
+    }
+    const center = object.userData?.ScaledBoundingSphereCenter;
+    if (sourceBounds.center === null && Array.isArray(center) && center.length >= 3) {
+      sourceBounds.center = center.slice(0, 3).map(Number);
+    }
+  });
+
+  camera.updateMatrixWorld(true);
+  const centerWorld = sourceBounds.center?.every(Number.isFinite)
+    ? root.localToWorld(new THREE.Vector3(
+      sourceBounds.center[0],
+      sourceBounds.center[1],
+      sourceBounds.center[2]
+    ))
+    : sphere.center;
+  const centerView = centerWorld.clone().applyMatrix4(camera.matrixWorldInverse);
+  return THREE.MathUtils.clamp(
+    Math.floor(Math.max(0, -centerView.z - (sourceBounds.radius ?? sphere.radius))),
+    0,
+    127
+  );
 }
 
 function frameTie(

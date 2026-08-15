@@ -143,7 +143,7 @@ function createTieTextureMaterial(source: THREE.Material): THREE.Material {
   };
 
   configureModelMaterialTransparency(material, modelMaterialInfo);
-  material.side = THREE.FrontSide;
+  material.side = source.side;
   if (modelMaterialInfo.usesGlowEmission) {
     material.colorNode = createTieGlowNode(material, modelMaterialInfo, null);
   }
@@ -206,7 +206,7 @@ function createTieDisplayMaterial(
   }
 
   configureModelMaterialTransparency(material, modelMaterialInfo);
-  material.side = THREE.FrontSide;
+  material.side = source.side;
   material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
   if (modelMaterialInfo.usesGlowEmission) {
     const glowNode = createTieGlowNode(material, modelMaterialInfo, glowColorBinding);
