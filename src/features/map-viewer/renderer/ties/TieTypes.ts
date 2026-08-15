@@ -138,6 +138,19 @@ export const ps2ToGltfBasisMatrix = new THREE.Matrix4().set(
 );
 export const gltfToPs2BasisMatrix = ps2ToGltfBasisMatrix.clone().invert();
 
+export function setViewerTieGroupRotation(
+  target: THREE.Matrix4,
+  sourceRotation: THREE.Matrix4,
+  controllerRotation: THREE.Matrix4 | null,
+  inverseControllerRotation: THREE.Matrix4 | null
+): void {
+  target.copy(sourceRotation);
+  if (controllerRotation && inverseControllerRotation) {
+    target.premultiply(controllerRotation).multiply(inverseControllerRotation);
+  }
+  target.premultiply(ps2ToGltfBasisMatrix).multiply(gltfToPs2BasisMatrix);
+}
+
 export const tieAmbientAttributeName = 'tieAmbientIndex';
 export const tieAmbientAttributeAliases = [
   tieAmbientAttributeName,

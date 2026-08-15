@@ -1,8 +1,8 @@
 import * as THREE from 'three/webgpu';
 import type { DlMobyInstance } from '../../../../../../../services/wasm/ratchetPs2Wasm';
 import {
-  gltfToPs2BasisMatrix,
-  ps2ToGltfBasisMatrix
+  ps2ToGltfBasisMatrix,
+  setViewerTieGroupRotation
 } from '../../../../ties/TieTypes';
 import {
   MobyClass,
@@ -16,6 +16,8 @@ interface RotatingTieGroupConfig {
   tieGroupIndices: number[];
   rotateFromInstanceOrigins: boolean;
   rotationRadiansPerSecond: THREE.Vector3;
+  controllerRotation: THREE.Matrix4;
+  inverseControllerRotation: THREE.Matrix4;
   pivot: THREE.Vector3;
   angles: THREE.Vector3;
 }
@@ -95,10 +97,12 @@ export class RotatingTieGroupMobyClass extends MobyClass {
   private applyTieGroupTransform(config: RotatingTieGroupConfig): void {
     this.euler.set(config.angles.x, config.angles.y, config.angles.z, 'XYZ');
     this.ps2RotationMatrix.makeRotationFromEuler(this.euler);
-    this.viewerRotationMatrix
-      .copy(ps2ToGltfBasisMatrix)
-      .multiply(this.ps2RotationMatrix)
-      .multiply(gltfToPs2BasisMatrix);
+    setViewerTieGroupRotation(
+      this.viewerRotationMatrix,
+      this.ps2RotationMatrix,
+      config.rotateFromInstanceOrigins ? null : config.controllerRotation,
+      config.rotateFromInstanceOrigins ? null : config.inverseControllerRotation
+    );
     for (const tieGroupIndex of config.tieGroupIndices) {
       this.context.tieController.setTieGroupRotation(
         tieGroupIndex,
@@ -135,11 +139,19 @@ function parseRotatingTieGroupPvar(instance: DlMobyInstance): RotatingTieGroupCo
     instance.position.y,
     instance.position.z
   ).applyMatrix4(ps2ToGltfBasisMatrix);
+  const controllerRotation = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(
+    finiteOrZero(instance.rotation.x),
+    finiteOrZero(instance.rotation.y),
+    finiteOrZero(instance.rotation.z),
+    'ZYX'
+  ));
 
   return {
     tieGroupIndices,
     rotateFromInstanceOrigins: view.getInt32(0x1c, true) !== 0,
     rotationRadiansPerSecond,
+    controllerRotation,
+    inverseControllerRotation: controllerRotation.clone().invert(),
     pivot,
     angles: new THREE.Vector3()
   };
