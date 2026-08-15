@@ -66,7 +66,6 @@ export interface ModelMaterialInfo {
   reflectiveMaxBlend: number;
   reflectiveBleedColor: THREE.Color;
   reflectiveBleedAlpha: number;
-  preserveTieMultipass: boolean;
 }
 
 export interface ModelMaterialFeatureOptions {
@@ -233,8 +232,7 @@ export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMa
     reflectiveBleedAlpha: readNumberExtra(
       source,
       ['TieReflectiveBleedAlpha', 'DlTieReflectiveBleedAlpha'],
-      1),
-    preserveTieMultipass: family === 'tie' && (usesReflectiveMask || passFlags !== 0 || usesGlowEmission)
+      1)
   };
 }
 
@@ -303,8 +301,6 @@ export function applyModelMaterialFeatureColorNode(
 
   if (info.usesReflectiveMask) {
     return createModelReflectionSecondPassNode(material, info, baseColorNode, colorNode, options.shine);
-  } else if (info.family === 'tie' && info.passFlags !== 0 && !info.usesGlowEmission) {
-    colorNode = colorNode.add(createModelShineNode(material, info, options.shine));
   }
 
   return applyModelMaterialDebugMode(
@@ -323,51 +319,6 @@ function createModelGlowNode(
 ): Node<'vec3'> {
   return baseColorNode
     .mul(uniform(new THREE.Vector3(info.glowTint.r, info.glowTint.g, info.glowTint.b)));
-}
-
-function createModelShineNode(
-  material: THREE.MeshBasicNodeMaterial,
-  info: ModelMaterialInfo,
-  options: ModelShineOptions = {}
-): Node<'vec3'> {
-  const mask = float(1);
-  const viewDirection = normalize(cameraPosition.sub(positionWorld));
-  const normal = normalize(normalWorld);
-  const viewFacing = max(dot(normal, viewDirection), float(0));
-  const fresnel = pow(float(1).sub(viewFacing), float(info.usesReflectiveMask ? 2.35 : 4));
-  const strength = info.usesReflectiveMask ? 1.75 : 0.34;
-  const lightTintSource = max(options.tintNode ?? vec3(1, 1, 1), vec3(0.025, 0.025, 0.025));
-  const lightTintPeak = max(
-    max(lightTintSource.r, lightTintSource.g),
-    max(lightTintSource.b, float(0.05))
-  );
-  const lightTint = mix(lightTintSource, lightTintSource.div(lightTintPeak), float(0.72));
-  const skyboxReflection = options.skyboxTexture
-    ? createSkyboxReflectionNode(options.skyboxTexture, viewDirection, normal)
-    : vec3(1, 1, 1);
-  const reflectionScale = options.skyboxReflectionScaleNode ?? float(options.skyboxTexture ? 1 : 0);
-  const reflectionMix = clamp(reflectionScale.mul(float(0.72)), float(0), float(1));
-  const reflectionBase = options.skyboxTexture
-    ? reflectionScale.mul(float(info.usesReflectiveMask ? 0.3 : 0.05))
-    : float(0);
-  const shineScale = options.shineScaleNode ?? float(1);
-  const reflectionTextureTint = clamp(
-    skyboxReflection.mul(float(1.65)).add(vec3(0.18, 0.18, 0.18)),
-    vec3(0.18, 0.18, 0.18),
-    vec3(1.35, 1.35, 1.35)
-  );
-  const reflectionTint = mix(
-    vec3(0.82, 0.82, 0.82),
-    reflectionTextureTint,
-    reflectionMix
-  );
-
-  return lightTint
-    .mul(reflectionTint)
-    .mul(fresnel.add(reflectionBase))
-    .mul(mask)
-    .mul(float(strength))
-    .mul(shineScale);
 }
 
 function createModelReflectionSecondPassNode(

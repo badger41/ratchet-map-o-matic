@@ -190,7 +190,6 @@ function createTieDisplayMaterial(
     mapOmaticTieAmbientTexture: ambientBinding?.texture ?? null,
     mapOmaticTieGlowColorTexture: glowColorBinding?.texture ?? null,
     mapOmaticTieDirectionalLightMaterial: directionalLightBinding !== null,
-    mapOmaticTiePreserveMultipassMaterial: modelMaterialInfo.preserveTieMultipass,
     mapOmaticTieSecondUvReflectionMaterial: hasSecondUvReflection,
     mapOmaticTieReflectionTexture: reflectionTexture,
     mapOmaticModelMaterialInfo: modelMaterialInfo,
@@ -216,8 +215,7 @@ function createTieDisplayMaterial(
     return material;
   }
 
-  const needsFeatureColorNode = modelMaterialInfo.usesReflectiveMask
-    || modelMaterialInfo.passFlags !== 0;
+  const needsFeatureColorNode = modelMaterialInfo.usesReflectiveMask;
   if (ambientBinding || directionalLightBinding || needsFeatureColorNode) {
     const lightingUniforms = createTieLightingUniforms(
       options,

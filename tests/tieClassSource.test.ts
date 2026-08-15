@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
+import { vec3 } from 'three/tsl';
 import { buildTieOptions } from '../src/features/map-viewer/components/tieWindowData.ts';
+import {
+  applyModelMaterialFeatureColorNode,
+  resolveModelMaterialInfo
+} from '../src/features/map-viewer/renderer/model-materials/ModelMaterialNodes.ts';
 import {
   mergeAdjacentTiePrimitives,
   splitIndexedTieGeometryComponents
@@ -74,4 +79,23 @@ test('splits disconnected transparent tie panels into sortable geometry', () => 
     [0, 1, 2],
     [3, 4, 5]
   ]);
+});
+
+test('tie base render-state flag does not add a reflection pass', () => {
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.userData = {
+    TieTextureAlphaUsage: 'Opaque',
+    TiePassFlags: 0x08,
+    TieSecondPassMode: 'None',
+    TieEnvironmentPassBits: 0
+  };
+  const litColor = vec3(0.25, 0.5, 0.75);
+  const color = applyModelMaterialFeatureColorNode(
+    material,
+    resolveModelMaterialInfo(material, 'tie'),
+    vec3(1, 1, 1),
+    litColor
+  );
+
+  assert.equal(color, litColor);
 });
