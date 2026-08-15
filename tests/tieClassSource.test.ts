@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
 import { buildTieOptions } from '../src/features/map-viewer/components/tieWindowData.ts';
-import { mergeAdjacentTiePrimitives } from '../src/features/map-viewer/renderer/ties/TiePrimitiveMerge.ts';
+import {
+  mergeAdjacentTiePrimitives,
+  splitIndexedTieGeometryComponents
+} from '../src/features/map-viewer/renderer/ties/TiePrimitiveMerge.ts';
 import type { TiePrimitive } from '../src/features/map-viewer/renderer/ties/TieTypes.ts';
 
 test('adjacent compatible tie primitives share one exact index stream', () => {
@@ -54,5 +57,21 @@ test('tie viewer lists only loadable classes', () => {
   assert.deepEqual(options.map(({ modelId, label }) => ({ modelId, label })), [
     { modelId: 10, label: 'Class 10 (0x000a)' },
     { modelId: 20, label: 'Class 20 (0x0014)' }
+  ]);
+});
+
+test('splits disconnected transparent tie panels into sortable geometry', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0, 1, 0, 0, 0, 1, 0,
+    10, 0, 0, 11, 0, 0, 10, 1, 0
+  ], 3));
+  geometry.setIndex([0, 1, 2, 3, 4, 5]);
+
+  const components = splitIndexedTieGeometryComponents(geometry);
+  assert.equal(components.length, 2);
+  assert.deepEqual(components.map((component) => Array.from(component.index!.array)), [
+    [0, 1, 2],
+    [3, 4, 5]
   ]);
 });

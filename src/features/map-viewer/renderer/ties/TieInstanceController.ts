@@ -77,6 +77,12 @@ import {
   clampByte,
   LoadYieldController
 } from './tieUtils';
+import {
+  aboveWaterRenderOrder,
+  belowWaterRenderOrder,
+  createWaterSurfaceMaterialPasses,
+  enableAlphaDepthWrite
+} from '../WaterSurfacePass';
 
 type TieGroup = THREE.Group & {
   isBundleGroup?: boolean;
@@ -619,6 +625,8 @@ export class TieInstanceController {
     targetGroup.add(mesh);
     const binding: TieInstancedMeshBinding = {
       mesh,
+      belowWaterMesh: null,
+      sourceRenderOrder: primitive.renderOrder,
       records,
       primitiveMatrixWorld: primitive.matrixWorld.clone(),
       fullMirrored,
@@ -726,26 +734,57 @@ export class TieInstanceController {
   }
 
   private applyBindingMaterial(binding: TieInstancedMeshBinding): void {
+    let material: THREE.Material | THREE.Material[];
     if (this.materialMode === 'plain') {
-      binding.mesh.material = this.getPlainMaterial();
-      return;
-    }
-
-    if (this.materialMode === 'texture') {
+      material = this.getPlainMaterial();
+    } else if (this.materialMode === 'texture') {
       binding.textureMaterial ??= cloneTieTextureMaterial(this.getBindingMaterialSource(binding));
-      binding.mesh.material = binding.textureMaterial;
+      material = binding.textureMaterial;
+    } else {
+      const ambientBinding = this.options.colorsEnabled ? binding.ambientBinding : null;
+      if (ambientBinding) {
+        binding.coloredMaterial ??= this.cloneBindingDisplayMaterial(binding, ambientBinding);
+        material = binding.coloredMaterial;
+      } else {
+        binding.flatMaterial ??= this.cloneBindingDisplayMaterial(binding, null);
+        material = binding.flatMaterial;
+      }
+      updateTieRenderOptionUniforms(binding, this.options);
+    }
+
+    this.applyBindingWaterPasses(binding, material);
+  }
+
+  private applyBindingWaterPasses(
+    binding: TieInstancedMeshBinding,
+    material: THREE.Material | THREE.Material[]
+  ): void {
+    const passes = createWaterSurfaceMaterialPasses(material);
+    binding.mesh.material = passes?.above ?? material;
+    binding.mesh.renderOrder = passes ? aboveWaterRenderOrder : binding.sourceRenderOrder;
+    if (!passes) {
+      if (binding.belowWaterMesh) {
+        binding.belowWaterMesh.visible = false;
+      }
       return;
     }
 
-    const ambientBinding = this.options.colorsEnabled ? binding.ambientBinding : null;
-    if (ambientBinding) {
-      binding.coloredMaterial ??= this.cloneBindingDisplayMaterial(binding, ambientBinding);
-      binding.mesh.material = binding.coloredMaterial;
-    } else {
-      binding.flatMaterial ??= this.cloneBindingDisplayMaterial(binding, null);
-      binding.mesh.material = binding.flatMaterial;
+    enableAlphaDepthWrite(passes.above);
+    enableAlphaDepthWrite(passes.below);
+
+    let belowWaterMesh = binding.belowWaterMesh;
+    if (!belowWaterMesh) {
+      belowWaterMesh = binding.mesh.clone(false);
+      belowWaterMesh.name = `${binding.mesh.name}_below_water`;
+      belowWaterMesh.instanceMatrix = binding.mesh.instanceMatrix;
+      belowWaterMesh.boundingBox = binding.mesh.boundingBox;
+      belowWaterMesh.boundingSphere = binding.mesh.boundingSphere;
+      binding.mesh.parent?.add(belowWaterMesh);
+      binding.belowWaterMesh = belowWaterMesh;
     }
-    updateTieRenderOptionUniforms(binding, this.options);
+    belowWaterMesh.material = passes.below;
+    belowWaterMesh.renderOrder = belowWaterRenderOrder;
+    belowWaterMesh.visible = true;
   }
 
   private cloneBindingDisplayMaterial(
@@ -800,6 +839,9 @@ export class TieInstanceController {
     }
     for (const binding of this.meshBindings) {
       binding.mesh.frustumCulled = !this.bundleEnabled;
+      if (binding.belowWaterMesh) {
+        binding.belowWaterMesh.frustumCulled = !this.bundleEnabled;
+      }
     }
 
     this.markBundleNeedsUpdate();

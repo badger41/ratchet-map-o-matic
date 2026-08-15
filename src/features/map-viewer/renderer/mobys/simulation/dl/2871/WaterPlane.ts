@@ -29,6 +29,11 @@ import {
   type WaterWaveComponent,
   type WaterWaveSettings
 } from './WaterPlaneMaterial';
+import {
+  resolveWaterSurfaceHeight,
+  setWaterSurface,
+  waterRenderOrder
+} from '../../../../WaterSurfacePass';
 
 export {
   defaultWaterPlaneDebugOptions,
@@ -86,7 +91,6 @@ type WaterTextureMode = 'none' | 'world' | 'worldUnderlay';
 const dlFxLevelTextureBaseId = 0x62;
 const uyaFxLevelTextureBaseId = dlFxLevelTextureBaseId + 2;
 const waterPvarByteLength = 0x70;
-const waterPlaneRenderOrder = 1_000_000_000;
 const ps2ColorByteScale = 1 / ps2FullOpacityAlphaByte;
 const waterOverlayAlphaEnableThreshold = 0x10;
 const waterFogIntensityScale = 1 / 100;
@@ -109,6 +113,7 @@ export class WaterPlaneMobyClass extends MobyClass {
   private cameraPitchAmount = 0;
   private waterPatchScale = 1;
   private elapsedSeconds = 0;
+  private readonly surfaceY: number | null;
 
   static async create(context: MobyClassContext): Promise<WaterPlaneMobyClass | null> {
     const configs = context.instances
@@ -135,12 +140,13 @@ export class WaterPlaneMobyClass extends MobyClass {
     private readonly configs: WaterPvar[]
   ) {
     super(context, waterPlaneMobyClassId);
-    context.root.renderOrder = Math.max(context.root.renderOrder, waterPlaneRenderOrder);
-    this.group.renderOrder = waterPlaneRenderOrder;
+    this.surfaceY = resolveWaterSurfaceHeight(configs.map(getWaterRenderPosZ));
+    this.group.renderOrder = waterRenderOrder;
   }
 
   override setEnabled(enabled: boolean): void {
     super.setEnabled(enabled);
+    setWaterSurface(this.surfaceY, enabled);
     this.context.mobyController.setClassVisible(waterPlaneMobyClassId, !enabled);
   }
 
@@ -180,6 +186,7 @@ export class WaterPlaneMobyClass extends MobyClass {
   }
 
   override dispose(): void {
+    setWaterSurface(null, false);
     this.context.mobyController.setClassVisible(waterPlaneMobyClassId, true);
     for (const layer of this.layers) {
       layer.texture?.dispose();
@@ -302,7 +309,7 @@ export class WaterPlaneMobyClass extends MobyClass {
     object.frustumCulled = false;
     object.rotation.x = -Math.PI / 2;
     object.position.y = config.posZ + yOffset;
-    setObjectRenderOrder(object, waterPlaneRenderOrder + (textureMode === 'world' ? 1 : 0));
+    setObjectRenderOrder(object, waterRenderOrder + (textureMode === 'world' ? 1 : 0));
     this.group.add(object);
     this.layers.push({
       object,
@@ -330,7 +337,7 @@ export class WaterPlaneMobyClass extends MobyClass {
     const object = createWaterBackgroundDarkenObject(materialName, opacity, config.waves);
     object.rotation.x = -Math.PI / 2;
     object.position.y = config.posZ;
-    setObjectRenderOrder(object, waterPlaneRenderOrder - 1);
+    setObjectRenderOrder(object, waterRenderOrder - 1);
     this.group.add(object);
     this.layers.push({
       object,

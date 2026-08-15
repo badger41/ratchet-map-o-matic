@@ -6,12 +6,16 @@ export function disposeObject3D(
   disposedMaterials = new Set<THREE.Material>(),
   disposedTextures = new Set<THREE.Texture>()
 ): void {
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
   root.traverse((object) => {
     if (!isMesh(object)) {
       return;
     }
 
-    object.geometry?.dispose();
+    if (object.geometry && !disposedGeometries.has(object.geometry)) {
+      disposedGeometries.add(object.geometry);
+      object.geometry.dispose();
+    }
     disposeMaterial(object.material, disposedMaterials, disposedTextures);
   });
 }

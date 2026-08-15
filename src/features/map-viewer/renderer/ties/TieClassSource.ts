@@ -17,7 +17,11 @@ import {
   isRecord,
   numberValue
 } from './tieUtils';
-import { mergeAdjacentTiePrimitives } from './TiePrimitiveMerge';
+import {
+  mergeAdjacentTiePrimitives,
+  splitIndexedTieGeometryComponents
+} from './TiePrimitiveMerge';
+import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
 
 interface TieGltfMeshJson {
   extras?: Record<string, unknown>;
@@ -88,7 +92,22 @@ export function collectTiePrimitives(source: THREE.Object3D): TiePrimitive[] {
     });
   });
 
-  return mergeAdjacentTiePrimitives(primitives);
+  return splitAlphaBlendPrimitives(mergeAdjacentTiePrimitives(primitives));
+}
+
+function splitAlphaBlendPrimitives(primitives: TiePrimitive[]): TiePrimitive[] {
+  return primitives.flatMap((primitive) => {
+    if (!modelMaterialUsesAlphaBlend(primitive.material)) {
+      return primitive;
+    }
+
+    const geometries = splitIndexedTieGeometryComponents(primitive.geometry);
+    return geometries.map((geometry, index) => ({
+      ...primitive,
+      name: geometries.length > 1 ? `${primitive.name}_component_${index}` : primitive.name,
+      geometry
+    }));
+  });
 }
 
 export function pruneToLod0(root: THREE.Object3D): void {

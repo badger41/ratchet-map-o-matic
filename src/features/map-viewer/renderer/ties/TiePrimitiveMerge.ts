@@ -15,6 +15,73 @@ export function mergeAdjacentTiePrimitives(primitives: TiePrimitive[]): TiePrimi
   return merged;
 }
 
+export function splitIndexedTieGeometryComponents(geometry: THREE.BufferGeometry): THREE.BufferGeometry[] {
+  const index = geometry.index;
+  if (!index || geometry.groups.length > 0) {
+    return [geometry];
+  }
+
+  const start = Math.max(0, geometry.drawRange.start);
+  const available = Math.max(0, index.count - start);
+  const requested = Number.isFinite(geometry.drawRange.count) ? geometry.drawRange.count : available;
+  const end = start + Math.floor(Math.min(available, requested) / 3) * 3;
+  const parents = new Map<number, number>();
+  const find = (value: number): number => {
+    const parent = parents.get(value);
+    if (parent === undefined) {
+      parents.set(value, value);
+      return value;
+    }
+    if (parent === value) {
+      return value;
+    }
+
+    const root = find(parent);
+    parents.set(value, root);
+    return root;
+  };
+  const join = (left: number, right: number): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) {
+      parents.set(rightRoot, leftRoot);
+    }
+  };
+
+  for (let offset = start; offset < end; offset += 3) {
+    const a = index.getX(offset);
+    join(a, index.getX(offset + 1));
+    join(a, index.getX(offset + 2));
+  }
+
+  const componentIndices = new Map<number, number[]>();
+  for (let offset = start; offset < end; offset += 3) {
+    const a = index.getX(offset);
+    const root = find(a);
+    const indices = componentIndices.get(root) ?? [];
+    indices.push(a, index.getX(offset + 1), index.getX(offset + 2));
+    componentIndices.set(root, indices);
+  }
+  if (componentIndices.size <= 1) {
+    return [geometry];
+  }
+
+  return Array.from(componentIndices.values(), (indices) => {
+    const component = new THREE.BufferGeometry();
+    component.name = geometry.name;
+    for (const [name, attribute] of Object.entries(geometry.attributes)) {
+      component.setAttribute(name, attribute);
+    }
+    component.morphAttributes = { ...geometry.morphAttributes };
+    component.morphTargetsRelative = geometry.morphTargetsRelative;
+    component.userData = { ...geometry.userData };
+    component.setIndex(indices);
+    component.computeBoundingBox();
+    component.computeBoundingSphere();
+    return component;
+  });
+}
+
 function canMerge(left: TiePrimitive, right: TiePrimitive): boolean {
   return sameMaterial(left.material, right.material)
     && left.renderOrder === right.renderOrder

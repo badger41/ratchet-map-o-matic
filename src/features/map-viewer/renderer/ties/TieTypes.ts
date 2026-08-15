@@ -30,6 +30,8 @@ export interface PreparedTieRecord {
 
 export interface TieInstancedMeshBinding {
   mesh: THREE.InstancedMesh;
+  belowWaterMesh: THREE.InstancedMesh | null;
+  sourceRenderOrder: number;
   records: PreparedTieRecord[];
   primitiveMatrixWorld: THREE.Matrix4;
   fullMirrored: boolean;

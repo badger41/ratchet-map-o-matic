@@ -49,6 +49,12 @@ import {
   type ShrubPrimitive
 } from './ShrubTypes';
 import { LoadYieldController } from '../ties/tieUtils';
+import {
+  aboveWaterRenderOrder,
+  belowWaterRenderOrder,
+  createWaterSurfaceMaterialPasses,
+  type WaterSurfaceMaterialPasses
+} from '../WaterSurfacePass';
 
 type ShrubGroup = THREE.Group & {
   isBundleGroup?: boolean;
@@ -306,12 +312,13 @@ export class ShrubInstanceController {
         }
 
         const material = cloneShrubMaterial(primitive.material, this.directionalLightBinding, this.options, displayOptions);
+        const materialPasses = createWaterSurfaceMaterialPasses(material);
         for (const [chunkIndex, records] of normalChunks.entries()) {
-          this.addInstancedPrimitive(group, classId, 'normal', records, primitive, chunkIndex, material);
+          this.addInstancedPrimitive(group, classId, 'normal', records, primitive, chunkIndex, material, materialPasses);
         }
 
         for (const [chunkIndex, records] of mirroredChunks.entries()) {
-          this.addInstancedPrimitive(group, classId, 'mirrored', records, primitive, chunkIndex, material);
+          this.addInstancedPrimitive(group, classId, 'mirrored', records, primitive, chunkIndex, material, materialPasses);
         }
 
         await yieldController.maybeYield();
@@ -330,7 +337,8 @@ export class ShrubInstanceController {
     records: PreparedShrubRecord[],
     primitive: ShrubPrimitive,
     chunkIndex: number,
-    material: THREE.Material | THREE.Material[]
+    material: THREE.Material | THREE.Material[],
+    materialPasses: WaterSurfaceMaterialPasses | null
   ): void {
     const fullMirrored = records[0].isMirrored !== (primitive.matrixWorld.determinant() < 0);
     const geometry = createInstancedGeometry(primitive.geometry);
@@ -342,7 +350,7 @@ export class ShrubInstanceController {
       shrubAmbientAttributeName,
       this.getChunkAttribute(this.ambientColorsByChunk, records, () => createShrubAmbientColorInstanceAttribute(records))
     );
-    const mesh = new THREE.InstancedMesh(geometry, material, records.length);
+    const mesh = new THREE.InstancedMesh(geometry, materialPasses?.above ?? material, records.length);
     mesh.name = `shrub_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;
     mesh.frustumCulled = !this.bundleEnabled;
@@ -371,8 +379,22 @@ export class ShrubInstanceController {
     const targetGroup = this.alphaBlendGroup && modelMaterialUsesAlphaBlend(material)
       ? this.alphaBlendGroup
       : group;
+    if (materialPasses) {
+      mesh.renderOrder = aboveWaterRenderOrder;
+      const belowWaterMesh = mesh.clone(false);
+      belowWaterMesh.name = `${mesh.name}_below_water`;
+      belowWaterMesh.material = materialPasses.below;
+      belowWaterMesh.instanceMatrix = mesh.instanceMatrix;
+      belowWaterMesh.renderOrder = belowWaterRenderOrder;
+      targetGroup.add(belowWaterMesh);
+      this.meshBindings.push({
+        mesh: belowWaterMesh,
+        material: materialPasses.below,
+        isBillboard: primitive.isBillboard
+      });
+    }
     targetGroup.add(mesh);
-    this.meshBindings.push({ mesh, material, isBillboard: primitive.isBillboard });
+    this.meshBindings.push({ mesh, material: materialPasses?.above ?? material, isBillboard: primitive.isBillboard });
 
     this.stats.batches += 1;
     this.stats.billboardBatches += primitive.isBillboard ? 1 : 0;

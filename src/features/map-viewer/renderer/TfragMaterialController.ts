@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
-import { texture, uv, vertexColor } from 'three/tsl';
+import { float, texture, uv, vertexColor } from 'three/tsl';
 import type { DirectionalLightRecord, TfragMaterialOptions, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
 import {
   applyTfragFogNode,
@@ -15,6 +15,12 @@ import {
   type TfragAtlas,
   type TfragAtlasRegion
 } from './TfragAtlas';
+import { resolveTfragAlphaState } from './TfragMaterialState';
+import {
+  aboveWaterRenderOrder,
+  belowWaterRenderOrder,
+  createWaterSurfaceMaterialPasses
+} from './WaterSurfacePass';
 
 type AnyAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 type TypedArray =
@@ -37,6 +43,7 @@ type PositionAttribute = Pick<THREE.BufferAttribute | THREE.InterleavedBufferAtt
 interface PreparedTfrag {
   geometry: THREE.BufferGeometry;
   mesh: THREE.Mesh;
+  belowWaterMesh: THREE.Mesh | null;
   sourcePrimitives: number;
 }
 
@@ -214,7 +221,6 @@ export class TfragMaterialController {
       if (atlasRegion) {
         applyTfragAtlasUvs(geometry, atlasRegion);
       }
-
       bakeTfragGeometryColors(geometry, bakeContext);
 
       const batchKey = `${batchTarget.uuid}:${materialKey}`;
@@ -248,10 +254,11 @@ export class TfragMaterialController {
       if (!mergedGeometry) {
         for (const geometry of batch.geometries) {
           const mesh = createMergedTfragMesh(geometry, batch.material, mergedIndex);
-          batch.target.add(mesh);
+          batch.target.add(...mesh.objects);
           this.prepared.push({
             geometry,
-            mesh,
+            mesh: mesh.above,
+            belowWaterMesh: mesh.below,
             sourcePrimitives: 1
           });
           mergedIndex += 1;
@@ -266,10 +273,11 @@ export class TfragMaterialController {
       }
 
       const mesh = createMergedTfragMesh(mergedGeometry, batch.material, mergedIndex);
-      batch.target.add(mesh);
+      batch.target.add(...mesh.objects);
       this.prepared.push({
         geometry: mergedGeometry,
-        mesh,
+        mesh: mesh.above,
+        belowWaterMesh: mesh.below,
         sourcePrimitives: batch.sourcePrimitives
       });
       mergedIndex += 1;
@@ -294,6 +302,9 @@ export class TfragMaterialController {
     for (const prepared of this.prepared) {
       prepared.geometry.dispose();
       disposeMaterial(prepared.mesh.material, disposedMaterials);
+      if (prepared.belowWaterMesh) {
+        disposeMaterial(prepared.belowWaterMesh.material, disposedMaterials);
+      }
     }
 
     this.prepared = [];
@@ -351,13 +362,27 @@ export class TfragMaterialController {
   }
 }
 
-function createMergedTfragMesh(geometry: THREE.BufferGeometry, material: THREE.Material, index: number): THREE.Mesh {
+function createMergedTfragMesh(
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  index: number
+): { above: THREE.Mesh; below: THREE.Mesh | null; objects: THREE.Mesh[] } {
   if (!geometry.boundingSphere) {
     geometry.computeBoundingSphere();
   }
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = `tfrag_lod0_merged_${index.toString().padStart(3, '0')}`;
-  return mesh;
+  const name = `tfrag_lod0_merged_${index.toString().padStart(3, '0')}`;
+  const passes = createWaterSurfaceMaterialPasses(material);
+  const above = new THREE.Mesh(geometry, passes?.above ?? material);
+  above.name = name;
+  if (!passes) {
+    return { above, below: null, objects: [above] };
+  }
+
+  above.renderOrder = aboveWaterRenderOrder;
+  const below = new THREE.Mesh(geometry, passes.below);
+  below.name = `${name}_below_water`;
+  below.renderOrder = belowWaterRenderOrder;
+  return { above, below, objects: [below, above] };
 }
 
 function getTfragBatchTarget(root: THREE.Object3D, object: THREE.Object3D): THREE.Object3D {
@@ -578,12 +603,28 @@ function createTfragDisplayMaterial(
   });
   material.forceSinglePass = true;
 
-  if (material.map) {
-    material.map.colorSpace = THREE.SRGBColorSpace;
+  const map = material.map;
+  if (map) {
+    const mapSample = texture(map, uv());
+    map.colorSpace = THREE.SRGBColorSpace;
     material.colorNode = applyTfragFogNode(
-      applyTfragDisplayLiftNode(texture(material.map, uv()).rgb.mul(vertexColor().rgb), displayOptions),
+      applyTfragDisplayLiftNode(mapSample.rgb.mul(vertexColor().rgb), displayOptions),
       displayOptions
     );
+
+    const alphaState = resolveTfragAlphaState(
+      material.transparent,
+      material.opacity,
+      material.alphaTest,
+      material.depthWrite
+    );
+    if (alphaState) {
+      material.opacityNode = mapSample.a
+        .mul(float(alphaState.opacityScale))
+        .clamp(0, 1);
+      material.depthWrite = alphaState.depthWrite;
+      material.alphaTest = alphaState.alphaTest;
+    }
   } else {
     material.colorNode = applyTfragFogNode(applyTfragDisplayLiftNode(vertexColor().rgb, displayOptions), displayOptions);
   }

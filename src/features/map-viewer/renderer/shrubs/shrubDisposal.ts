@@ -3,12 +3,16 @@ import { isMesh } from './ShrubClassSource';
 
 export function disposeObject3D(root: THREE.Object3D): void {
   const disposedMaterials = new Set<THREE.Material>();
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
   root.traverse((object) => {
     if (!isMesh(object)) {
       return;
     }
 
-    object.geometry?.dispose();
+    if (object.geometry && !disposedGeometries.has(object.geometry)) {
+      disposedGeometries.add(object.geometry);
+      object.geometry.dispose();
+    }
     disposeMaterial(object.material, disposedMaterials);
   });
 }
