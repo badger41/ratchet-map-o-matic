@@ -160,6 +160,7 @@ export const tieAmbientAttributeAliases = [
   '_DL_TIE_AMBIENT_INDEX'
 ];
 export const tieAmbientInstanceRowAttributeName = 'tieAmbientRow';
+export const tieEnvironmentNormalAttributeName = '_tie_env_normal';
 export const tieGlowColorRowAttributeName = 'tieGlowColorRow';
 export const tieGlowBloomLayer = 1;
 export const tieAveragePositionUserDataKey = 'mapOmaticTieAveragePosition';

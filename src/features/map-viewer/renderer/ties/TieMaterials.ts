@@ -105,6 +105,12 @@ export function tieMaterialUsesGlowEmission(material: THREE.Material | THREE.Mat
     : resolveModelMaterialInfo(material, 'tie').usesGlowEmission;
 }
 
+export function tieMaterialUsesReflection(material: THREE.Material | THREE.Material[]): boolean {
+  return Array.isArray(material)
+    ? material.some((item) => resolveModelMaterialInfo(item, 'tie').usesReflectiveMask)
+    : resolveModelMaterialInfo(material, 'tie').usesReflectiveMask;
+}
+
 export function updateTieRenderOptionUniforms(binding: TieInstancedMeshBinding, options: TieRenderOptions): void {
   if (binding.flatMaterial) {
     updateTieMaterialLightingUniforms(binding.flatMaterial, options, false);
@@ -350,9 +356,6 @@ function createTieColorNode(
     baseColorNode,
     litColorNode,
     createTieMaterialFeatureOptions(
-      directionalColorNode && directionalLightNode
-        ? max(directionalLightNode, directionalColorNode.mul(float(0.45)))
-        : directionalColorNode,
       skyboxReflectionTexture,
       lightingUniforms,
       hasSecondUvReflection));
@@ -447,14 +450,12 @@ function applyTieColorStrength(colorNode: Node<'vec3'>, colorStrength: Node<'flo
 }
 
 function createTieMaterialFeatureOptions(
-  tintNode: Node<'vec3'> | null,
   skyboxReflectionTexture: THREE.Texture | null,
   lightingUniforms: TieLightingUniforms,
   hasSecondUvReflection: boolean
 ): ModelMaterialFeatureOptions {
   return {
     shine: {
-      tintNode,
       skyboxTexture: skyboxReflectionTexture,
       shineScaleNode: lightingUniforms.shineScale,
       skyboxReflectionScaleNode: lightingUniforms.reflectionScale,

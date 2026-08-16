@@ -401,7 +401,7 @@ function resolveTieExposure(options: TieRenderOptions): number {
 }
 
 function resolveTieShineIntensity(options: TieRenderOptions): number {
-  return Number.isFinite(options.shineIntensity) ? Math.max(0, options.shineIntensity) : 1.35;
+  return Number.isFinite(options.shineIntensity) ? Math.max(0, options.shineIntensity) : 1;
 }
 
 function resolveTieReflectionIntensity(options: TieRenderOptions): number {

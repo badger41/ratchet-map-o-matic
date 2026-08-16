@@ -46,11 +46,15 @@ import {
   cloneTieMaterial,
   cloneTieTextureMaterial,
   tieMaterialUsesGlowEmission,
+  tieMaterialUsesReflection,
   updateTieRenderOptionUniforms
 } from './TieMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
 import type { SceneCameraStart } from '../camera/SceneCameraFraming';
-import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
+import {
+  modelMaterialUsesAlphaBlend,
+  tieReflectionOriginAttributeName
+} from '../model-materials/ModelMaterialNodes';
 import {
   lightSelectorAttributeName,
   emptyTieStats,
@@ -58,6 +62,7 @@ import {
   tieAmbientInstanceRowAttributeName,
   tieAveragePositionUserDataKey,
   tieClassLoadConcurrency,
+  tieEnvironmentNormalAttributeName,
   tieFirstRecordIndexUserDataKey,
   tieFirstRecordLocalIndexUserDataKey,
   tieFirstRecordPositionUserDataKey,
@@ -146,6 +151,8 @@ export class TieInstanceController {
   private readonly ambientRowsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
   private readonly glowRowsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
   private readonly lightSelectorsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
+  private readonly reflectionOriginsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
+  private readonly mirroredReflectionOriginsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
 
   async load(
     parent: THREE.Object3D,
@@ -563,6 +570,21 @@ export class TieInstanceController {
         this.getChunkAttribute(this.glowRowsByChunk, records, () => createTieGlowRowAttribute(records, glowColorBinding))
       );
     }
+    if (tieMaterialUsesReflection(initialMaterial)) {
+      const environmentNormal = geometry.getAttribute(tieEnvironmentNormalAttributeName);
+      const position = geometry.getAttribute('position');
+      if (environmentNormal?.itemSize === 3 && environmentNormal.count === position?.count) {
+        geometry.setAttribute('normal', environmentNormal);
+      }
+      geometry.setAttribute(
+        tieReflectionOriginAttributeName,
+        this.getChunkAttribute(
+          fullMirrored ? this.mirroredReflectionOriginsByChunk : this.reflectionOriginsByChunk,
+          records,
+          () => createTieReflectionOriginAttribute(records, fullMirrored)
+        )
+      );
+    }
 
     const mesh = new THREE.InstancedMesh(
       geometry,
@@ -696,6 +718,7 @@ export class TieInstanceController {
         matrix.decompose(this.instancePosition, this.instanceQuaternion, this.instanceScale);
         this.instanceQuaternion.multiply(this.rotationQuaternion);
         matrix.compose(this.instancePosition, this.instanceQuaternion, this.instanceScale);
+        this.updateTieReflectionOrigin(binding, localIndex, matrix);
         matrix.multiply(binding.primitiveMatrixWorld);
         matrix.elements[12] = baselineMatrix.elements[12];
         matrix.elements[13] = baselineMatrix.elements[13] + this.getLocalOriginRotationLift(binding, baselineMatrix);
@@ -709,12 +732,28 @@ export class TieInstanceController {
       }
     }
 
+    this.updateTieReflectionOrigin(binding, localIndex, matrix);
     matrix.multiply(binding.primitiveMatrixWorld);
     if (binding.fullMirrored) {
       matrix.premultiply(instanceMirrorMatrix);
     }
 
     binding.mesh.setMatrixAt(localIndex, matrix);
+  }
+
+  private updateTieReflectionOrigin(
+    binding: TieInstancedMeshBinding,
+    localIndex: number,
+    matrix: THREE.Matrix4
+  ): void {
+    const attribute = binding.mesh.geometry.getAttribute(tieReflectionOriginAttributeName);
+    if (!(attribute instanceof THREE.InstancedBufferAttribute)) {
+      return;
+    }
+
+    const elements = matrix.elements;
+    attribute.setXYZ(localIndex, binding.fullMirrored ? -elements[12] : elements[12], elements[13], elements[14]);
+    attribute.needsUpdate = true;
   }
 
   private getLocalOriginRotationLift(
@@ -1109,6 +1148,20 @@ function findEarliestTieRecord(records: PreparedTieRecord[]): { recordIndex: num
 function setFromMatrixPosition(matrix: THREE.Matrix4, target: THREE.Vector3): THREE.Vector3 {
   const elements = matrix.elements;
   return target.set(elements[12], elements[13], elements[14]);
+}
+
+function createTieReflectionOriginAttribute(
+  records: PreparedTieRecord[],
+  mirrored: boolean
+): THREE.InstancedBufferAttribute {
+  const positions = new Float32Array(records.length * 3);
+  for (let index = 0; index < records.length; index += 1) {
+    const elements = records[index].instanceMatrix.elements;
+    positions[index * 3] = mirrored ? -elements[12] : elements[12];
+    positions[index * 3 + 1] = elements[13];
+    positions[index * 3 + 2] = elements[14];
+  }
+  return new THREE.InstancedBufferAttribute(positions, 3);
 }
 
 function resolveGeometryBoundingSphere(geometry: THREE.BufferGeometry): THREE.Sphere | null {

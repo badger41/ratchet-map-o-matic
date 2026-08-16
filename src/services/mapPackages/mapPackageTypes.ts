@@ -327,7 +327,7 @@ export const defaultTieRenderOptions: TieRenderOptions = {
   exposure: 1,
   directionalFrontIntensity: 0.8,
   directionalBackIntensity: 1,
-  shineIntensity: 1.35,
+  shineIntensity: 1,
   reflectionIntensity: 1,
   materialDebugMode: 'normal',
   directionalOverrideSlot: null

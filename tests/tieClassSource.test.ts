@@ -99,3 +99,27 @@ test('tie base render-state flag does not add a reflection pass', () => {
 
   assert.equal(color, litColor);
 });
+
+test('tie environment flags add the generated reflection pass', () => {
+  const material = new THREE.MeshBasicNodeMaterial({ map: new THREE.Texture() });
+  material.userData = {
+    TieTextureAlphaUsage: 'ReflectiveMask',
+    TiePassFlags: 0x0a,
+    TieEnvironmentPassBits: 0x02,
+    TieReflectiveEnvironmentSource: 'TieTexture',
+    TieReflectiveBleedColorFactor: [1, 0.875, 0.75]
+  };
+  const info = resolveModelMaterialInfo(material, 'tie');
+  const litColor = vec3(0.25, 0.5, 0.75);
+  const color = applyModelMaterialFeatureColorNode(
+    material,
+    info,
+    vec3(1, 1, 1),
+    litColor,
+    { shine: { skyboxTexture: new THREE.Texture() } }
+  );
+
+  assert.equal(info.secondPassMode, 'GeneratedEnvPass');
+  assert.deepEqual(info.reflectiveBleedColor.toArray(), [1, 0.875, 0.75]);
+  assert.notEqual(color, litColor);
+});
