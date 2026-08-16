@@ -1,6 +1,12 @@
 import * as THREE from 'three/webgpu';
 
 export const mobyLodNames = ['high_lod', 'low_lod', 'far_lod'] as const;
+export const mobyMetalReflectionScaleAttributeName = '_moby_metal_reflection_scale';
+export const mobyReflectionOriginAttributeName = 'mobyReflectionOrigin';
+export const mobyMetalFadeStart = 8;
+export const mobyMetalFadeEnd = 24;
+// MobyProc adds 1000 to clip Z; UpdateViewContext converts it through this W scale into 24-bit depth.
+export const mobyMetalDepthBiasScale = 1000 / (1024 * 0.0016240659169852734 * 0xffffff);
 export type MobyLodName = typeof mobyLodNames[number];
 
 export interface MobyViewOptions {
@@ -56,6 +62,16 @@ export function setMobyMetalsVisible(root: THREE.Object3D, visible: boolean): vo
   if (metals) {
     metals.visible = visible;
   }
+}
+
+export function isMobyMetalObject(object: THREE.Object3D): boolean {
+  for (let current: THREE.Object3D | null = object; current; current = current.parent) {
+    if (current.name === 'metals') {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function mobyPreviewAlphaScale(fullOpacityAlpha: number): number {

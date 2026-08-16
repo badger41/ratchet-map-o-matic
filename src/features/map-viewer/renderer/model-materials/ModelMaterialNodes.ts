@@ -344,6 +344,10 @@ function createReflectiveSkyboxReflectionNode(
 function createSkyboxGeneratedEnvPassReflectionNode(
   textureSource: THREE.Texture
 ): Node<'vec3'> {
+  return createGeneratedEnvironmentTextureSampleNode(textureSource).rgb;
+}
+
+export function createGeneratedEnvironmentTextureSampleNode(textureSource: THREE.Texture) {
   // FUN_00592e10 stores the normalized camera-to-instance-origin vector at
   // +0x90; VU0 entry 0x2a reflects it and maps XY as reflection * 0.3 + 0.5.
   const instanceOriginWorld = modelWorldMatrix
@@ -359,7 +363,7 @@ function createSkyboxGeneratedEnvPassReflectionNode(
     .mul(float(0.3))
     .add(vec2(0.5, 0.5))
     .toVarying('modelGeneratedEnvPassUv');
-  return texture(textureSource, generatedUv).rgb;
+  return texture(textureSource, generatedUv);
 }
 
 function createSkyboxSecondUvReflectionNode(

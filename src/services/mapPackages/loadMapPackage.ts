@@ -66,6 +66,14 @@ export async function loadMapPackageFromAssetPackage(
   const rootManifest = await assetPackage.readJson<RootManifest>(manifestPath);
   const assetManifestPath = joinPackagePath(manifestRootPath, 'assets/manifest.json');
   const assetManifest = await assetPackage.readJson<AssetManifest>(assetManifestPath);
+  const chromeTextureUrl = await resolveEnvironmentTextureUrl(
+    assetPackage,
+    manifestRootPath,
+    assetManifest.EnvironmentTextures?.chrome);
+  const glassTextureUrl = await resolveEnvironmentTextureUrl(
+    assetPackage,
+    manifestRootPath,
+    assetManifest.EnvironmentTextures?.glass);
   const tfragEntry = findTfragGltfEntry(assetManifest);
   const tfragGltfPath = tfragEntry?.GltfPath
     ? resolveAssetPath(manifestRootPath, tfragEntry.GltfPath)
@@ -114,6 +122,8 @@ export async function loadMapPackageFromAssetPackage(
     worldManifestPath,
     rootManifest,
     assetManifest,
+    chromeTextureUrl,
+    glassTextureUrl,
     worldManifest,
     skyboxEntry,
     skyboxGltfPath,
@@ -143,6 +153,16 @@ export async function loadMapPackageFromAssetPackage(
     directionalLightUrl,
     directionalLights
   };
+}
+
+async function resolveEnvironmentTextureUrl(
+  assetPackage: MapAssetPackage,
+  manifestRootPath: string,
+  path: string | null | undefined
+): Promise<string | null> {
+  return typeof path === 'string' && path.length > 0
+    ? assetPackage.resolveUrl(resolveAssetPath(manifestRootPath, path))
+    : null;
 }
 
 export function parseDirectionalLightRecords(buffer: BinaryBuffer): DirectionalLightRecord[] {

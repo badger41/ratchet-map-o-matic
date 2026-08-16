@@ -3,6 +3,7 @@ import test from 'node:test';
 import * as THREE from 'three/webgpu';
 import {
   inspectMobyViewOptions,
+  isMobyMetalObject,
   mobyPreviewAlphaScale,
   pruneMobyLods,
   setMobyBangles,
@@ -35,7 +36,11 @@ test('keeps high-detail moby faces and drops lower LOD groups', () => {
   bangles.add(bangle);
   const metals = new THREE.Group();
   metals.name = 'metals';
+  const metalMesh = new THREE.Mesh();
+  metals.add(metalMesh);
   root.add(bangles, metals);
+  assert.equal(isMobyMetalObject(metalMesh), true);
+  assert.equal(isMobyMetalObject(bangle), false);
 
   assert.deepEqual(inspectMobyViewOptions(root), {
     lods: ['high_lod', 'low_lod', 'far_lod'],

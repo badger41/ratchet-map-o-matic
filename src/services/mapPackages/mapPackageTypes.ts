@@ -43,6 +43,10 @@ export interface GltfExportEntry {
 
 export interface AssetManifest {
   GltfExports?: GltfExportEntry[];
+  EnvironmentTextures?: {
+    chrome?: string | null;
+    glass?: string | null;
+  };
   [key: string]: unknown;
 }
 
@@ -94,6 +98,8 @@ export interface LoadedMapPackage {
   worldManifestPath: string;
   rootManifest: RootManifest;
   assetManifest: AssetManifest;
+  chromeTextureUrl: string | null;
+  glassTextureUrl: string | null;
   worldManifest: WorldManifest | null;
   skyboxEntry: GltfExportEntry | null;
   skyboxGltfPath: string | null;

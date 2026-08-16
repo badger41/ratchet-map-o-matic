@@ -35,6 +35,11 @@ import {
 } from '../renderer/model-materials/ModelMaterialNodes';
 import {
   inspectMobyViewOptions,
+  isMobyMetalObject,
+  mobyMetalDepthBiasScale,
+  mobyMetalFadeEnd,
+  mobyMetalFadeStart,
+  mobyMetalReflectionScaleAttributeName,
   mobyPreviewAlphaScale,
   setMobyBangles,
   setMobyLod,
@@ -137,6 +142,7 @@ export default function MobyWindow({
     let disposed = false;
     let modelRoot: THREE.Object3D | null = null;
     let mixer: THREE.AnimationMixer | null = null;
+    let chromeTexture: THREE.Texture | null = null;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -185,13 +191,16 @@ export default function MobyWindow({
     async function loadModel() {
       const url = await resolveMobyModelUrl(activePackage, activeModel);
       const gltf = await new GLTFLoader().loadAsync(url);
+      chromeTexture = await loadMobyChromePreviewTexture(activePackage);
       if (disposed) {
         disposeObject3D(gltf.scene);
+        chromeTexture?.dispose();
+        chromeTexture = null;
         return;
       }
 
       modelRoot = gltf.scene;
-      configureMobyPreviewMaterials(modelRoot);
+      configureMobyPreviewMaterials(modelRoot, chromeTexture);
       scene.add(modelRoot);
       mixer = new THREE.AnimationMixer(modelRoot);
       const viewOptions = inspectMobyViewOptions(modelRoot);
@@ -239,6 +248,7 @@ export default function MobyWindow({
         scene.remove(modelRoot);
         disposeObject3D(modelRoot);
       }
+      chromeTexture?.dispose();
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
         container.replaceChildren();
@@ -506,6 +516,7 @@ async function generateMobyThumbnails(
   renderer.toneMapping = THREE.NoToneMapping;
   renderer.setPixelRatio(1);
   renderer.setSize(192, 144, false);
+  const chromeTexture = await loadMobyChromePreviewTexture(mapPackage);
 
   try {
     for (const model of models) {
@@ -521,7 +532,7 @@ async function generateMobyThumbnails(
           break;
         }
 
-        configureMobyPreviewMaterials(root);
+        configureMobyPreviewMaterials(root, chromeTexture);
         const viewOptions = inspectMobyViewOptions(root);
         const lod = viewOptions.lods.includes('high_lod') ? 'high_lod' : viewOptions.lods[0];
         if (lod) {
@@ -546,15 +557,36 @@ async function generateMobyThumbnails(
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
   } finally {
+    chromeTexture?.dispose();
     renderer.dispose();
   }
 }
 
-function configureMobyPreviewMaterials(root: THREE.Object3D): void {
+function configureMobyPreviewMaterials(
+  root: THREE.Object3D,
+  chromeTexture: THREE.Texture | null
+): void {
   const configuredMaterials = new Set<THREE.Material>();
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
+      return;
+    }
+
+    if (isMobyMetalObject(mesh)) {
+      if (!chromeTexture) {
+        mesh.visible = false;
+        return;
+      }
+
+      const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const hasReflectionScale = mesh.geometry.hasAttribute(mobyMetalReflectionScaleAttributeName);
+      const materials = sourceMaterials.map((source) => createMobyMetalPreviewMaterial(
+        source,
+        chromeTexture,
+        hasReflectionScale));
+      mesh.material = Array.isArray(mesh.material) ? materials : materials[0];
+      mesh.renderOrder += 1;
       return;
     }
 
@@ -584,6 +616,85 @@ function configureMobyPreviewMaterials(root: THREE.Object3D): void {
       material.needsUpdate = true;
     }
   });
+}
+
+function createMobyMetalPreviewMaterial(
+  source: THREE.Material,
+  chromeTexture: THREE.Texture,
+  hasReflectionScale: boolean
+): THREE.MeshBasicMaterial {
+  const material = new THREE.MeshBasicMaterial({
+    name: `${source.name || 'moby'}_chrome_preview`,
+    map: chromeTexture,
+    color: 0xffffff,
+    transparent: true,
+    blending: THREE.NormalBlending,
+    depthTest: source.depthTest,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false
+  });
+  const alphaScale = mobyPreviewAlphaScale(128 / 255);
+  const reflectionScale = hasReflectionScale ? mobyMetalReflectionScaleAttributeName : '0.3';
+  const reflectionScaleAttribute = hasReflectionScale
+    ? `attribute float ${mobyMetalReflectionScaleAttributeName};\n`
+    : '';
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>\n${reflectionScaleAttribute}varying vec2 vMobyMetalReflectionUv;\nvarying float vMobyMetalFade;`
+      )
+      .replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+gl_Position.z -= ${(mobyMetalDepthBiasScale * 2).toFixed(12)};
+vec3 mobyMetalNormalView = normalize(normalMatrix * normal);
+#ifdef USE_SKINNING
+  mobyMetalNormalView = normalize(transformedNormal);
+#endif
+vec3 mobyMetalOriginView = (modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+vec3 mobyMetalIncidentView = normalize(mobyMetalOriginView);
+vec3 mobyMetalReflectedView = reflect(mobyMetalNormalView * ${reflectionScale}, mobyMetalIncidentView);
+vMobyMetalReflectionUv = vec2(mobyMetalReflectedView.x, -mobyMetalReflectedView.y) + vec2(0.5);
+vMobyMetalFade = clamp((${mobyMetalFadeEnd.toFixed(1)} + mobyMetalOriginView.z) / ${(mobyMetalFadeEnd - mobyMetalFadeStart).toFixed(1)}, 0.0, 1.0);`
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec2 vMobyMetalReflectionUv;\nvarying float vMobyMetalFade;'
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#define vMapUv vMobyMetalReflectionUv
+#include <map_fragment>
+#undef vMapUv
+diffuseColor.a = min(diffuseColor.a * ${alphaScale.toFixed(8)}, 1.0) * vMobyMetalFade;`
+      );
+  };
+  material.customProgramCacheKey = () => `moby-metal-preview-v2-${hasReflectionScale ? 'authored' : 'fallback'}`;
+  return material;
+}
+
+async function loadMobyChromePreviewTexture(
+  mapPackage: LoadedMapPackage
+): Promise<THREE.Texture | null> {
+  if (!mapPackage.chromeTextureUrl) {
+    return null;
+  }
+
+  try {
+    const texture = await new THREE.TextureLoader().loadAsync(mapPackage.chromeTextureUrl);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.needsUpdate = true;
+    return texture;
+  } catch (error) {
+    console.warn(`Failed to load moby chrome preview texture from ${mapPackage.chromeTextureUrl}.`, error);
+    return null;
+  }
 }
 
 async function resolveMobyModelUrl(
