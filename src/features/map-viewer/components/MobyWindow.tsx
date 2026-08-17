@@ -42,6 +42,7 @@ import {
   mobyMetalReflectionScaleAttributeName,
   mobyPreviewAlphaScale,
   setMobyBangles,
+  setMobyBindPose,
   setMobyLod,
   setMobyMetalsVisible,
   type MobyLodName
@@ -200,6 +201,7 @@ export default function MobyWindow({
       }
 
       modelRoot = gltf.scene;
+      setMobyBindPose(modelRoot);
       configureMobyPreviewMaterials(modelRoot, chromeTexture);
       scene.add(modelRoot);
       mixer = new THREE.AnimationMixer(modelRoot);
@@ -533,6 +535,7 @@ async function generateMobyThumbnails(
         }
 
         configureMobyPreviewMaterials(root, chromeTexture);
+        setMobyBindPose(root);
         const viewOptions = inspectMobyViewOptions(root);
         const lod = viewOptions.lods.includes('high_lod') ? 'high_lod' : viewOptions.lods[0];
         if (lod) {

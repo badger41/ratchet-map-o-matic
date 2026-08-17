@@ -153,5 +153,5 @@ function getMobyClassFactoriesForGame(game: unknown): Map<number, MobyClassFacto
     return dlMobyClassFactories;
   }
 
-  return key === 'uya' ? uyaMobyClassFactories : new Map();
+  return key === 'gc' || key === 'uya' ? uyaMobyClassFactories : new Map();
 }

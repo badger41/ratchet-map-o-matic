@@ -365,7 +365,7 @@ export class MobyInstanceController {
 
       this.stats.loadedClasses += 1;
       this.stats.primitives += primitives.length;
-      const useColorTone = isUyaMapPackage(mapPackage);
+      const useColorTone = isUyaFormatMapPackage(mapPackage);
       const preparedRecords = classRecords.map(prepareMobyRecord);
       const chunks = chunkMobyRecords(preparedRecords);
 
@@ -563,8 +563,8 @@ function groupMobyRecordsByClassId(records: DlMobyInstance[]): Map<number, DlMob
   return groups;
 }
 
-function isUyaMapPackage(mapPackage: LoadedMapPackage): boolean {
-  return mapPackage.rootManifest.Game?.toUpperCase() === 'UYA';
+function isUyaFormatMapPackage(mapPackage: LoadedMapPackage): boolean {
+  return ['GC', 'UYA'].includes(mapPackage.rootManifest.Game?.toUpperCase() ?? '');
 }
 
 function prepareMobyRecord(record: DlMobyInstance): PreparedMobyRecord {

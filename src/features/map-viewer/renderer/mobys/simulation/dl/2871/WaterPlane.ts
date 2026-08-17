@@ -402,7 +402,7 @@ function getWaterRenderPosZ(config: WaterPvar): number {
 }
 
 function fxLevelTextureBaseIdForGame(game: unknown): number {
-  return typeof game === 'string' && game.toUpperCase() === 'UYA'
+  return typeof game === 'string' && ['GC', 'UYA'].includes(game.toUpperCase())
     ? uyaFxLevelTextureBaseId
     : dlFxLevelTextureBaseId;
 }

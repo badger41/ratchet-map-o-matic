@@ -7,6 +7,7 @@ import {
   mobyPreviewAlphaScale,
   pruneMobyLods,
   setMobyBangles,
+  setMobyBindPose,
   setMobyLod,
   setMobyMetalsVisible
 } from '../src/features/map-viewer/renderer/mobys/MobyGltfSupport.ts';
@@ -72,6 +73,21 @@ test('keeps high-detail moby faces and drops lower LOD groups', () => {
   assert.equal(root.getObjectByName('low_lod'), undefined);
   assert.equal(root.getObjectByName('far_lod'), undefined);
   assert.equal(root.getObjectsByProperty('name', 'high_lod').length, 2);
+});
+
+test('restores skinned mobys from inverse bind matrices', () => {
+  const root = new THREE.Group();
+  const bone = new THREE.Bone();
+  bone.position.x = -5;
+  const skeleton = new THREE.Skeleton([bone], [new THREE.Matrix4().makeTranslation(-2, 0, 0)]);
+  const mesh = new THREE.SkinnedMesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+  mesh.bind(skeleton, new THREE.Matrix4());
+  root.add(bone, mesh);
+
+  setMobyBindPose(root);
+
+  assert.equal(bone.position.x, 2);
+  assert.equal(bone.matrixWorld.elements[12], 2);
 });
 
 test('merges unique mission mobys while preferring main-level models', () => {

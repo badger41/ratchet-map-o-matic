@@ -272,6 +272,14 @@ async function buildWadRenderPackage(
   gameId: MapDefinition['gameId'],
   wadBytes: Uint8Array
 ): Promise<PackedFilePackageResult> {
+  if (gameId === 'GC') {
+    if (!wasm.buildGcLevelWadRenderPackageEnvelope) {
+      throw new Error('Optimized GC WASM render package export is not loaded. Hard-refresh the page and retry.');
+    }
+
+    return decodeRenderPackageEnvelope(await wasm.buildGcLevelWadRenderPackageEnvelope(wadBytes));
+  }
+
   if (gameId === 'UYA') {
     if (!wasm.buildUyaLevelWadRenderPackageEnvelope) {
       throw new Error('Optimized UYA WASM render package export is not loaded. Hard-refresh the page and retry.');
@@ -314,6 +322,10 @@ function hasRenderPackageEnvelope(
       : Boolean(wasm.buildDlLevelWadRenderPackageEnvelope);
   }
 
+  if (map.gameId === 'GC') {
+    return Boolean(wasm.buildGcLevelWadRenderPackageEnvelope);
+  }
+
   return map.gameId === 'UYA'
     ? Boolean(wasm.buildUyaLevelWadRenderPackageEnvelope)
     : Boolean(wasm.buildDlLevelWadRenderPackageEnvelope);
@@ -344,7 +356,7 @@ async function parsePackedGameplayData(
   renderPackage: PackedFilePackageResult,
   gameId: MapDefinition['gameId']
 ): Promise<GameplayData> {
-  if (gameId === 'UYA') {
+  if (gameId !== 'DL') {
     return parsePackedUyaGameplayData(renderPackage);
   }
 
@@ -365,17 +377,13 @@ async function parseLooseGameplayData(
   manifestUrl: string,
   gameId: MapDefinition['gameId']
 ): Promise<GameplayData> {
-  if (gameId === 'UYA') {
+  if (gameId !== 'DL') {
     try {
       return await parseLooseUyaGameplayData(manifestUrl);
     } catch (error) {
-      console.warn('Failed to parse loose UYA gameplay data.', error);
+      console.warn(`Failed to parse loose ${gameId} gameplay data.`, error);
       return emptyGameplayData();
     }
-  }
-
-  if (gameId !== 'DL') {
-    return emptyGameplayData();
   }
 
   try {

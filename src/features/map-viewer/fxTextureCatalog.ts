@@ -267,6 +267,7 @@ type FxTextureNameEnum = { [index: number]: string };
 
 const fxTextureNamesByGame = new Map<string, FxTextureNameEnum>([
   ['DL', DlFxTextureNames],
+  ['GC', UyaFxTextureNames],
   ['UYA', UyaFxTextureNames]
 ]);
 

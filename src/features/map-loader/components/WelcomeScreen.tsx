@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import { ArrowLeft, Play, X } from 'lucide-react';
 import logoDlUrl from '../../../assets/logos/logo_dl.webp';
+import logoGcUrl from '../../../assets/logos/logo_gc.webp';
 import logoHorizonUrl from '../../../assets/logos/logo_horizon.png';
 import logoUyaUrl from '../../../assets/logos/logo_uya.webp';
 import type { MapDefinition, RatchetGameId } from '../../../data/mapCatalog';
@@ -42,6 +43,7 @@ interface WelcomeScreenProps {
 
 const gameLogoUrls: Record<RatchetGameId, string> = {
   DL: logoDlUrl,
+  GC: logoGcUrl,
   UYA: logoUyaUrl
 };
 
@@ -113,23 +115,25 @@ export function WelcomeScreen({
                       </ActionIcon>
                     ) : null}
                   </Group>
-                  <Tooltip label={`View custom ${selectedGameId} maps provided by Horizon`} withArrow>
-                    <UnstyledButton
-                      aria-label={`View custom ${selectedGameId} maps provided by Horizon`}
-                      aria-pressed={isCustomSource}
-                      onClick={onCustomMapsSelect}
-                      style={{
-                        width: 140,
-                        height: 54,
-                        border: `1px solid ${isCustomSource ? 'rgba(91, 173, 255, 0.55)' : 'rgba(159, 174, 188, 0.22)'}`,
-                        borderRadius: 8,
-                        background: isCustomSource ? 'rgba(91, 173, 255, 0.12)' : '#0b1118',
-                        padding: '8px 12px'
-                      }}
-                    >
-                      <Image src={logoHorizonUrl} alt="Horizon" fit="contain" h={36} maw="100%" />
-                    </UnstyledButton>
-                  </Tooltip>
+                  {selectedGameId !== 'GC' ? (
+                    <Tooltip label={`View custom ${selectedGameId} maps provided by Horizon`} withArrow>
+                      <UnstyledButton
+                        aria-label={`View custom ${selectedGameId} maps provided by Horizon`}
+                        aria-pressed={isCustomSource}
+                        onClick={onCustomMapsSelect}
+                        style={{
+                          width: 140,
+                          height: 54,
+                          border: `1px solid ${isCustomSource ? 'rgba(91, 173, 255, 0.55)' : 'rgba(159, 174, 188, 0.22)'}`,
+                          borderRadius: 8,
+                          background: isCustomSource ? 'rgba(91, 173, 255, 0.12)' : '#0b1118',
+                          padding: '8px 12px'
+                        }}
+                      >
+                        <Image src={logoHorizonUrl} alt="Horizon" fit="contain" h={36} maw="100%" />
+                      </UnstyledButton>
+                    </Tooltip>
+                  ) : null}
                   {isCustomSource ? (
                     <Button variant="default" size="xs" w={140} onClick={onVanillaMapsSelect}>
                       Vanilla

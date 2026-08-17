@@ -363,12 +363,12 @@ function findStaticInstancePath(
     return resolveWorldPath(manifestRootPath, worldPath);
   }
 
-  const gameplayCorePath = findUyaGameplayCorePath(rootManifest, semanticName);
+  const gameplayCorePath = findUyaFormatGameplayCorePath(rootManifest, semanticName);
   return gameplayCorePath ? joinPackagePath(manifestRootPath, gameplayCorePath) : null;
 }
 
-function findUyaGameplayCorePath(rootManifest: RootManifest, semanticName: string): string | null {
-  if (typeof rootManifest.Game !== 'string' || rootManifest.Game.toUpperCase() !== 'UYA') {
+function findUyaFormatGameplayCorePath(rootManifest: RootManifest, semanticName: string): string | null {
+  if (typeof rootManifest.Game !== 'string' || !['GC', 'UYA'].includes(rootManifest.Game.toUpperCase())) {
     return null;
   }
 

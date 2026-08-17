@@ -195,6 +195,8 @@ export interface RatchetPs2WasmModule {
   parseUyaGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
   buildDlLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   buildDlLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
+  buildGcLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  buildGcLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
   buildUyaLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   buildUyaLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
   buildUyaCustomMapZipRenderPackage?(zipBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
@@ -204,7 +206,7 @@ export interface RatchetPs2WasmModule {
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'mission-mobys-v3';
+const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'gc-ties-v3';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {

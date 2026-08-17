@@ -64,6 +64,18 @@ export function setMobyMetalsVisible(root: THREE.Object3D, visible: boolean): vo
   }
 }
 
+export function setMobyBindPose(root: THREE.Object3D): void {
+  const skeletons = new Set<THREE.Skeleton>();
+  root.traverse((object) => {
+    const mesh = object as THREE.SkinnedMesh;
+    if (mesh.isSkinnedMesh && !skeletons.has(mesh.skeleton)) {
+      skeletons.add(mesh.skeleton);
+      mesh.skeleton.pose();
+    }
+  });
+  root.updateMatrixWorld(true);
+}
+
 export function isMobyMetalObject(object: THREE.Object3D): boolean {
   for (let current: THREE.Object3D | null = object; current; current = current.parent) {
     if (current.name === 'metals') {
