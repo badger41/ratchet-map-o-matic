@@ -359,7 +359,7 @@ export function createGeneratedEnvironmentTextureSampleNode(textureSource: THREE
       .xyz
   );
   const reflectedView = reflect(incidentView, normalize(normalView));
-  const generatedUv = reflectedView.xy
+  const generatedUv = vec2(reflectedView.x, reflectedView.y.negate())
     .mul(float(0.3))
     .add(vec2(0.5, 0.5))
     .toVarying('modelGeneratedEnvPassUv');
