@@ -2,24 +2,17 @@ import * as THREE from 'three/webgpu';
 
 export const waterPlaneSize = 500;
 
-const waterPatchHalfWidth = waterPlaneSize * 3;
-const waterPatchNearDistance = -waterPlaneSize * 0.5;
-const waterPatchFarDistance = waterPlaneSize;
-const waterPatchSegmentsX = 191;
-const waterPatchSegmentsY = 96;
-const waterPatchRect: WaterPatchRect = {
-  x0: -waterPatchHalfWidth,
-  x1: waterPatchHalfWidth,
-  y0: waterPatchNearDistance,
-  y1: waterPatchFarDistance
-};
-
-interface WaterPatchRect {
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-}
+const waterPatchFarDistance = waterPlaneSize * 3;
+const waterPatchSegmentsX = 32;
+const waterPatchNearStrips = 50;
+const waterPatchMidStrips = 50;
+const waterPatchFarStrips = 5;
+const waterPatchMidEndRow = waterPatchNearStrips + waterPatchMidStrips;
+const waterPatchSegmentsY = waterPatchMidEndRow + waterPatchFarStrips;
+const waterRayPoint = new THREE.Vector3();
+const waterRayDirection = new THREE.Vector3();
+const waterCameraPosition = new THREE.Vector3();
+const waterCameraForward = new THREE.Vector3();
 
 export function createWaterPatchGeometry(): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
@@ -35,87 +28,106 @@ export function createWaterPatchGeometry(): THREE.BufferGeometry {
     }
   }
 
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Array(vertexCount * 3).fill(0), 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(vertexCount * 2).fill(0), 2));
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3).setUsage(THREE.DynamicDrawUsage)
+  );
+  geometry.setAttribute(
+    'uv',
+    new THREE.BufferAttribute(new Float32Array(vertexCount * 2), 2).setUsage(THREE.DynamicDrawUsage)
+  );
+  geometry.setAttribute('waterWaveBank0Scale', new THREE.Float32BufferAttribute(
+    Array.from({ length: vertexCount }, (_, index) => (
+      Math.min(1, Math.max(0, (waterPatchMidEndRow - Math.floor(index / (waterPatchSegmentsX + 1))) / waterPatchMidStrips))
+    )),
+    1
+  ));
+  geometry.setAttribute('waterWaveBank1Scale', new THREE.Float32BufferAttribute(
+    Array.from({ length: vertexCount }, (_, index) => (
+      Math.max(0, (waterPatchNearStrips - Math.floor(index / (waterPatchSegmentsX + 1))) / waterPatchNearStrips)
+    )),
+    1
+  ));
   geometry.setIndex(indices);
-  geometry.userData.mapOmaticWaterPatchRect = waterPatchRect;
-  geometry.userData.mapOmaticWaterPatchSegmentsX = waterPatchSegmentsX;
-  geometry.userData.mapOmaticWaterPatchSegmentsY = waterPatchSegmentsY;
-  updateWaterPatchGeometry(geometry, waterPatchRect, new THREE.Vector2(1, 0), new THREE.Vector2(0, 1), 1);
-  geometry.computeBoundingSphere();
   return geometry;
 }
 
 export function updateWaterPatchMesh(
   mesh: THREE.Mesh,
-  right: THREE.Vector2,
-  forward: THREE.Vector2,
-  scale: number
+  camera: THREE.Camera,
+  waterY: number,
+  waveAmplitude: number
 ): void {
-  const rect = mesh.geometry.userData.mapOmaticWaterPatchRect as WaterPatchRect | undefined;
-  if (!rect) {
-    return;
-  }
-
-  updateWaterPatchGeometry(mesh.geometry, rect, right, forward, scale);
+  updateWaterPatchGeometry(mesh.geometry, camera, waterY, Math.abs(waveAmplitude));
 }
 
 function updateWaterPatchGeometry(
   geometry: THREE.BufferGeometry,
-  rect: WaterPatchRect,
-  right: THREE.Vector2,
-  forward: THREE.Vector2,
-  scale: number
+  camera: THREE.Camera,
+  waterY: number,
+  waveAmplitude: number
 ): void {
-  const position = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
-  const uv = geometry.getAttribute('uv') as THREE.BufferAttribute | undefined;
-  if (!position) {
-    return;
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
+  camera.getWorldPosition(waterCameraPosition);
+  camera.getWorldDirection(waterCameraForward);
+  waterCameraForward.y = 0;
+  if (waterCameraForward.lengthSq() <= 1e-8) {
+    waterCameraForward.setFromMatrixColumn(camera.matrixWorld, 1);
+    waterCameraForward.y = 0;
   }
+  waterCameraForward.normalize();
+  const waveTopY = waterY + waveAmplitude;
+  const waveBottomY = waterY - waveAmplitude;
+  waterRayPoint.set(0, -1, 1).unproject(camera);
+  waterRayDirection.copy(waterRayPoint).sub(waterCameraPosition).normalize();
+  const nearDistance = waterRayDirection.y < -1e-6
+    ? (waveTopY - waterCameraPosition.y) / waterRayDirection.y
+      * (waterRayDirection.x * waterCameraForward.x + waterRayDirection.z * waterCameraForward.z)
+    : 0;
+  let rowDistance = nearDistance;
+  for (let yIndex = 0; yIndex <= waterPatchSegmentsY; yIndex += 1) {
+    if (yIndex > 0) {
+      rowDistance += yIndex <= waterPatchNearStrips
+        ? 1
+        : yIndex <= waterPatchMidEndRow
+          ? 2
+          : 200;
+    }
 
-  const segmentsX = positiveIntegerValue(geometry.userData.mapOmaticWaterPatchSegmentsX, 1);
-  const segmentsY = positiveIntegerValue(geometry.userData.mapOmaticWaterPatchSegmentsY, 1);
-  for (let yIndex = 0; yIndex <= segmentsY; yIndex += 1) {
-    const y = rect.y0 + (rect.y1 - rect.y0) * yIndex / segmentsY;
-    for (let xIndex = 0; xIndex <= segmentsX; xIndex += 1) {
-      const x = rect.x0 + (rect.x1 - rect.x0) * xIndex / segmentsX;
-      setWaterPatchVertex(
-        position,
-        uv,
-        yIndex * (segmentsX + 1) + xIndex,
-        x,
-        y,
-        right,
-        forward,
-        scale
-      );
+    waterRayPoint.copy(waterCameraPosition).addScaledVector(
+      waterCameraForward,
+      Math.min(rowDistance, waterPatchFarDistance)
+    );
+    waterRayPoint.y = waveBottomY;
+    const ndcY = waterRayPoint.project(camera).y;
+    for (let xIndex = 0; xIndex <= waterPatchSegmentsX; xIndex += 1) {
+      const ndcX = -1 + 2 * xIndex / waterPatchSegmentsX;
+      waterRayPoint.set(ndcX, ndcY, 1).unproject(camera);
+      waterRayDirection.copy(waterRayPoint).sub(waterCameraPosition).normalize();
+      const horizontalLength = Math.hypot(waterRayDirection.x, waterRayDirection.z);
+      const planeDistance = waterRayDirection.y < -1e-6
+        ? (waveBottomY - waterCameraPosition.y) / waterRayDirection.y * horizontalLength
+        : waterPatchFarDistance;
+      const horizontalDistance = Math.min(Math.max(planeDistance, 0), waterPatchFarDistance);
+      const distanceScale = horizontalLength > 1e-6 ? horizontalDistance / horizontalLength : 0;
+      const localX = waterRayDirection.x * distanceScale;
+      const localY = -waterRayDirection.z * distanceScale;
+      setWaterPatchVertex(position, uv, yIndex * (waterPatchSegmentsX + 1) + xIndex, localX, localY);
     }
   }
 
   position.needsUpdate = true;
-  if (uv) {
-    uv.needsUpdate = true;
-  }
+  uv.needsUpdate = true;
 }
 
 function setWaterPatchVertex(
   position: THREE.BufferAttribute,
-  uv: THREE.BufferAttribute | undefined,
+  uv: THREE.BufferAttribute,
   index: number,
-  x: number,
-  y: number,
-  right: THREE.Vector2,
-  forward: THREE.Vector2,
-  scale: number
+  localX: number,
+  localY: number
 ): void {
-  const scaledX = x * scale;
-  const scaledY = y * scale;
-  const localX = right.x * scaledX + forward.x * scaledY;
-  const localY = right.y * scaledX + forward.y * scaledY;
   position.setXYZ(index, localX, localY, 0);
-  uv?.setXY(index, -localY / waterPlaneSize, localX / waterPlaneSize);
-}
-
-function positiveIntegerValue(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
+  uv.setXY(index, -localY / waterPlaneSize, localX / waterPlaneSize);
 }

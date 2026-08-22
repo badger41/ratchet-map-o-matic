@@ -1454,18 +1454,10 @@ function resolveMapSceneDebugTuning(tuning: Partial<MapSceneDebugTuning> | undef
     fogMeshColorStrength: finiteNonNegative(merged.fogMeshColorStrength, defaultMapSceneDebugTuning.fogMeshColorStrength),
     fogModulationMaxAmount: finiteNonNegative(merged.fogModulationMaxAmount, defaultMapSceneDebugTuning.fogModulationMaxAmount),
     waterUnderlayRingDebugEnabled: merged.waterUnderlayRingDebugEnabled === true,
-    waterUnderlaySphereDepth: finiteNonNegative(merged.waterUnderlaySphereDepth, defaultMapSceneDebugTuning.waterUnderlaySphereDepth),
     waterWaveDirectionOffsetDegrees: typeof merged.waterWaveDirectionOffsetDegrees === 'number' && Number.isFinite(merged.waterWaveDirectionOffsetDegrees)
       ? merged.waterWaveDirectionOffsetDegrees
       : defaultMapSceneDebugTuning.waterWaveDirectionOffsetDegrees,
-    waterUnderlayDarkContrast: finiteNonNegative(merged.waterUnderlayDarkContrast, defaultMapSceneDebugTuning.waterUnderlayDarkContrast),
-    waterUnderlayBrightContrast: finiteNonNegative(merged.waterUnderlayBrightContrast, defaultMapSceneDebugTuning.waterUnderlayBrightContrast),
-    waterUnderlayDarkMinOpacity: finiteNonNegative(merged.waterUnderlayDarkMinOpacity, defaultMapSceneDebugTuning.waterUnderlayDarkMinOpacity),
-    waterColorSaturation: finiteNonNegative(merged.waterColorSaturation, defaultMapSceneDebugTuning.waterColorSaturation),
-    waterColorContrast: finiteNonNegative(merged.waterColorContrast, defaultMapSceneDebugTuning.waterColorContrast),
-    waterFogStrength: finiteNonNegative(merged.waterFogStrength, defaultMapSceneDebugTuning.waterFogStrength),
-    waterOverlayColorStrength: finiteNonNegative(merged.waterOverlayColorStrength, defaultMapSceneDebugTuning.waterOverlayColorStrength),
-    waterOverlayOpacityScale: finiteNonNegative(merged.waterOverlayOpacityScale, defaultMapSceneDebugTuning.waterOverlayOpacityScale)
+    waterFogStrength: finiteNonNegative(merged.waterFogStrength, defaultMapSceneDebugTuning.waterFogStrength)
   };
 }
 

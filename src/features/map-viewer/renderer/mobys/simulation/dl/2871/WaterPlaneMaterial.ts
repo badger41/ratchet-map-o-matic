@@ -1,11 +1,11 @@
 import * as THREE from 'three/webgpu';
 import {
   abs,
+  attribute,
   cameraPosition,
   cos,
   dot,
   float,
-  floor,
   length,
   mix,
   modelPosition,
@@ -13,37 +13,28 @@ import {
   positionLocal,
   positionView,
   positionWorld,
-  reflect,
   sin,
   smoothstep,
   texture,
   uniform,
   vec2,
-  vec3
+  vec3,
+  vec4,
+  viewportTexture
 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
 import { applyModelColorGammaNode } from '../../../../ModelFog';
-import { createWaterPatchGeometry } from './WaterPlaneGeometry';
 
 export interface WaterPlaneDebugOptions {
   waterUnderlayRingDebugEnabled: boolean;
-  waterUnderlaySphereDepth: number;
   waterWaveDirectionOffsetDegrees: number;
-  waterUnderlayDarkContrast: number;
-  waterUnderlayBrightContrast: number;
-  waterUnderlayDarkMinOpacity: number;
-  waterColorSaturation: number;
-  waterColorContrast: number;
   waterFogStrength: number;
-  waterOverlayColorStrength: number;
-  waterOverlayOpacityScale: number;
 }
 
 export interface WaterWaveSettings {
   components: WaterWaveComponent[];
   amplitudeSum: number;
   shimmerScale: number;
-  shimmerThreshold: number;
 }
 
 export interface WaterWaveComponent {
@@ -51,7 +42,6 @@ export interface WaterWaveComponent {
   waveVector: THREE.Vector2;
   angularSpeed: number;
   phase: number;
-  slopeScale: number;
 }
 
 export interface WaterColor {
@@ -67,76 +57,44 @@ export interface WaterFog {
   farIntensity: number;
 }
 
+interface WaterWaveNodes {
+  height: Node<'float'>;
+  slope: Node<'vec2'>;
+}
+
 export const ps2FullOpacityAlphaByte = 0x80;
 export const colorByteScale = 1 / 255;
-export const waterBackgroundDarkenScale = 0.7;
 
-const defaultWaterUnderlaySphereDepth = 0.3;
+const ps2TextureModulateScale = 255 / ps2FullOpacityAlphaByte;
+// Both GS passes write RGB regardless of sampled alpha; GS ALPHA uses the pvar byte as FIX.
 const waterUnderlayRingDebugWidth = 2 / 128;
-const defaultWaterUnderlayDarkContrast = 1;
-const defaultWaterUnderlayBrightContrast = 1;
-const waterUnderlayTextureContrastPivot = 0.5;
-const defaultWaterUnderlayDarkMinOpacity = 0.45;
-const waterShimmerUvScale = 0.06;
-const waterShimmerMaxUvOffset = 0.095;
-const waterShimmerLightScale = 0.34;
-const waterShimmerMinLight = 0.6;
-const waterShimmerMaxLight = 1.42;
-const defaultWaterColorSaturation = 1;
-const defaultWaterColorContrast = 1;
 const defaultWaterFogStrength = 1;
-const waterColorContrastPivot = 0.12;
-const defaultWaterOverlayColorStrength = 1;
-const waterOverlayUnderlayTint = 0;
-const defaultWaterOverlayOpacityScale = 0.25;
 const defaultWaterWorldLift = 2.4;
-const waterWaveHeightScale = 1;
 
 export const defaultWaterPlaneDebugOptions: WaterPlaneDebugOptions = {
   waterUnderlayRingDebugEnabled: false,
-  waterUnderlaySphereDepth: defaultWaterUnderlaySphereDepth,
   waterWaveDirectionOffsetDegrees: 0,
-  waterUnderlayDarkContrast: defaultWaterUnderlayDarkContrast,
-  waterUnderlayBrightContrast: defaultWaterUnderlayBrightContrast,
-  waterUnderlayDarkMinOpacity: defaultWaterUnderlayDarkMinOpacity,
-  waterColorSaturation: defaultWaterColorSaturation,
-  waterColorContrast: defaultWaterColorContrast,
-  waterFogStrength: defaultWaterFogStrength,
-  waterOverlayColorStrength: defaultWaterOverlayColorStrength,
-  waterOverlayOpacityScale: defaultWaterOverlayOpacityScale
+  waterFogStrength: defaultWaterFogStrength
 };
 
 const waterUnderlayRingDebugEnabled = uniform(defaultWaterPlaneDebugOptions.waterUnderlayRingDebugEnabled ? 1 : 0);
-const waterUnderlaySphereDepth = uniform(defaultWaterPlaneDebugOptions.waterUnderlaySphereDepth);
 const waterWaveDirectionOffsetRadians = uniform(degreesToRadians(defaultWaterPlaneDebugOptions.waterWaveDirectionOffsetDegrees));
-const waterUnderlayDarkContrast = uniform(defaultWaterPlaneDebugOptions.waterUnderlayDarkContrast);
-const waterUnderlayBrightContrast = uniform(defaultWaterPlaneDebugOptions.waterUnderlayBrightContrast);
-const waterUnderlayDarkMinOpacity = uniform(defaultWaterPlaneDebugOptions.waterUnderlayDarkMinOpacity);
-const waterColorSaturation = uniform(defaultWaterPlaneDebugOptions.waterColorSaturation);
-const waterColorContrast = uniform(defaultWaterPlaneDebugOptions.waterColorContrast);
 const waterFogStrength = uniform(defaultWaterPlaneDebugOptions.waterFogStrength);
-const waterOverlayColorStrength = uniform(defaultWaterPlaneDebugOptions.waterOverlayColorStrength);
-const waterOverlayOpacityScale = uniform(defaultWaterPlaneDebugOptions.waterOverlayOpacityScale);
 const waterWorldLiftInverse = uniform(1 / defaultWaterWorldLift);
 const waterTimeSeconds = uniform(0);
+const waterViewDirection = uniform(new THREE.Vector2(0, 1));
+const waterWaveBank0Scale = attribute<'float'>('waterWaveBank0Scale', 'float');
+const waterWaveBank1Scale = attribute<'float'>('waterWaveBank1Scale', 'float');
 
 export function setWaterPlaneDebugOptions(options: Partial<WaterPlaneDebugOptions> & { worldDisplayLift?: number }): void {
   waterUnderlayRingDebugEnabled.value = options.waterUnderlayRingDebugEnabled === true ? 1 : 0;
-  waterUnderlaySphereDepth.value = finiteNumber(
-    options.waterUnderlaySphereDepth ?? defaultWaterUnderlaySphereDepth,
-    defaultWaterUnderlaySphereDepth
-  );
   waterWaveDirectionOffsetRadians.value = degreesToRadians(
-    finiteNumber(options.waterWaveDirectionOffsetDegrees ?? defaultWaterPlaneDebugOptions.waterWaveDirectionOffsetDegrees, defaultWaterPlaneDebugOptions.waterWaveDirectionOffsetDegrees)
+    finiteNumber(
+      options.waterWaveDirectionOffsetDegrees ?? defaultWaterPlaneDebugOptions.waterWaveDirectionOffsetDegrees,
+      defaultWaterPlaneDebugOptions.waterWaveDirectionOffsetDegrees
+    )
   );
-  waterUnderlayDarkContrast.value = finiteNonNegative(options.waterUnderlayDarkContrast, defaultWaterPlaneDebugOptions.waterUnderlayDarkContrast);
-  waterUnderlayBrightContrast.value = finiteNonNegative(options.waterUnderlayBrightContrast, defaultWaterPlaneDebugOptions.waterUnderlayBrightContrast);
-  waterUnderlayDarkMinOpacity.value = clamp01(finiteNumber(options.waterUnderlayDarkMinOpacity ?? defaultWaterPlaneDebugOptions.waterUnderlayDarkMinOpacity, defaultWaterPlaneDebugOptions.waterUnderlayDarkMinOpacity));
-  waterColorSaturation.value = finiteNonNegative(options.waterColorSaturation, defaultWaterPlaneDebugOptions.waterColorSaturation);
-  waterColorContrast.value = finiteNonNegative(options.waterColorContrast, defaultWaterPlaneDebugOptions.waterColorContrast);
   waterFogStrength.value = finiteNonNegative(options.waterFogStrength, defaultWaterPlaneDebugOptions.waterFogStrength);
-  waterOverlayColorStrength.value = finiteNonNegative(options.waterOverlayColorStrength, defaultWaterPlaneDebugOptions.waterOverlayColorStrength);
-  waterOverlayOpacityScale.value = finiteNonNegative(options.waterOverlayOpacityScale, defaultWaterPlaneDebugOptions.waterOverlayOpacityScale);
   const lift = finiteNumber(options.worldDisplayLift ?? defaultWaterWorldLift, defaultWaterWorldLift);
   waterWorldLiftInverse.value = lift > 0 ? 1 / lift : 1;
 }
@@ -145,45 +103,11 @@ export function setWaterPlaneTimeSeconds(seconds: number): void {
   waterTimeSeconds.value = seconds;
 }
 
-export function createWaterUnderlayObject(
-  name: string,
-  textureSource: THREE.Texture,
-  color: THREE.Color,
-  opacity: number,
-  waves: WaterWaveSettings,
-  fog: WaterFog | null
-): THREE.Mesh {
-  const material = createWaterUnderlayMaterial(name, textureSource, color, opacity, waves, fog);
-  const mesh = new THREE.Mesh(createWaterPatchGeometry(), material);
-  mesh.name = material.name;
-  mesh.frustumCulled = false;
-  return mesh;
+export function setWaterPlaneViewDirection(x: number, y: number): void {
+  waterViewDirection.value.set(x, y);
 }
 
-export function createWaterBackgroundDarkenObject(
-  name: string,
-  opacity: number,
-  waves: WaterWaveSettings
-): THREE.Mesh {
-  const material = new THREE.MeshBasicNodeMaterial({
-    name,
-    color: 0x000000,
-    transparent: true,
-    opacity,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    toneMapped: false
-  });
-  material.positionNode = createWaterWavePositionNode(waves);
-  material.opacityNode = float(opacity);
-  material.colorNode = vec3(0);
-  const mesh = new THREE.Mesh(createWaterPatchGeometry(), material);
-  mesh.name = material.name;
-  mesh.frustumCulled = false;
-  return mesh;
-}
-
-function createWaterUnderlayMaterial(
+export function createWaterUnderlayMaterial(
   name: string,
   textureSource: THREE.Texture,
   color: THREE.Color,
@@ -196,27 +120,28 @@ function createWaterUnderlayMaterial(
     color,
     transparent: true,
     opacity,
-    depthWrite: true,
+    blending: THREE.NoBlending,
+    depthWrite: false,
     side: THREE.DoubleSide,
     toneMapped: false
   });
-  material.positionNode = createWaterWavePositionNode(waves);
+  material.forceSinglePass = true;
+  const waveNodes = createWaterWaveNodes(waves);
+  material.positionNode = createWaterWavePositionNode(waveNodes);
   const baseColor = vec3(color.r, color.g, color.b);
-  const underlaySample = texture(textureSource, createWaterUnderlayUv(waves));
-  const underlayAlpha = underlaySample.a
-    .div(float(ps2FullOpacityAlphaByte * colorByteScale))
-    .clamp(0, 1);
-  const underlayTextureColor = applyWaterUnderlayTextureContrastNode(
+  const underlayStq = createWaterUnderlayStq(waveNodes);
+  const underlayUv = underlayStq.xy.div(underlayStq.z);
+  const underlaySample = texture(textureSource, underlayUv);
+  const underlayColor = applyWaterPs2TextureModulateNode(
     underlaySample.rgb,
-    underlayAlpha
+    baseColor
   );
-  const waterColor = mix(
-    applyWaterPs2ColorNode(baseColor),
-    applyWaterPs2TextureModulateNode(underlayTextureColor, baseColor),
-    underlayAlpha
+  const layerColor = mix(
+    applyWaterFogNode(underlayColor, fog),
+    applyWaterPs2ColorNode(vec3(1, 0.55, 0)),
+    createWaterUnderlayRingDebugMask(underlayUv)
   );
-  const waveColor = applyWaterWaveColorNode(waterColor, waves);
-  material.colorNode = mix(applyWaterDisplayNode(applyWaterFogNode(waveColor, fog)), vec3(1, 0.55, 0), createWaterUnderlayRingDebugMask());
+  setWaterGsOutputNode(material, layerColor, opacity, false);
   return material;
 }
 
@@ -225,10 +150,8 @@ export function createWaterLayerMaterial({
   textureSource,
   color,
   opacity,
-  transparent,
   additive,
-  polygonOffset,
-  underlayColor,
+  overlay,
   waves,
   fog
 }: {
@@ -236,147 +159,95 @@ export function createWaterLayerMaterial({
   textureSource: THREE.Texture | null;
   color: THREE.Color;
   opacity: number;
-  transparent: boolean;
   additive: boolean;
-  polygonOffset: boolean;
-  underlayColor: THREE.Color | null;
+  overlay: boolean;
   waves: WaterWaveSettings;
   fog: WaterFog | null;
 }): THREE.MeshBasicNodeMaterial {
   const material = new THREE.MeshBasicNodeMaterial({
     name,
     color,
-    transparent,
+    transparent: true,
     opacity,
-    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-    depthWrite: true,
-    polygonOffset,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
+    blending: THREE.NoBlending,
+    depthWrite: overlay,
     side: THREE.DoubleSide,
     toneMapped: false
   });
-  material.positionNode = createWaterWavePositionNode(waves);
+  material.forceSinglePass = true;
+  const waveNodes = createWaterWaveNodes(waves);
+  material.positionNode = createWaterWavePositionNode(waveNodes);
   const baseColor = vec3(color.r, color.g, color.b);
-  const layerTint = polygonOffset && underlayColor
-    ? mix(baseColor, vec3(underlayColor.r, underlayColor.g, underlayColor.b), float(waterOverlayUnderlayTint))
+  const vertexColor = overlay
+    ? applyWaterOverlayShimmerNode(baseColor, waveNodes, waves.shimmerScale)
     : baseColor;
   const textureSample = textureSource ? texture(textureSource) : null;
   const layerColor = textureSample
-    ? polygonOffset
-      ? additive
-        ? applyWaterPs2TextureRgbNode(textureSample.rgb)
-        : applyWaterPs2TextureModulateNode(applyWaterPs2TextureRgbNode(textureSample.rgb), layerTint)
-      : applyWaterPs2TextureModulateNode(applyWaterPs2TextureRgbNode(textureSample.rgb), layerTint)
-    : applyWaterPs2ColorNode(layerTint);
-  const waveLayerColor = applyWaterWaveColorNode(layerColor, waves);
-  material.colorNode = polygonOffset
-    ? applyWaterFogNode(waveLayerColor.mul(waterOverlayColorStrength), fog)
-    : applyWaterDisplayNode(applyWaterFogNode(waveLayerColor, fog));
-  if (textureSample) {
-    const overlayOpacityScale = additive
-      ? waterOverlayOpacityScale
-        .mul(dot(layerTint, vec3(0.299, 0.587, 0.114)))
-        .mul(float(ps2FullOpacityAlphaByte / 255))
-      : waterOverlayOpacityScale;
-    material.opacityNode = polygonOffset
-      ? float(opacity)
-        .mul(overlayOpacityScale)
-        .clamp(0, 1)
-      : textureSample.a
-        .div(float(ps2FullOpacityAlphaByte * colorByteScale))
-        .mul(float(opacity))
-        .clamp(0, 1);
-  }
-
+    ? applyWaterPs2TextureModulateNode(textureSample.rgb, vertexColor)
+    : applyWaterPs2ColorNode(vertexColor);
+  setWaterGsOutputNode(material, applyWaterFogNode(layerColor, fog), opacity, additive);
   return material;
 }
 
-function createWaterWavePositionNode(waves: WaterWaveSettings): Node<'vec3'> {
-  if (waves.components.length === 0) {
+function setWaterGsOutputNode(
+  material: THREE.MeshBasicNodeMaterial,
+  sourceColor: Node<'vec3'>,
+  opacity: number,
+  additive: boolean
+): void {
+  // The GS blends its encoded 8-bit colors; WebGPU's fixed blend would blend linear values.
+  const destination = viewportTexture();
+  const destinationPs2 = applyModelColorGammaNode(
+    destination.rgb.div(waterWorldLiftInverse).clamp(0, 1),
+    1 / 2.2
+  );
+  const sourcePs2 = applyModelColorGammaNode(sourceColor, 1 / 2.2);
+  const fixedAlpha = float(opacity);
+  const blendedPs2 = additive
+    ? destinationPs2.add(sourcePs2.mul(fixedAlpha))
+    : mix(destinationPs2, sourcePs2, fixedAlpha);
+  const blendedAlpha = additive
+    ? destination.a.add(fixedAlpha)
+    : mix(destination.a, float(1), fixedAlpha);
+  material.fragmentNode = vec4(
+    applyWaterDisplayNode(applyModelColorGammaNode(blendedPs2.clamp(0, 1), 2.2)),
+    blendedAlpha.clamp(0, 1)
+  );
+}
+
+function createWaterWavePositionNode(waves: WaterWaveNodes | null): Node<'vec3'> {
+  if (!waves) {
     return positionLocal;
   }
 
-  return positionLocal.add(vec3(0, 0, createWaterWaveHeightNode(waves).mul(float(waterWaveHeightScale))));
+  return positionLocal.add(vec3(0, 0, waves.height));
 }
 
-function applyWaterWaveColorNode(colorNode: Node<'vec3'>, waves: WaterWaveSettings): Node<'vec3'> {
-  if (waves.components.length === 0 || waves.amplitudeSum <= 0) {
-    return colorNode;
+function createWaterWaveNodes(waves: WaterWaveSettings): WaterWaveNodes | null {
+  if (waves.components.length === 0) {
+    return null;
   }
 
-  const waveAmount = createWaterWaveHeightNode(waves)
-    .div(float(waves.amplitudeSum))
-    .mul(float(0.5))
-    .add(float(0.5))
-    .clamp(0, 1);
-  return colorNode
-    .mul(mix(float(0.92), float(1.08), waveAmount))
-    .mul(createWaterWaveLightNode(waves));
-}
-
-function createWaterWaveHeightNode(waves: WaterWaveSettings): Node<'float'> {
   const ps2X = modelPosition.x.add(positionLocal.x);
   const ps2Y = modelPosition.z.negate().add(positionLocal.y);
   let heightNode: Node<'float'> = float(0);
-  for (const component of waves.components) {
-    const waveVector = createWaterWaveVectorNode(component);
-    const phase = ps2X.mul(waveVector.x)
-      .add(ps2Y.mul(waveVector.y))
-      .add(waterTimeSeconds.mul(component.angularSpeed))
-      .add(float(component.phase));
-    heightNode = heightNode.add(sin(phase).mul(component.amplitude));
-  }
-
-  return heightNode;
-}
-
-function createWaterWaveUvOffsetNode(waves: WaterWaveSettings): Node<'vec2'> {
-  if (waves.shimmerScale <= 0) {
-    return vec2(0);
-  }
-
-  const slope = createWaterWaveSlopeNode(waves);
-  // PS2 Y maps to viewer -Z for the reflected underlay UV.
-  return vec2(slope.x, slope.y.negate())
-    .mul(float(waves.shimmerScale * waterShimmerUvScale))
-    .clamp(-waterShimmerMaxUvOffset, waterShimmerMaxUvOffset);
-}
-
-function createWaterWaveLightNode(waves: WaterWaveSettings): Node<'float'> {
-  if (waves.shimmerScale <= 0) {
-    return float(1);
-  }
-
-  const slope = createWaterWaveSlopeNode(waves);
-  const viewDirection = normalize(vec2(
-    cameraPosition.x.sub(positionWorld.x),
-    positionWorld.z.sub(cameraPosition.z)
-  ));
-  const facingSlope = slope.x.mul(viewDirection.x).add(slope.y.mul(viewDirection.y));
-  return facingSlope
-    .mul(float(waves.shimmerScale * waterShimmerLightScale))
-    .add(float(1))
-    .clamp(waterShimmerMinLight, waterShimmerMaxLight);
-}
-
-function createWaterWaveSlopeNode(waves: WaterWaveSettings): Node<'vec2'> {
-  const ps2X = modelPosition.x.add(positionLocal.x);
-  const ps2Y = modelPosition.z.negate().add(positionLocal.y);
   let slopeX: Node<'float'> = float(0);
   let slopeY: Node<'float'> = float(0);
-  for (const component of waves.components) {
+  for (const [index, component] of waves.components.entries()) {
     const waveVector = createWaterWaveVectorNode(component);
     const phase = ps2X.mul(waveVector.x)
       .add(ps2Y.mul(waveVector.y))
       .add(waterTimeSeconds.mul(component.angularSpeed))
       .add(float(component.phase));
-    const slopePhase = cos(phase).mul(component.amplitude * component.slopeScale);
+    const waveScale = index < 4 ? waterWaveBank0Scale : waterWaveBank1Scale;
+    const amplitude = float(component.amplitude).mul(waveScale);
+    heightNode = heightNode.add(sin(phase).mul(amplitude));
+    const slopePhase = cos(phase).mul(amplitude);
     slopeX = slopeX.add(slopePhase.mul(waveVector.x));
     slopeY = slopeY.add(slopePhase.mul(waveVector.y));
   }
 
-  return vec2(slopeX, slopeY);
+  return { height: heightNode, slope: vec2(slopeX, slopeY) };
 }
 
 function createWaterWaveVectorNode(component: WaterWaveComponent): Node<'vec2'> {
@@ -390,6 +261,23 @@ function createWaterWaveVectorNode(component: WaterWaveComponent): Node<'vec2'> 
   );
 }
 
+function applyWaterOverlayShimmerNode(
+  colorNode: Node<'vec3'>,
+  waves: WaterWaveNodes | null,
+  shimmerScale: number
+): Node<'vec3'> {
+  if (!waves || shimmerScale === 0) {
+    return colorNode;
+  }
+
+  const brightness = waves.slope.x
+    .mul(waterViewDirection.x)
+    .add(waves.slope.y.mul(waterViewDirection.y))
+    .mul(float(-shimmerScale))
+    .add(float(1));
+  return colorNode.mul(brightness);
+}
+
 function applyWaterFogNode(colorNode: Node<'vec3'>, fog: WaterFog | null): Node<'vec3'> {
   if (!fog || fog.farDistance <= fog.nearDistance || (fog.nearIntensity <= 0 && fog.farIntensity <= 0)) {
     return colorNode;
@@ -401,86 +289,48 @@ function applyWaterFogNode(colorNode: Node<'vec3'>, fog: WaterFog | null): Node<
     .clamp(0, 1);
   const fogAmount = mix(float(fog.nearIntensity), float(fog.farIntensity), distanceMix)
     .mul(waterFogStrength)
-    .clamp(0, 1);
+    .clamp(0, 1)
+    .toVarying('waterFogAmount')
+    .setInterpolation(THREE.InterpolationSamplingType.LINEAR);
   const displayColor = applyModelColorGammaNode(colorNode, 1 / 2.2);
   const displayFog = applyModelColorGammaNode(vec3(fog.color.r, fog.color.g, fog.color.b), 1 / 2.2);
   return applyModelColorGammaNode(mix(displayColor, displayFog, fogAmount), 2.2);
 }
 
 function applyWaterPs2ColorNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelColorGammaNode(colorNode, 2.2);
-}
-
-function applyWaterPs2TextureRgbNode(textureColorNode: Node<'vec3'>): Node<'vec3'> {
-  return textureColorNode
-    .div(float(ps2FullOpacityAlphaByte * colorByteScale))
-    .clamp(0, 1);
+  return applyModelColorGammaNode(colorNode.clamp(0, 1), 2.2);
 }
 
 function applyWaterPs2TextureModulateNode(textureColorNode: Node<'vec3'>, colorNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelColorGammaNode(textureColorNode.mul(colorNode).clamp(0, 1), 2.2);
-}
-
-function applyWaterUnderlayTextureContrastNode(textureColorNode: Node<'vec3'>, alphaNode: Node<'float'>): Node<'vec3'> {
-  const textureLuma = dot(textureColorNode, vec3(0.2126, 0.7152, 0.0722));
-  const darkContrastTexture = textureColorNode
-    .sub(vec3(waterUnderlayTextureContrastPivot))
-    .mul(waterUnderlayDarkContrast)
-    .add(vec3(waterUnderlayTextureContrastPivot))
-    .clamp(0, 1);
-  const brightContrastTexture = textureColorNode
-    .sub(vec3(waterUnderlayTextureContrastPivot))
-    .mul(waterUnderlayBrightContrast)
-    .add(vec3(waterUnderlayTextureContrastPivot))
-    .clamp(0, 1);
-  const brightWeight = smoothstep(float(waterUnderlayTextureContrastPivot), float(1), textureLuma);
-  const darkWeight = float(1)
-    .sub(smoothstep(float(0), float(waterUnderlayTextureContrastPivot), textureLuma))
-    .mul(smoothstep(waterUnderlayDarkMinOpacity, float(1), alphaNode));
-  return mix(mix(textureColorNode, brightContrastTexture, brightWeight), darkContrastTexture, darkWeight);
+  return applyModelColorGammaNode(
+    textureColorNode.mul(colorNode).mul(float(ps2TextureModulateScale)).clamp(0, 1),
+    2.2
+  );
 }
 
 function applyWaterDisplayNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  const luma = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
-  return mix(vec3(luma), colorNode, waterColorSaturation)
-    .sub(vec3(waterColorContrastPivot))
-    .mul(waterColorContrast)
-    .add(vec3(waterColorContrastPivot))
-    .mul(waterWorldLiftInverse)
-    .clamp(0, 1);
+  return colorNode.mul(waterWorldLiftInverse).clamp(0, 1);
 }
 
-function createWaterUnderlayUv(waves?: WaterWaveSettings): Node<'vec2'> {
-  return createWaterUnderlayQuadrantUv(waves);
+function createWaterUnderlayStq(waves: WaterWaveNodes | null): Node<'vec3'> {
+  const normal = !waves
+    ? vec3(0, 0, 1)
+    : normalize(vec3(waves.slope.x.negate(), waves.slope.y.negate(), 1));
+  const pointToCamera = vec3(
+    cameraPosition.x.sub(positionWorld.x),
+    positionWorld.z.sub(cameraPosition.z),
+    cameraPosition.y.sub(positionWorld.y)
+  );
+  const projected = normal
+    .mul(dot(pointToCamera, normal))
+    .sub(pointToCamera.mul(dot(normal, normal).mul(0.5)));
+  return vec3(projected.xy, length(projected).add(projected.z).mul(2));
 }
 
-function createWaterUnderlayQuadrantUv(waves?: WaterWaveSettings): Node<'vec2'> {
-  const sourceUv = createWaterUnderlaySourceUv()
-    .add(waves ? createWaterWaveUvOffsetNode(waves) : vec2(0))
-    .clamp(0, 1);
-  const scaledUv = sourceUv.mul(float(2));
-  const quadrant = floor(scaledUv).clamp(0, 1);
-  const localUv = scaledUv.sub(quadrant).clamp(0, 1);
-  const rotatedLocalUv = vec2(1).sub(localUv);
-  return vec2(1).sub(quadrant.add(rotatedLocalUv).mul(float(0.5))).clamp(0, 1);
-}
-
-function createWaterUnderlaySourceUv(): Node<'vec2'> {
-  const viewRay = normalize(positionWorld.sub(cameraPosition));
-  const reflected = normalize(reflect(viewRay, vec3(0, 1, 0)));
-  const reflectedDisk = vec2(reflected.x, reflected.z);
-  const radius = length(reflectedDisk).clamp(0, 1);
-  return reflectedDisk
-    .mul(mix(radius, radius.mul(radius), waterUnderlaySphereDepth))
-    .mul(float(0.5))
-    .add(vec2(0.5))
-    .clamp(0, 1);
-}
-
-function createWaterUnderlayRingDebugMask(): Node<'float'> {
-  const radius = length(createWaterUnderlaySourceUv().mul(float(2)).sub(vec2(1))).clamp(0, 1);
-  const distanceToRing = abs(radius.sub(float(1)));
-  return float(1).sub(smoothstep(float(0), float(waterUnderlayRingDebugWidth), distanceToRing))
+function createWaterUnderlayRingDebugMask(underlayUv: Node<'vec2'>): Node<'float'> {
+  const radius = length(underlayUv).clamp(0, 1);
+  return float(1)
+    .sub(smoothstep(float(0), float(waterUnderlayRingDebugWidth), abs(radius.sub(float(1)))))
     .mul(waterUnderlayRingDebugEnabled);
 }
 
@@ -490,10 +340,6 @@ function finiteNumber(value: number, fallback: number): number {
 
 function finiteNonNegative(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
-}
-
-function clamp01(value: number): number {
-  return Math.min(Math.max(value, 0), 1);
 }
 
 function degreesToRadians(value: number): number {

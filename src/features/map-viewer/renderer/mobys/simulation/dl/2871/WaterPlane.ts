@@ -18,17 +18,17 @@ import {
 } from './WaterPlaneGeometry';
 import {
   colorByteScale,
-  createWaterBackgroundDarkenObject,
   createWaterLayerMaterial,
-  createWaterUnderlayObject,
+  createWaterUnderlayMaterial,
   ps2FullOpacityAlphaByte,
+  setWaterPlaneViewDirection,
   setWaterPlaneTimeSeconds,
-  waterBackgroundDarkenScale,
   type WaterColor,
   type WaterFog,
   type WaterWaveComponent,
   type WaterWaveSettings
 } from './WaterPlaneMaterial';
+import { createWaterWaveComponents } from './WaterWaves';
 import {
   resolveWaterSurfaceHeight,
   setWaterSurface,
@@ -50,21 +50,11 @@ interface WaterPvar {
   overlayDirection: number;
   overlaySpeed: number;
   overlayAdditive: boolean;
-  overlayMipChain: WaterOverlayMipChain;
   underlayColor: WaterColor;
   overlayColor: WaterColor;
   fog: WaterFog | null;
   waves: WaterWaveSettings;
   posZ: number;
-}
-
-interface WaterOverlayMipChain {
-  // Offsets 0x64-0x69 are signed FX_LEVEL-relative ids for the game's manual overlay mip chain.
-  fxTexIds: number[];
-  // Offset 0x60 feeds the GS TEX1 K value after the game subtracts its computed texture footprint.
-  lodBias: number;
-  // Offset 0x6a selects MMIN 5 instead of 4 when nonzero.
-  useLinearMipFilter: boolean;
 }
 
 interface WaterLayer {
@@ -73,10 +63,8 @@ interface WaterLayer {
   texture: THREE.Texture | null;
   textureMode: WaterTextureMode;
   direction: THREE.Vector2;
-  scrollOffset: THREE.Vector2;
   speed: number;
   tileSize: number;
-  heightOffset: number;
 }
 
 interface FxTextureManifest {
@@ -91,27 +79,15 @@ type WaterTextureMode = 'none' | 'world' | 'worldUnderlay';
 const dlFxLevelTextureBaseId = 0x62;
 const uyaFxLevelTextureBaseId = dlFxLevelTextureBaseId + 2;
 const waterPvarByteLength = 0x70;
-const ps2ColorByteScale = 1 / ps2FullOpacityAlphaByte;
 const waterOverlayAlphaEnableThreshold = 0x10;
 const waterFogIntensityScale = 1 / 100;
-const waterWaveComponentCount = 8;
-const waterDetailWaveSlopeScale = 1.75;
-const waterWaveDirectionSlots = [0, 1, 2, 3, 4, 5, 6, 7] as const;
-const waterWaveSizeBlendStep = 0.29166666;
-const waterWaveMinWavelength = 0.001;
-const waterWaveBaseHeightScale = 0.1;
-const waterAnimationSpeedScale = 1.2;
-const tau = Math.PI * 2;
 
 export class WaterPlaneMobyClass extends MobyClass {
   private readonly layers: WaterLayer[] = [];
   private readonly ps2Position = new THREE.Vector3();
   private readonly viewerPosition = new THREE.Vector3();
   private readonly cameraForward = new THREE.Vector3();
-  private readonly waterPatchRight = new THREE.Vector2(1, 0);
   private readonly waterPatchForward = new THREE.Vector2(0, 1);
-  private cameraPitchAmount = 0;
-  private waterPatchScale = 1;
   private elapsedSeconds = 0;
   private readonly surfaceY: number | null;
 
@@ -151,35 +127,35 @@ export class WaterPlaneMobyClass extends MobyClass {
   }
 
   override update(update: MobyClassUpdate): void {
-    this.elapsedSeconds += update.stepSeconds * waterAnimationSpeedScale;
+    this.elapsedSeconds += update.stepSeconds;
     setWaterPlaneTimeSeconds(this.elapsedSeconds);
-    for (const layer of this.layers) {
-      if (!layer.texture) {
-        continue;
-      }
-
-      layer.scrollOffset.addScaledVector(layer.direction, layer.speed * update.stepSeconds * waterAnimationSpeedScale);
-      layer.scrollOffset.x = wrapUnit(layer.scrollOffset.x);
-      layer.scrollOffset.y = wrapUnit(layer.scrollOffset.y);
-    }
   }
 
   override render(_frame: MobyClassFrame): void {
     this.updateWaterPatchBasis();
+    setWaterPlaneViewDirection(this.waterPatchForward.x, this.waterPatchForward.y);
+    let updatedGeometry: THREE.BufferGeometry | null = null;
     for (const layer of this.layers) {
       const config = this.configs[layer.configIndex];
-      this.ps2Position.set(this.context.camera.position.x, -this.context.camera.position.z, getWaterRenderPosZ(config));
-      this.viewerPosition.copy(this.ps2Position).applyMatrix4(ps2ToGltfBasisMatrix);
-      this.updateWaterPatchScale(this.viewerPosition.y);
+      if (layer.object.geometry !== updatedGeometry) {
+        this.ps2Position.set(this.context.camera.position.x, -this.context.camera.position.z, getWaterRenderPosZ(config));
+        this.viewerPosition.copy(this.ps2Position).applyMatrix4(ps2ToGltfBasisMatrix);
+        updateWaterPatchMesh(
+          layer.object,
+          this.context.camera,
+          this.viewerPosition.y,
+          config.waves.amplitudeSum
+        );
+        updatedGeometry = layer.object.geometry;
+      }
       layer.object.position.copy(this.viewerPosition);
-      layer.object.position.y += layer.heightOffset;
       layer.object.visible = this.context.camera.position.y >= layer.object.position.y;
-      updateWaterPatchMesh(layer.object, this.waterPatchRight, this.waterPatchForward, this.waterPatchScale);
       if (layer.texture && layer.textureMode === 'world') {
         // DL water VU packet uses overlay UVs in a rotated PS2 basis: u = -Y, v = X.
+        const scrollDistance = layer.speed * this.elapsedSeconds;
         layer.texture.offset.set(
-          wrapUnit(layer.scrollOffset.x - this.ps2Position.y / layer.tileSize),
-          wrapUnit(layer.scrollOffset.y + this.ps2Position.x / layer.tileSize)
+          wrapUnit(layer.direction.x * scrollDistance - this.ps2Position.y / layer.tileSize),
+          wrapUnit(layer.direction.y * scrollDistance + this.ps2Position.x / layer.tileSize)
         );
       }
     }
@@ -202,7 +178,6 @@ export class WaterPlaneMobyClass extends MobyClass {
       const underlayTextureUrl = config.underlayFxTexId >= 0
         ? resolveFxTextureUrl(textureUrls, config.underlayFxTexId, fxLevelTextureBaseId)
         : null;
-      this.addBackgroundDarkenLayer(config, index);
       await this.addLayer({
         config,
         configIndex: index,
@@ -214,25 +189,21 @@ export class WaterPlaneMobyClass extends MobyClass {
         repeatScale: 1,
         textureMode: underlayTextureUrl ? 'worldUnderlay' : 'none',
         additive: false,
-        yOffset: 0,
         loader
       });
-      if (config.overlayFxTexId >= 0) {
-        await this.addLayer({
-          config,
-          configIndex: index,
-          name: 'overlay',
-          textureUrl: resolveFxTextureUrl(textureUrls, config.overlayFxTexId, fxLevelTextureBaseId),
-          color: config.overlayColor,
-          directionDegrees: config.overlayDirection,
-          speed: config.overlaySpeed,
-          repeatScale: config.overlayTiling,
-          textureMode: 'world',
-          additive: config.overlayAdditive,
-          yOffset: 0,
-          loader
-        });
-      }
+      await this.addLayer({
+        config,
+        configIndex: index,
+        name: 'overlay',
+        textureUrl: resolveFxTextureUrl(textureUrls, config.overlayFxTexId, fxLevelTextureBaseId),
+        color: config.overlayColor,
+        directionDegrees: config.overlayDirection,
+        speed: config.overlaySpeed,
+        repeatScale: config.overlayTiling,
+        textureMode: 'world',
+        additive: config.overlayAdditive,
+        loader
+      });
     }
   }
 
@@ -247,7 +218,6 @@ export class WaterPlaneMobyClass extends MobyClass {
     repeatScale,
     textureMode,
     additive,
-    yOffset,
     loader
   }: {
     config: WaterPvar;
@@ -260,7 +230,6 @@ export class WaterPlaneMobyClass extends MobyClass {
     repeatScale: number;
     textureMode: WaterTextureMode;
     additive: boolean;
-    yOffset: number;
     loader: THREE.TextureLoader;
   }): Promise<void> {
     if (color.opacity <= 0) {
@@ -268,48 +237,40 @@ export class WaterPlaneMobyClass extends MobyClass {
     }
 
     const texture = textureUrl ? await loadTexture(loader, textureUrl) : null;
-    if (textureMode === 'world' && !texture) {
-      return;
-    }
-
-    const tileSize = Math.max(1, Math.abs(repeatScale));
+    const tileSize = finiteNonZero(repeatScale, 1);
     if (texture) {
       if (textureMode === 'world') {
         texture.repeat.setScalar(waterPlaneSize / tileSize);
       } else {
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
         texture.minFilter = THREE.LinearFilter;
         texture.generateMipmaps = false;
-        texture.repeat.set(1, 1);
-        texture.offset.set(0, 0);
         texture.needsUpdate = true;
       }
     }
 
     const opacity = color.opacity;
-    const transparent = textureMode === 'world' || opacity < 1 || additive;
     const materialName = `dl_water_${configIndex}_${name}`;
-    const materialColor = color.color.clone();
-    const object = textureMode === 'worldUnderlay' && texture
-      ? await createWaterUnderlayObject(materialName, texture, materialColor, opacity, config.waves, config.fog)
-      : new THREE.Mesh(createWaterPatchGeometry(), createWaterLayerMaterial({
+    const previousLayer = this.layers.at(-1);
+    const geometry = previousLayer?.configIndex === configIndex
+      ? previousLayer.object.geometry
+      : createWaterPatchGeometry();
+    const material = textureMode === 'worldUnderlay' && texture
+      ? createWaterUnderlayMaterial(materialName, texture, color.color, opacity, config.waves, config.fog)
+      : createWaterLayerMaterial({
         name: materialName,
         textureSource: texture,
-        color: materialColor,
+        color: color.color,
         opacity,
-        transparent,
         additive,
-        polygonOffset: textureMode === 'world',
-        underlayColor: textureMode === 'world' ? config.underlayColor.color : null,
+        overlay: textureMode === 'world',
         waves: config.waves,
         fog: config.fog
-      }));
+      });
+    const object = new THREE.Mesh(geometry, material);
     object.name = materialName;
     object.frustumCulled = false;
     object.rotation.x = -Math.PI / 2;
-    object.position.y = config.posZ + yOffset;
-    setObjectRenderOrder(object, waterRenderOrder + (textureMode === 'world' ? 1 : 0));
+    object.renderOrder = waterRenderOrder + (textureMode === 'world' ? 1 : 0);
     this.group.add(object);
     this.layers.push({
       object,
@@ -320,41 +281,13 @@ export class WaterPlaneMobyClass extends MobyClass {
         Math.sin(degreesToRadians(directionDegrees)),
         -Math.cos(degreesToRadians(directionDegrees))
       ),
-      scrollOffset: new THREE.Vector2(),
       speed: finiteNumber(speed, 0) / tileSize,
-      tileSize,
-      heightOffset: yOffset
-    });
-  }
-
-  private addBackgroundDarkenLayer(config: WaterPvar, configIndex: number): void {
-    const opacity = clamp01((1 - config.underlayColor.opacity) * waterBackgroundDarkenScale);
-    if (opacity <= 0) {
-      return;
-    }
-
-    const materialName = `dl_water_${configIndex}_background_darken`;
-    const object = createWaterBackgroundDarkenObject(materialName, opacity, config.waves);
-    object.rotation.x = -Math.PI / 2;
-    object.position.y = config.posZ;
-    setObjectRenderOrder(object, waterRenderOrder - 1);
-    this.group.add(object);
-    this.layers.push({
-      object,
-      configIndex,
-      texture: null,
-      textureMode: 'none',
-      direction: new THREE.Vector2(),
-      scrollOffset: new THREE.Vector2(),
-      speed: 0,
-      tileSize: 1,
-      heightOffset: 0
+      tileSize
     });
   }
 
   private updateWaterPatchBasis(): void {
     this.context.camera.getWorldDirection(this.cameraForward);
-    this.cameraPitchAmount = Math.abs(this.cameraForward.y);
     this.cameraForward.y = 0;
     if (this.cameraForward.lengthSq() <= 1e-8) {
       return;
@@ -362,12 +295,6 @@ export class WaterPlaneMobyClass extends MobyClass {
 
     this.cameraForward.normalize();
     this.waterPatchForward.set(this.cameraForward.x, -this.cameraForward.z);
-    this.waterPatchRight.set(-this.cameraForward.z, -this.cameraForward.x);
-  }
-
-  private updateWaterPatchScale(waterY: number): void {
-    const heightScale = Math.abs(this.context.camera.position.y - waterY) / waterPlaneSize;
-    this.waterPatchScale = Math.max(1, 1 + this.cameraPitchAmount * heightScale * 4);
   }
 }
 
@@ -387,8 +314,7 @@ function parseWaterPvar(instance: DlMobyInstance): WaterPvar | null {
     overlayDirection: view.getFloat32(0x28, true),
     overlaySpeed: view.getFloat32(0x2c, true),
     overlayAdditive: view.getUint8(0x39) !== 0,
-    overlayMipChain: readWaterOverlayMipChain(view),
-    overlayColor: readWaterColor(view, 0x30, waterOverlayAlphaEnableThreshold),
+    overlayColor: readWaterColor(view, 0x30),
     underlayColor: readWaterColor(view, 0x34),
     fog: readWaterFog(view),
     waves: readWaterWaves(view),
@@ -397,8 +323,7 @@ function parseWaterPvar(instance: DlMobyInstance): WaterPvar | null {
 }
 
 function getWaterRenderPosZ(config: WaterPvar): number {
-  // Ghidra computes DAT_002236cc as the summed wave envelope and uses it while building the water draw.
-  return config.posZ + config.waves.amplitudeSum * waterWaveBaseHeightScale;
+  return config.posZ + config.waves.amplitudeSum;
 }
 
 function fxLevelTextureBaseIdForGame(game: unknown): number {
@@ -411,35 +336,17 @@ function resolveFxTextureUrl(textureUrls: Map<number, string>, pvarTextureId: nu
   return pvarTextureId >= 0 ? textureUrls.get(fxLevelTextureBaseId + pvarTextureId) ?? null : null;
 }
 
-function readWaterOverlayMipChain(view: DataView): WaterOverlayMipChain {
-  const fxTexIds: number[] = [];
-  for (let offset = 0x64; offset <= 0x69; offset += 1) {
-    const fxTexId = view.getInt8(offset);
-    if (fxTexId < 0) {
-      break;
-    }
-
-    fxTexIds.push(fxTexId);
-  }
-
-  return {
-    fxTexIds,
-    lodBias: view.getInt32(0x60, true),
-    useLinearMipFilter: view.getUint8(0x6a) !== 0
-  };
-}
-
-function readWaterColor(view: DataView, offset: number, alphaThreshold = 0): WaterColor {
+function readWaterColor(view: DataView, offset: number): WaterColor {
   const alpha = view.getUint8(offset + 3);
   const color = new THREE.Color(
-    view.getUint8(offset) * ps2ColorByteScale,
-    view.getUint8(offset + 1) * ps2ColorByteScale,
-    view.getUint8(offset + 2) * ps2ColorByteScale
+    view.getUint8(offset) * colorByteScale,
+    view.getUint8(offset + 1) * colorByteScale,
+    view.getUint8(offset + 2) * colorByteScale
   );
 
   return {
     color,
-    opacity: clamp01((alpha - alphaThreshold) / (ps2FullOpacityAlphaByte - alphaThreshold))
+    opacity: clamp01(alpha / ps2FullOpacityAlphaByte)
   };
 }
 
@@ -461,75 +368,19 @@ function readWaterWaves(view: DataView): WaterWaveSettings {
   const shimmerThreshold = finiteNumber(view.getFloat32(0x48, true), 0);
   return {
     components,
-    amplitudeSum: components.reduce((total, component) => total + Math.abs(component.amplitude), 0),
+    amplitudeSum: components.reduce((total, component) => total + component.amplitude, 0),
     shimmerScale: slopeNormalization > 0
-      ? Math.max(0, overlayBrightnessScale * shimmerThreshold / slopeNormalization)
-      : 0,
-    shimmerThreshold
+      ? overlayBrightnessScale * shimmerThreshold / slopeNormalization
+      : 0
   };
-}
-
-function createWaterWaveComponents({
-  speed,
-  crest,
-  surge,
-  rippleSize,
-  directionDegrees,
-  directionVariation,
-  shimmerIntensity
-}: {
-  speed: number;
-  crest: number;
-  surge: number;
-  rippleSize: number;
-  directionDegrees: number;
-  directionVariation: number;
-  shimmerIntensity: number;
-}): WaterWaveComponent[] {
-  const waveSpeed = finiteNumber(speed, 0);
-  const amplitudeScale = finiteNumber(crest, 0);
-  const longWavelength = Math.max(waterWaveMinWavelength, Math.abs(finiteNumber(surge, 0)));
-  const shortWavelength = Math.max(waterWaveMinWavelength, Math.abs(finiteNumber(rippleSize, 0)));
-  if (waveSpeed === 0 || amplitudeScale === 0) {
-    return [];
-  }
-
-  const geometricMean = Math.sqrt(longWavelength * shortWavelength);
-  const sizeBlend = finiteNumber(shimmerIntensity, 0);
-  const wavelengths = new Array<number>(waterWaveComponentCount);
-  for (let index = 0; index < waterWaveComponentCount; index += 1) {
-    wavelengths[index] = index < 4
-      ? shortWavelength + (geometricMean - shortWavelength) * sizeBlend * index * waterWaveSizeBlendStep
-      : longWavelength + (geometricMean - longWavelength) * sizeBlend * (waterWaveComponentCount - 1 - index) * waterWaveSizeBlendStep;
-    wavelengths[index] = Math.max(waterWaveMinWavelength, Math.abs(wavelengths[index]));
-  }
-
-  const waveAcceleration = (waveSpeed * tau * waveSpeed * 2)
-    / Math.max(waterWaveMinWavelength, shortWavelength + wavelengths[3]);
-  return wavelengths.map((wavelength, index) => {
-    const direction = degreesToRadians(
-      finiteNumber(directionDegrees, 0)
-      + finiteNumber(directionVariation, 0) * 45 * (waterWaveDirectionSlots[index] - 3.5)
-    );
-    return {
-      amplitude: wavelength * amplitudeScale,
-      waveVector: new THREE.Vector2(
-        Math.cos(direction) * tau / wavelength,
-        Math.sin(direction) * tau / wavelength
-      ),
-      angularSpeed: -Math.sqrt(Math.max(0, waveAcceleration * tau / wavelength)),
-      phase: index * Math.PI * 0.25,
-      slopeScale: index < 4 ? waterDetailWaveSlopeScale : 1
-    };
-  });
 }
 
 function computeWaterWaveSlopeNormalization(components: WaterWaveComponent[]): number {
   let slopeX = 0;
   let slopeY = 0;
   for (const component of components) {
-    slopeX += Math.abs(component.amplitude * component.slopeScale * component.waveVector.x);
-    slopeY += Math.abs(component.amplitude * component.slopeScale * component.waveVector.y);
+    slopeX += component.amplitude * Math.abs(component.waveVector.x);
+    slopeY += component.amplitude * Math.abs(component.waveVector.y);
   }
 
   return Math.sqrt(slopeX * slopeX + slopeY * slopeY);
@@ -580,6 +431,7 @@ async function loadTexture(loader: THREE.TextureLoader, url: string): Promise<TH
   try {
     const texture = await loader.loadAsync(url);
     texture.colorSpace = THREE.NoColorSpace;
+    texture.flipY = false;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.magFilter = THREE.LinearFilter;
@@ -603,6 +455,10 @@ function finiteNumber(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function finiteNonZero(value: number, fallback: number): number {
+  return Number.isFinite(value) && value !== 0 ? value : fallback;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(finiteNumber(value, min), min), max);
 }
@@ -617,8 +473,4 @@ function degreesToRadians(value: number): number {
 
 function wrapUnit(value: number): number {
   return value - Math.floor(value);
-}
-
-function setObjectRenderOrder(object: THREE.Mesh, renderOrder: number): void {
-  object.renderOrder = renderOrder;
 }

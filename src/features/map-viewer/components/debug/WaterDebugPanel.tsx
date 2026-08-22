@@ -52,15 +52,6 @@ export function WaterDebugPanel({
           onChange={(event) => onChange('waterUnderlayRingDebugEnabled', event.currentTarget.checked)}
         />
         <DebugSlider
-          label="Sphere depth"
-          grow={false}
-          value={debugTuning.waterUnderlaySphereDepth}
-          min={0}
-          max={2}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterUnderlaySphereDepth', value)}
-        />
-        <DebugSlider
           label="Wave angle"
           grow={false}
           value={debugTuning.waterWaveDirectionOffsetDegrees}
@@ -70,51 +61,6 @@ export function WaterDebugPanel({
           onChange={(value) => onChange('waterWaveDirectionOffsetDegrees', value)}
         />
         <DebugSlider
-          label="Dark contrast"
-          grow={false}
-          value={debugTuning.waterUnderlayDarkContrast}
-          min={0}
-          max={4}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterUnderlayDarkContrast', value)}
-        />
-        <DebugSlider
-          label="Light contrast"
-          grow={false}
-          value={debugTuning.waterUnderlayBrightContrast}
-          min={0}
-          max={4}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterUnderlayBrightContrast', value)}
-        />
-        <DebugSlider
-          label="Dark opacity"
-          grow={false}
-          value={debugTuning.waterUnderlayDarkMinOpacity}
-          min={0}
-          max={1}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterUnderlayDarkMinOpacity', value)}
-        />
-        <DebugSlider
-          label="Saturation"
-          grow={false}
-          value={debugTuning.waterColorSaturation}
-          min={0}
-          max={2}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterColorSaturation', value)}
-        />
-        <DebugSlider
-          label="Color contrast"
-          grow={false}
-          value={debugTuning.waterColorContrast}
-          min={0}
-          max={3}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterColorContrast', value)}
-        />
-        <DebugSlider
           label="Water fog"
           grow={false}
           value={debugTuning.waterFogStrength}
@@ -122,24 +68,6 @@ export function WaterDebugPanel({
           max={2}
           step={debugSliderStep}
           onChange={(value) => onChange('waterFogStrength', value)}
-        />
-        <DebugSlider
-          label="Overlay strength"
-          grow={false}
-          value={debugTuning.waterOverlayColorStrength}
-          min={0}
-          max={3}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterOverlayColorStrength', value)}
-        />
-        <DebugSlider
-          label="Overlay alpha"
-          grow={false}
-          value={debugTuning.waterOverlayOpacityScale}
-          min={0}
-          max={1.5}
-          step={debugSliderStep}
-          onChange={(value) => onChange('waterOverlayOpacityScale', value)}
         />
       </Stack>
     </Paper>

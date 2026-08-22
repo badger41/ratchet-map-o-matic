@@ -173,16 +173,8 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     setDebugTuning((current) => ({
       ...current,
       waterUnderlayRingDebugEnabled: defaultMapSceneDebugTuning.waterUnderlayRingDebugEnabled,
-      waterUnderlaySphereDepth: defaultMapSceneDebugTuning.waterUnderlaySphereDepth,
       waterWaveDirectionOffsetDegrees: defaultMapSceneDebugTuning.waterWaveDirectionOffsetDegrees,
-      waterUnderlayDarkContrast: defaultMapSceneDebugTuning.waterUnderlayDarkContrast,
-      waterUnderlayBrightContrast: defaultMapSceneDebugTuning.waterUnderlayBrightContrast,
-      waterUnderlayDarkMinOpacity: defaultMapSceneDebugTuning.waterUnderlayDarkMinOpacity,
-      waterColorSaturation: defaultMapSceneDebugTuning.waterColorSaturation,
-      waterColorContrast: defaultMapSceneDebugTuning.waterColorContrast,
-      waterFogStrength: defaultMapSceneDebugTuning.waterFogStrength,
-      waterOverlayColorStrength: defaultMapSceneDebugTuning.waterOverlayColorStrength,
-      waterOverlayOpacityScale: defaultMapSceneDebugTuning.waterOverlayOpacityScale
+      waterFogStrength: defaultMapSceneDebugTuning.waterFogStrength
     }));
   }, []);
 
