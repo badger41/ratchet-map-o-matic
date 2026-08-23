@@ -9,7 +9,6 @@ import {
 import { resolveTfragAlphaState } from '../src/features/map-viewer/renderer/TfragMaterialState.ts';
 import {
   createWaterSurfaceMaterialPasses,
-  enableAlphaDepthWrite,
   resolveWaterSurfaceHeight
 } from '../src/features/map-viewer/renderer/WaterSurfacePass.ts';
 
@@ -70,11 +69,4 @@ test('splits true blends into non-depth-writing water passes', () => {
   assert.ok('maskNode' in passes.below && passes.below.maskNode);
   material.dispose();
   passes.below.dispose();
-});
-
-test('enables alpha-tested depth writes for layered tie blends', () => {
-  const material = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
-  enableAlphaDepthWrite(material);
-  assert.equal(material.depthWrite, true);
-  assert.equal(material.alphaTest, 0.06);
 });

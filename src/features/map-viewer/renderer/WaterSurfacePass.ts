@@ -35,18 +35,6 @@ export function resolveWaterSurfaceHeight(heights: number[]): number | null {
   return Number.isFinite(first) && heights.every((height) => height === first) ? first : null;
 }
 
-export function enableAlphaDepthWrite(
-  material: THREE.Material | THREE.Material[],
-  alphaCutoff = 0.06
-): void {
-  for (const item of Array.isArray(material) ? material : [material]) {
-    if (item.transparent) {
-      item.depthWrite = true;
-      item.alphaTest = Math.max(item.alphaTest, alphaCutoff);
-    }
-  }
-}
-
 export function createWaterSurfaceMaterialPasses(
   material: THREE.Material | THREE.Material[]
 ): WaterSurfaceMaterialPasses | null {

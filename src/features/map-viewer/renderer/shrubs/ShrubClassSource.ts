@@ -10,6 +10,8 @@ import type {
 } from '../../../../services/mapPackages/mapPackageTypes';
 import type { ShrubPrimitive } from './ShrubTypes';
 import { mergeAdjacentModelPrimitives } from '../ModelPrimitiveMerge';
+import { resolveModelMaterialInfo } from '../model-materials/ModelMaterialNodes';
+import { splitIndexedTieGeometryComponents } from '../ties/TiePrimitiveMerge';
 
 export async function loadShrubClassSource(
   loader: GLTFLoader,
@@ -51,10 +53,23 @@ export function collectShrubPrimitives(source: THREE.Object3D): ShrubPrimitive[]
     });
   });
 
-  return mergeAdjacentModelPrimitives(
+  const merged = mergeAdjacentModelPrimitives(
     primitives,
     (left, right) => left.isBillboard === right.isBillboard
   );
+  return merged.flatMap((primitive) => {
+    const materials = Array.isArray(primitive.material) ? primitive.material : [primitive.material];
+    if (!materials.some((material) => resolveModelMaterialInfo(material, 'shrub').usesAlphaBlend)) {
+      return primitive;
+    }
+
+    const geometries = splitIndexedTieGeometryComponents(primitive.geometry);
+    return geometries.map((geometry, index) => ({
+      ...primitive,
+      name: geometries.length > 1 ? `${primitive.name}_component_${index}` : primitive.name,
+      geometry
+    }));
+  });
 }
 
 export function createInstancedGeometry(source: THREE.BufferGeometry): THREE.BufferGeometry {

@@ -34,7 +34,10 @@ import {
 } from './ShrubLighting';
 import { cloneShrubMaterial } from './ShrubMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
-import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
+import {
+  modelMaterialUsesAlphaBlend,
+  syncModelAlphaOpaquePass
+} from '../model-materials/ModelMaterialNodes';
 import {
   lightSelectorAttributeName,
   emptyShrubStats,
@@ -376,6 +379,8 @@ export class ShrubInstanceController {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
+    // Three sorts instanced meshes by geometry bounds, so use this batch's actual center.
+    geometry.boundingSphere!.center.copy(mesh.boundingSphere!.center);
     const targetGroup = this.alphaBlendGroup && modelMaterialUsesAlphaBlend(material)
       ? this.alphaBlendGroup
       : group;
@@ -387,6 +392,7 @@ export class ShrubInstanceController {
       belowWaterMesh.instanceMatrix = mesh.instanceMatrix;
       belowWaterMesh.renderOrder = belowWaterRenderOrder;
       targetGroup.add(belowWaterMesh);
+      syncModelAlphaOpaquePass(belowWaterMesh);
       this.meshBindings.push({
         mesh: belowWaterMesh,
         material: materialPasses.below,
@@ -394,6 +400,7 @@ export class ShrubInstanceController {
       });
     }
     targetGroup.add(mesh);
+    syncModelAlphaOpaquePass(mesh);
     this.meshBindings.push({ mesh, material: materialPasses?.above ?? material, isBillboard: primitive.isBillboard });
 
     this.stats.batches += 1;

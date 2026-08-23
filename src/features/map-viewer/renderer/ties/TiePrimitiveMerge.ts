@@ -1,6 +1,9 @@
 import * as THREE from 'three/webgpu';
 import type { TiePrimitive } from './TieTypes';
 
+// ponytail: avoid unbounded draw-call fan-out; use OIT if complex meshes need exact sorting.
+const maxSortableAlphaComponents = 8;
+
 export function mergeAdjacentTiePrimitives(primitives: TiePrimitive[]): TiePrimitive[] {
   const merged: TiePrimitive[] = [];
   for (const primitive of primitives) {
@@ -62,7 +65,7 @@ export function splitIndexedTieGeometryComponents(geometry: THREE.BufferGeometry
     indices.push(a, index.getX(offset + 1), index.getX(offset + 2));
     componentIndices.set(root, indices);
   }
-  if (componentIndices.size <= 1) {
+  if (componentIndices.size <= 1 || componentIndices.size > maxSortableAlphaComponents) {
     return [geometry];
   }
 

@@ -21,7 +21,8 @@ import type { LoadedMapPackage } from '../../../services/mapPackages/mapPackageT
 import { disposeObject3D } from '../renderer/RendererDisposal';
 import {
   configureModelMaterialTransparency,
-  resolveModelMaterialInfo
+  resolveModelMaterialInfo,
+  syncModelAlphaOpaquePass
 } from '../renderer/model-materials/ModelMaterialNodes';
 import {
   loadTieClassSource,
@@ -370,18 +371,20 @@ async function generateTieThumbnails(
 }
 
 function configureTiePreviewMaterials(root: THREE.Object3D): void {
+  const meshes: THREE.Mesh[] = [];
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
       return;
     }
 
+    meshes.push(mesh);
     const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const materials = sourceMaterials.map((material) => material.clone());
     mesh.material = Array.isArray(mesh.material) ? materials : materials[0];
     for (const material of materials) {
       const info = resolveModelMaterialInfo(material, 'tie');
-      configureModelMaterialTransparency(material, info, { alphaBlendDepthWrite: true });
+      configureModelMaterialTransparency(material, info);
       material.userData.mapOmaticTiePreviewSourceSide = material.side;
       const map = (material as THREE.MeshStandardMaterial).map;
       if (!map) {
@@ -406,6 +409,9 @@ function configureTiePreviewMaterials(root: THREE.Object3D): void {
       material.needsUpdate = true;
     }
   });
+  for (const mesh of meshes) {
+    syncModelAlphaOpaquePass(mesh);
+  }
 
   root.updateMatrixWorld(true);
   root.userData.mapOmaticTiePreviewSphere = new THREE.Box3()

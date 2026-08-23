@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import {
+  and,
   attribute,
   cameraPosition,
   cameraViewMatrix,
@@ -7,6 +8,7 @@ import {
   clamp,
   dot,
   float,
+  lessThan,
   max,
   modelWorldMatrix,
   normalView,
@@ -39,8 +41,10 @@ export interface ModelMaterialInfo {
   alphaMode: string | null;
   usesOpacityAlpha: boolean;
   usesReflectiveMask: boolean;
+  usesAlphaCutout: boolean;
   usesAlphaBlend: boolean;
   usesAlphaMask: boolean;
+  hasOpaqueTexels: boolean;
   fullOpacityAlpha: number;
   passFlags: number;
   passEnvironmentModeBits: number;
@@ -66,9 +70,13 @@ export interface ModelShineOptions {
 
 const modelFullOpacityAlphaByte = 128;
 const modelDefaultAlphaCutoff = 0.06;
+// Mixed-alpha textures get depth only for effectively opaque texels; glass remains in the blend pass.
+const modelOpaqueAlphaCutoff = 254 / 255;
 const modelReflectiveBleedColor = new THREE.Color(1, 1, 1);
 const tieTextureMatrixPassMask = 0x01;
 const tieEnvironmentPassMask = 0x06;
+const modelAlphaOpaquePassKey = 'mapOmaticAlphaOpaquePass';
+const modelAlphaOpaquePassMaterialCache = new WeakMap<THREE.Material, THREE.Material>();
 export const tieReflectionOriginAttributeName = 'tieReflectionOrigin';
 
 export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMaterialFamily): ModelMaterialInfo {
@@ -120,15 +128,35 @@ export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMa
     ? ps2GlowTint ?? materialEmissiveTint ?? new THREE.Color(1, 1, 1)
     : new THREE.Color(1, 1, 1);
   const normalizedAlphaMode = normalizeAlphaMode(alphaMode);
+  const fullOpacityAlpha = readFullOpacityAlpha(source, family);
+  const maxAlpha = readOptionalNumberExtra(source, [
+    ...alphaExtraNames(family, 'TextureMaxAlpha'),
+    'TextureMaxAlpha',
+    'MaxAlpha'
+  ]);
+  const maxOpacity = maxAlpha === null
+    ? null
+    : (maxAlpha > 1 ? maxAlpha / 255 : maxAlpha) / fullOpacityAlpha;
+  const hasOpaqueTexels = maxOpacity === null || maxOpacity >= modelOpaqueAlphaCutoff;
+  const usesAlphaCutout = usesOpacityAlpha
+    && normalizedAlphaMode === 'Blend'
+    && hasOpaqueTexels
+    && readBooleanExtra(source, [
+      ...alphaExtraNames(family, 'TextureUsesBinaryAlpha'),
+      'TextureUsesBinaryAlpha',
+      'UsesBinaryAlpha'
+    ]) === true;
   return {
     family,
     alphaUsage,
     alphaMode: normalizedAlphaMode,
     usesOpacityAlpha,
     usesReflectiveMask,
-    usesAlphaBlend: usesOpacityAlpha && normalizedAlphaMode === 'Blend',
+    usesAlphaCutout,
+    usesAlphaBlend: usesOpacityAlpha && normalizedAlphaMode === 'Blend' && !usesAlphaCutout,
     usesAlphaMask: usesOpacityAlpha && normalizedAlphaMode === 'Mask',
-    fullOpacityAlpha: readFullOpacityAlpha(source, family),
+    hasOpaqueTexels,
+    fullOpacityAlpha,
     passFlags,
     passEnvironmentModeBits,
     secondPassMode,
@@ -147,10 +175,9 @@ export function resolveModelMaterialInfo(source: THREE.Material, family: ModelMa
 
 export function configureModelMaterialTransparency(
   material: THREE.Material,
-  info: ModelMaterialInfo,
-  options: { alphaCutoff?: number; alphaBlendDepthWrite?: boolean } = {}
+  info: ModelMaterialInfo
 ): void {
-  const alphaCutoff = options.alphaCutoff ?? modelDefaultAlphaCutoff;
+  material.userData.mapOmaticModelMaterialInfo = info;
   material.opacity = 1;
   material.side = THREE.DoubleSide;
   material.alphaHash = false;
@@ -160,18 +187,21 @@ export function configureModelMaterialTransparency(
     material.transparent = false;
     material.depthWrite = true;
     material.alphaTest = 0;
+  } else if (info.usesAlphaCutout) {
+    material.transparent = false;
+    material.depthWrite = true;
+    material.alphaTest = modelDefaultAlphaCutoff;
   } else if (info.usesAlphaBlend) {
-    const alphaBlendDepthWrite = options.alphaBlendDepthWrite ?? false;
     material.transparent = true;
-    material.depthWrite = alphaBlendDepthWrite;
-    material.alphaTest = alphaBlendDepthWrite ? alphaCutoff : 0;
+    material.depthWrite = false;
+    material.alphaTest = 0;
   } else if (info.usesAlphaMask) {
     material.transparent = false;
     material.depthWrite = true;
-    material.alphaTest = alphaCutoff;
+    material.alphaTest = modelDefaultAlphaCutoff;
   }
 
-  material.forceSinglePass = false;
+  material.forceSinglePass = true;
 }
 
 export function modelMaterialUsesAlphaBlend(material: THREE.Material | THREE.Material[]): boolean {
@@ -180,6 +210,115 @@ export function modelMaterialUsesAlphaBlend(material: THREE.Material | THREE.Mat
   }
 
   return material.transparent && material.alphaTest <= 0;
+}
+
+export function syncModelAlphaOpaquePass(mesh: THREE.Mesh): void {
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const splitMaterials = materials.filter(modelMaterialNeedsAlphaSplit);
+  const existing = mesh.children.find((child) => child.userData[modelAlphaOpaquePassKey] === true) as THREE.Mesh | undefined;
+  if (splitMaterials.length === 0) {
+    existing?.removeFromParent();
+    return;
+  }
+
+  let skippedMaterial: THREE.Material | null = null;
+  const opaqueMaterial = Array.isArray(mesh.material)
+    ? mesh.material.map((material) => {
+      if (modelMaterialNeedsAlphaSplit(material)) {
+        return getModelAlphaOpaquePassMaterial(material);
+      }
+
+      skippedMaterial ??= new THREE.MeshBasicMaterial({ visible: false });
+      return skippedMaterial;
+    })
+    : getModelAlphaOpaquePassMaterial(mesh.material);
+  for (const material of splitMaterials) {
+    configureModelAlphaTranslucentPass(material);
+  }
+  if (existing) {
+    existing.material = opaqueMaterial;
+    return;
+  }
+
+  const opaquePass = mesh.clone(false) as THREE.Mesh;
+  opaquePass.name = `${mesh.name || 'model'}_alpha_opaque_pass`;
+  opaquePass.material = opaqueMaterial;
+  opaquePass.userData = { [modelAlphaOpaquePassKey]: true };
+  opaquePass.position.set(0, 0, 0);
+  opaquePass.quaternion.identity();
+  opaquePass.scale.set(1, 1, 1);
+  opaquePass.matrix.identity();
+  opaquePass.matrixWorld.identity();
+  opaquePass.matrixAutoUpdate = false;
+  opaquePass.matrixWorldNeedsUpdate = true;
+  if (mesh instanceof THREE.InstancedMesh && opaquePass instanceof THREE.InstancedMesh) {
+    opaquePass.instanceMatrix = mesh.instanceMatrix;
+    opaquePass.boundingBox = mesh.boundingBox;
+    opaquePass.boundingSphere = mesh.boundingSphere;
+  }
+  mesh.add(opaquePass);
+}
+
+function modelMaterialNeedsAlphaSplit(material: THREE.Material): boolean {
+  const info = material.userData.mapOmaticModelMaterialInfo as ModelMaterialInfo | undefined;
+  return info?.usesAlphaBlend === true
+    && info.hasOpaqueTexels
+    && modelMaterialUsesAlphaBlend(material);
+}
+
+function getModelAlphaOpaquePassMaterial(source: THREE.Material): THREE.Material {
+  const cached = modelAlphaOpaquePassMaterialCache.get(source);
+  if (cached) {
+    return cached;
+  }
+
+  const material = source.clone();
+  material.onBeforeCompile = source.onBeforeCompile;
+  material.customProgramCacheKey = source.customProgramCacheKey;
+  material.name = `${source.name || 'model'}_alpha_opaque_pass`;
+  material.transparent = false;
+  material.blending = THREE.NoBlending;
+  material.colorWrite = true;
+  material.depthWrite = true;
+  material.alphaTest = modelOpaqueAlphaCutoff;
+  material.alphaHash = false;
+  material.alphaToCoverage = false;
+  material.forceSinglePass = true;
+  material.needsUpdate = true;
+  modelAlphaOpaquePassMaterialCache.set(source, material);
+  return material;
+}
+
+function configureModelAlphaTranslucentPass(material: THREE.Material): void {
+  if (material.userData.mapOmaticAlphaTranslucentPass === true) {
+    return;
+  }
+  material.userData.mapOmaticAlphaTranslucentPass = true;
+
+  const nodeMaterial = material as THREE.MeshBasicNodeMaterial;
+  if (nodeMaterial.isNodeMaterial && nodeMaterial.opacityNode) {
+    const translucentMask = lessThan(
+      nodeMaterial.opacityNode as Node<'float'>,
+      float(modelOpaqueAlphaCutoff));
+    const existingMask = nodeMaterial.maskNode as Node<'bool'> | null;
+    nodeMaterial.maskNode = existingMask
+      ? and(existingMask, translucentMask)
+      : translucentMask;
+    material.needsUpdate = true;
+    return;
+  }
+
+  const previousCompile = material.onBeforeCompile;
+  const previousCacheKey = material.customProgramCacheKey;
+  material.onBeforeCompile = (shader, renderer) => {
+    previousCompile(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <alphatest_fragment>',
+      `if (diffuseColor.a >= ${modelOpaqueAlphaCutoff.toFixed(8)}) discard;\n#include <alphatest_fragment>`
+    );
+  };
+  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}-alpha-translucent-only`;
+  material.needsUpdate = true;
 }
 
 export function createModelOpacityNode(

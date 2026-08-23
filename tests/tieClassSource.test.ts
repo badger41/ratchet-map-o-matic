@@ -79,6 +79,11 @@ test('splits disconnected transparent tie panels into sortable geometry', () => 
     [0, 1, 2],
     [3, 4, 5]
   ]);
+
+  const complexGeometry = new THREE.BufferGeometry();
+  complexGeometry.setAttribute('position', new THREE.Float32BufferAttribute(new Array(27 * 3).fill(0), 3));
+  complexGeometry.setIndex(Array.from({ length: 27 }, (_, index) => index));
+  assert.equal(splitIndexedTieGeometryComponents(complexGeometry)[0], complexGeometry);
 });
 
 test('tie base render-state flag does not add a reflection pass', () => {

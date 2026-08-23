@@ -21,7 +21,7 @@ import {
   mergeAdjacentTiePrimitives,
   splitIndexedTieGeometryComponents
 } from './TiePrimitiveMerge';
-import { modelMaterialUsesAlphaBlend } from '../model-materials/ModelMaterialNodes';
+import { resolveModelMaterialInfo } from '../model-materials/ModelMaterialNodes';
 
 interface TieGltfMeshJson {
   extras?: Record<string, unknown>;
@@ -97,7 +97,8 @@ export function collectTiePrimitives(source: THREE.Object3D): TiePrimitive[] {
 
 function splitAlphaBlendPrimitives(primitives: TiePrimitive[]): TiePrimitive[] {
   return primitives.flatMap((primitive) => {
-    if (!modelMaterialUsesAlphaBlend(primitive.material)) {
+    const materials = Array.isArray(primitive.material) ? primitive.material : [primitive.material];
+    if (!materials.some((material) => resolveModelMaterialInfo(material, 'tie').usesAlphaBlend)) {
       return primitive;
     }
 

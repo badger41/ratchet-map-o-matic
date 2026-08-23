@@ -50,7 +50,8 @@ import {
   configureModelMaterialTransparency,
   createModelOpacityNode,
   modelMaterialUsesAlphaBlend,
-  resolveModelMaterialInfo
+  resolveModelMaterialInfo,
+  syncModelAlphaOpaquePass
 } from '../model-materials/ModelMaterialNodes';
 import {
   applyModelColorStrengthNode,
@@ -445,10 +446,15 @@ export class MobyInstanceController {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
+    // Three sorts instanced meshes by geometry bounds, so use this batch's actual center.
+    geometry.boundingSphere!.center.copy(mesh.boundingSphere!.center);
     const targetGroup = this.alphaBlendGroup && modelMaterialUsesAlphaBlend(material)
       ? this.alphaBlendGroup
       : group;
     targetGroup.add(mesh);
+    if (!primitive.metal) {
+      syncModelAlphaOpaquePass(mesh);
+    }
     this.meshBindings.push({ classId, mesh, material });
 
     this.stats.batches += 1;
@@ -721,7 +727,7 @@ function createMobyMaterial(
     material.alphaMap.colorSpace = THREE.SRGBColorSpace;
   }
 
-  configureModelMaterialTransparency(material, modelMaterialInfo, { alphaBlendDepthWrite: true });
+  configureModelMaterialTransparency(material, modelMaterialInfo);
   if (chromeSampleNode) {
     // Moby_Gif_Regs writes GS ALPHA 0x0000008000000044: standard source-alpha blending.
     material.transparent = true;

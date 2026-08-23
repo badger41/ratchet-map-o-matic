@@ -31,7 +31,8 @@ import type { DlMobyInstances } from '../../../services/wasm/ratchetPs2Wasm';
 import { disposeObject3D } from '../renderer/RendererDisposal';
 import {
   configureModelMaterialTransparency,
-  resolveModelMaterialInfo
+  resolveModelMaterialInfo,
+  syncModelAlphaOpaquePass
 } from '../renderer/model-materials/ModelMaterialNodes';
 import {
   inspectMobyViewOptions,
@@ -570,6 +571,7 @@ function configureMobyPreviewMaterials(
   chromeTexture: THREE.Texture | null
 ): void {
   const configuredMaterials = new Set<THREE.Material>();
+  const meshes: THREE.Mesh[] = [];
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
@@ -593,13 +595,15 @@ function configureMobyPreviewMaterials(
       return;
     }
 
+    meshes.push(mesh);
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
       if (configuredMaterials.has(material)) {
         continue;
       }
       configuredMaterials.add(material);
       const info = resolveModelMaterialInfo(material, 'moby');
-      configureModelMaterialTransparency(material, info, { alphaBlendDepthWrite: true });
+      configureModelMaterialTransparency(material, info);
+      material.forceSinglePass = true;
       const map = (material as THREE.MeshStandardMaterial).map;
       if (!map || !info.usesOpacityAlpha) {
         continue;
@@ -619,6 +623,9 @@ function configureMobyPreviewMaterials(
       material.needsUpdate = true;
     }
   });
+  for (const mesh of meshes) {
+    syncModelAlphaOpaquePass(mesh);
+  }
 }
 
 function createMobyMetalPreviewMaterial(
@@ -637,6 +644,7 @@ function createMobyMetalPreviewMaterial(
     side: THREE.DoubleSide,
     toneMapped: false
   });
+  material.forceSinglePass = true;
   const alphaScale = mobyPreviewAlphaScale(128 / 255);
   const reflectionScale = hasReflectionScale ? mobyMetalReflectionScaleAttributeName : '0.3';
   const reflectionScaleAttribute = hasReflectionScale

@@ -1,14 +1,19 @@
 import * as THREE from 'three/webgpu';
 
 export function disposeObject3D(root: THREE.Object3D): void {
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
+  const disposedMaterials = new Set<THREE.Material>();
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh) {
       return;
     }
 
-    mesh.geometry?.dispose();
-    disposeMaterial(mesh.material);
+    if (mesh.geometry && !disposedGeometries.has(mesh.geometry)) {
+      disposedGeometries.add(mesh.geometry);
+      mesh.geometry.dispose();
+    }
+    disposeMaterial(mesh.material, disposedMaterials);
   });
 }
 
@@ -20,13 +25,17 @@ export function runRendererCleanup(label: string, cleanup: () => void): void {
   }
 }
 
-function disposeMaterial(material: THREE.Material | THREE.Material[]): void {
+function disposeMaterial(material: THREE.Material | THREE.Material[], disposed: Set<THREE.Material>): void {
   if (Array.isArray(material)) {
     for (const item of material) {
-      item.dispose();
+      disposeMaterial(item, disposed);
     }
     return;
   }
 
+  if (disposed.has(material)) {
+    return;
+  }
+  disposed.add(material);
   material.dispose();
 }

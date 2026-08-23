@@ -53,6 +53,7 @@ import type { ModelDisplayNodeOptions } from '../ModelFog';
 import type { SceneCameraStart } from '../camera/SceneCameraFraming';
 import {
   modelMaterialUsesAlphaBlend,
+  syncModelAlphaOpaquePass,
   tieReflectionOriginAttributeName
 } from '../model-materials/ModelMaterialNodes';
 import {
@@ -85,8 +86,7 @@ import {
 import {
   aboveWaterRenderOrder,
   belowWaterRenderOrder,
-  createWaterSurfaceMaterialPasses,
-  enableAlphaDepthWrite
+  createWaterSurfaceMaterialPasses
 } from '../WaterSurfacePass';
 
 type TieGroup = THREE.Group & {
@@ -801,15 +801,13 @@ export class TieInstanceController {
     const passes = createWaterSurfaceMaterialPasses(material);
     binding.mesh.material = passes?.above ?? material;
     binding.mesh.renderOrder = passes ? aboveWaterRenderOrder : binding.sourceRenderOrder;
+    syncModelAlphaOpaquePass(binding.mesh);
     if (!passes) {
       if (binding.belowWaterMesh) {
         binding.belowWaterMesh.visible = false;
       }
       return;
     }
-
-    enableAlphaDepthWrite(passes.above);
-    enableAlphaDepthWrite(passes.below);
 
     let belowWaterMesh = binding.belowWaterMesh;
     if (!belowWaterMesh) {
@@ -824,6 +822,7 @@ export class TieInstanceController {
     belowWaterMesh.material = passes.below;
     belowWaterMesh.renderOrder = belowWaterRenderOrder;
     belowWaterMesh.visible = true;
+    syncModelAlphaOpaquePass(belowWaterMesh);
   }
 
   private cloneBindingDisplayMaterial(
