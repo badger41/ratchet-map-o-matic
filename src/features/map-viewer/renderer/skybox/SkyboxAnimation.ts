@@ -13,6 +13,7 @@ export interface SkyboxShellAnimation {
   hasSourceRotationTicks: boolean;
   sourceInitial: THREE.Vector3;
   sourceVelocity: THREE.Vector3;
+  sourceVelocityRadiansPerSecond: THREE.Vector3;
   tickRadians: number;
   runtimeFrameRate: number;
   initial: THREE.Vector3;
@@ -45,12 +46,14 @@ export function buildSkyboxAnimations(root: THREE.Object3D): SkyboxShellAnimatio
     const data = skyboxPrimitiveData(mesh);
     const sourceInitial = readVector3(data.SkyboxShellRotationRaw);
     const sourceVelocity = readVector3(data.SkyboxShellRotationDeltaRaw);
+    const sourceVelocityRadiansPerSecond = readVector3(data.SkyboxShellSourceAngularVelocityRadiansPerSecond);
     const initial = readVector3(data.SkyboxShellRotationRadians);
     const velocity = readVector3(data.SkyboxShellAngularVelocityRadiansPerSecond);
-    const hasSourceRotationTicks = Array.isArray(data.SkyboxShellRotationRaw)
-      || Array.isArray(data.SkyboxShellRotationDeltaRaw);
+    const hasSourceRotationTicks = vectorHasValue(sourceInitial) || vectorHasValue(sourceVelocity);
     const hasInitialRotation = vectorHasValue(sourceInitial) || vectorHasValue(initial);
-    const hasRuntimeRotation = vectorHasValue(sourceVelocity) || vectorHasValue(velocity);
+    const hasRuntimeRotation = vectorHasValue(sourceVelocity)
+      || vectorHasValue(sourceVelocityRadiansPerSecond)
+      || vectorHasValue(velocity);
     if (!hasInitialRotation && !hasRuntimeRotation) {
       return;
     }
@@ -61,6 +64,7 @@ export function buildSkyboxAnimations(root: THREE.Object3D): SkyboxShellAnimatio
       hasSourceRotationTicks,
       sourceInitial,
       sourceVelocity,
+      sourceVelocityRadiansPerSecond,
       tickRadians: numberExtra(data.SkyboxRotationTickRadians, defaultTickRadians),
       runtimeFrameRate: numberExtra(data.SkyboxRuntimeFrameRate, 60),
       initial,
@@ -91,6 +95,13 @@ export function updateSkyboxAnimations(
         (animation.sourceInitial.x + animation.sourceVelocity.x * frameCount) * animation.tickRadians,
         (animation.sourceInitial.y + animation.sourceVelocity.y * frameCount) * animation.tickRadians,
         (animation.sourceInitial.z + animation.sourceVelocity.z * frameCount) * animation.tickRadians
+      );
+    } else if (vectorHasValue(animation.sourceVelocityRadiansPerSecond)) {
+      setGameSkyShellQuaternion(
+        shellAnimationQuaternion,
+        animation.sourceVelocityRadiansPerSecond.x * elapsed,
+        animation.sourceVelocityRadiansPerSecond.y * elapsed,
+        animation.sourceVelocityRadiansPerSecond.z * elapsed
       );
     } else {
       shellAnimationEuler.set(

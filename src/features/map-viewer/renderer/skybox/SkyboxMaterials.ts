@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { attribute, float, pow, texture, uv, vec3 } from 'three/tsl';
+import { attribute, diffuseColor, float, pow, sRGBTransferOETF, texture, uv, vec3, vec4 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
 import type { SkyboxRenderOptions } from '../../../../services/mapPackages/mapPackageTypes';
 import {
@@ -7,7 +7,7 @@ import {
   numberExtra,
   numberValue,
   skyboxPrimitiveData
-} from './skyboxMetadata';
+} from './skyboxMetadata.ts';
 
 interface SkyboxReflectionCandidate {
   texture: THREE.Texture;
@@ -23,12 +23,11 @@ const skyboxTextureByMaterial = new WeakMap<THREE.Material, THREE.Texture>();
 
 export function cloneSkyboxMaterial(
   material: THREE.Material | THREE.Material[],
-  object: THREE.Mesh,
-  maxAnisotropy: number
+  object: THREE.Mesh
 ): THREE.Material | THREE.Material[] {
   return Array.isArray(material)
-    ? material.map((item) => createSkyboxMaterial(item, object, maxAnisotropy))
-    : createSkyboxMaterial(material, object, maxAnisotropy);
+    ? material.map((item) => createSkyboxMaterial(item, object))
+    : createSkyboxMaterial(material, object);
 }
 
 export function configureSkyboxMaterial(
@@ -45,14 +44,20 @@ export function configureSkyboxMaterial(
   material.alphaHash = false;
   material.blending = THREE.CustomBlending;
   material.blendEquation = THREE.AddEquation;
-  material.blendSrc = THREE.SrcAlphaFactor;
-  material.blendDst = shouldUseAdditiveSkyboxBlend(material, object, options)
-    ? THREE.OneFactor
-    : THREE.OneMinusSrcAlphaFactor;
+  const bloomLayer = isSkyboxBloomLayer(material, object);
+  material.blendSrc = bloomLayer ? THREE.OneFactor : THREE.SrcAlphaFactor;
+  material.blendDst = bloomLayer
+    ? THREE.ZeroFactor
+    : shouldUseAdditiveSkyboxBlend(material, object, options)
+      ? THREE.OneFactor
+      : THREE.OneMinusSrcAlphaFactor;
   material.blendEquationAlpha = THREE.AddEquation;
   material.blendSrcAlpha = THREE.OneFactor;
-  material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
-  (material as THREE.MeshBasicNodeMaterial).opacityNode = createSkyboxOpacityNode(material, object, options);
+  material.blendDstAlpha = bloomLayer ? THREE.ZeroFactor : THREE.OneMinusSrcAlphaFactor;
+  const opacityNode = `${skyboxGameForObject(object)}`.toUpperCase() === 'UYA'
+    ? createSkyboxGsAlphaNode(material, object, skyboxTextureByMaterial.get(material) ?? null)
+    : createSkyboxOpacityNode(material, object, options);
+  (material as THREE.MeshBasicNodeMaterial).opacityNode = opacityNode;
   material.forceSinglePass = true;
   material.userData.mapOmaticSkyboxBlendMode = options.blendMode;
   material.userData.mapOmaticSkyboxAdditiveBlend = material.blendDst === THREE.OneFactor;
@@ -111,15 +116,22 @@ export function isSkyboxReflectionTextureClone(textureSource: THREE.Texture): bo
   return textureSource.userData?.mapOmaticReflectionTextureClone === true;
 }
 
-function createSkyboxMaterial(source: THREE.Material, object: THREE.Mesh, maxAnisotropy: number): THREE.Material {
+export function isSkyboxBloomLayer(material: THREE.Material, object: THREE.Mesh): boolean {
+  return getSkyboxDrawBlendMode(object, material) === 'Bloom';
+}
+
+function createSkyboxMaterial(source: THREE.Material, object: THREE.Mesh): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
   const sourceMap = sourceMaterial.map ?? null;
+  const bloomLayer = isSkyboxBloomLayer(source, object);
   const hasVertexColors = hasGeometryColorAttribute(object)
     || sourceMaterial.vertexColors === true
     || Boolean(source.userData?.SkyboxUsesVertexColor0);
   const material = new THREE.MeshBasicNodeMaterial({
     name: `${source.name || 'skybox'}_map_omatic`,
-    color: sourceMaterial.color?.clone?.() ?? new THREE.Color(1, 1, 1),
+    color: bloomLayer
+      ? new THREE.Color(1, 1, 1)
+      : sourceMaterial.color?.clone?.() ?? new THREE.Color(1, 1, 1),
     map: null,
     alphaMap: null,
     vertexColors: false,
@@ -139,26 +151,69 @@ function createSkyboxMaterial(source: THREE.Material, object: THREE.Mesh, maxAni
   };
 
   if (sourceMap) {
-    configureSkyboxTexture(sourceMap, maxAnisotropy);
+    configureSkyboxTexture(sourceMap);
     skyboxTextureByMaterial.set(material, sourceMap);
   }
 
-  material.colorNode = createSkyboxColorNode(material, sourceMap, hasVertexColors);
+  const colorNode = createSkyboxColorNode(material, sourceMap, hasVertexColors);
+  material.colorNode = colorNode;
+  const uyaSkybox = `${skyboxGameForObject(object)}`.toUpperCase() === 'UYA';
+  const auxiliaryNode = !uyaSkybox && bloomLayer
+      ? colorNode.mul(sourceMap ? texture(sourceMap, uv()).a : float(1))
+      : vec3(0);
+  Object.assign(material, { emissiveNode: auxiliaryNode });
+  if (bloomLayer) {
+    material.outputNode = vec4(colorNode, diffuseColor.a);
+  }
 
   return material;
 }
 
-function configureSkyboxTexture(textureSource: THREE.Texture, maxAnisotropy: number): void {
-  textureSource.colorSpace = THREE.SRGBColorSpace;
+function createSkyboxGsAlphaNode(
+  material: THREE.Material,
+  object: THREE.Mesh,
+  map: THREE.Texture | null
+): Node<'float'> {
+  let alphaNode: Node<'float'> | null = map && skyboxUsesTextureOpacity(material)
+    ? texture(map, uv()).a.div(float(skyboxFullOpacityAlpha))
+    : null;
+
+  if (skyboxUsesVertexOpacity(material, object)) {
+    const vertexAlpha = attribute<'vec4'>('color', 'vec4').a;
+    alphaNode = alphaNode ? alphaNode.mul(vertexAlpha) : vertexAlpha;
+  }
+
+  const baseColorAlpha = skyboxBaseColorOpacity(material);
+  if (baseColorAlpha < 1) {
+    alphaNode = alphaNode ? alphaNode.mul(baseColorAlpha) : float(baseColorAlpha);
+  }
+
+  return alphaNode ?? float(1);
+}
+
+function skyboxGameForObject(object: THREE.Object3D): unknown {
+  for (let current: THREE.Object3D | null = object; current; current = current.parent) {
+    if (current.userData?.Game) {
+      return current.userData.Game;
+    }
+  }
+
+  return null;
+}
+
+function configureSkyboxTexture(textureSource: THREE.Texture): void {
+  // The GS blends encoded framebuffer values; decode the finished sky pass instead.
+  textureSource.colorSpace = THREE.NoColorSpace;
   textureSource.magFilter = THREE.LinearFilter;
-  textureSource.minFilter = THREE.LinearMipmapLinearFilter;
-  textureSource.generateMipmaps = true;
-  textureSource.anisotropy = Math.max(textureSource.anisotropy || 1, Math.max(1, maxAnisotropy));
+  textureSource.minFilter = THREE.LinearFilter;
+  textureSource.generateMipmaps = false;
+  textureSource.anisotropy = 1;
   textureSource.needsUpdate = true;
 }
 
 function createSkyboxReflectionTexture(source: THREE.Texture): THREE.Texture {
   const textureClone = source.clone();
+  textureClone.colorSpace = THREE.SRGBColorSpace;
   textureClone.wrapS = THREE.ClampToEdgeWrapping;
   textureClone.wrapT = THREE.ClampToEdgeWrapping;
   textureClone.needsUpdate = true;
@@ -198,7 +253,7 @@ function shouldUseAdditiveSkyboxBlend(
 ): boolean {
   const drawBlendMode = getSkyboxDrawBlendMode(object, material);
   if (drawBlendMode === 'Bloom') {
-    return true;
+    return false;
   }
 
   if (drawBlendMode !== 'SourceOver') {
@@ -242,13 +297,17 @@ function createSkyboxColorNode(
   map: THREE.Texture | null,
   hasVertexColors: boolean
 ): Node<'vec3'> {
-  let colorNode: Node<'vec3'> = vec3(material.color.r, material.color.g, material.color.b);
+  let colorNode = sRGBTransferOETF(
+    vec3(material.color.r, material.color.g, material.color.b)
+  ) as Node<'vec3'>;
   if (map) {
     colorNode = texture(map, uv()).rgb.mul(colorNode);
   }
 
   if (hasVertexColors) {
-    colorNode = colorNode.mul(attribute<'vec4'>('color', 'vec4').rgb);
+    colorNode = colorNode.mul(
+      sRGBTransferOETF(attribute<'vec4'>('color', 'vec4').rgb) as Node<'vec3'>
+    );
   }
 
   return colorNode;
@@ -261,7 +320,8 @@ function createSkyboxOpacityNode(
 ): Node<'float'> | null {
   const map = skyboxTextureByMaterial.get(material) ?? null;
   const falloff = resolveSkyboxAlphaFalloff(options);
-  const effectiveFalloff = shouldUseAdditiveSkyboxBlend(material, object, options) && falloff > 0
+  const usesAdditiveBlend = shouldUseAdditiveSkyboxBlend(material, object, options);
+  const effectiveFalloff = usesAdditiveBlend && falloff > 0
     ? Math.max(falloff, additiveOverlayMinAlphaFalloff)
     : falloff;
   let opacityNode: Node<'float'> | null = null;
@@ -291,7 +351,16 @@ function createSkyboxOpacityNode(
     return opacityNode;
   }
 
-  return pow(opacityNode, float(effectiveFalloff));
+  const shapedOpacity = pow(opacityNode, float(effectiveFalloff));
+  if (!usesAdditiveBlend) {
+    return shapedOpacity;
+  }
+
+  const textureMaxAlpha = numberValue(material.userData?.SkyboxTextureMaxAlpha) ?? skyboxFullOpacityAlphaByte;
+  const maxOpacity = Math.min(Math.max(textureMaxAlpha / skyboxFullOpacityAlphaByte, 1 / skyboxFullOpacityAlphaByte), 1);
+  return shapedOpacity
+    .div(float(Math.pow(maxOpacity, effectiveFalloff - 1)))
+    .clamp(0, 1);
 }
 
 function skyboxUsesTextureOpacity(material: THREE.Material): boolean {

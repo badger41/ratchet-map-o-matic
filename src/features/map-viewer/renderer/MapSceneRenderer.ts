@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
+  diffuseColor,
   dot,
   emissive,
   float,
@@ -10,11 +11,15 @@ import {
   mrt,
   output,
   pass,
+  sRGBTransferEOTF,
+  sRGBTransferOETF,
+  step,
   uniform,
   vec3,
   vec4
 } from 'three/tsl';
 import type BloomNode from 'three/addons/tsl/display/BloomNode.js';
+import type Node from 'three/src/nodes/core/Node.js';
 import type PassNode from 'three/src/nodes/display/PassNode.js';
 import type UniformNode from 'three/src/nodes/core/UniformNode.js';
 import {
@@ -83,6 +88,8 @@ import {
 } from './ModelFog';
 import type { TieMaterialMode } from './ties/TieTypes';
 import {
+  ps2SkyBloom,
+  ps2SkyBloomProfileForGame,
   tightBloom,
   tightBloomVersion
 } from './TightBloomNode';
@@ -209,7 +216,7 @@ type MapRenderPipeline = {
   renderPipeline: THREE.RenderPipeline;
   skyPass: PassNode;
   scenePass: PassNode;
-  bloomNode: BloomNode | null;
+  bloomNodes: BloomNode[];
   bloomVersion: string;
 };
 
@@ -320,7 +327,7 @@ export class MapSceneRenderer {
     await assertWebGpuAvailable();
 
     this.scene.background = null;
-    this.skyScene.background = this.sceneEnvironment.backgroundColor;
+    this.skyScene.background = this.sceneEnvironment.backgroundColor.clone().convertLinearToSRGB();
 
     const renderer = new WebGPURenderer({
       antialias: false,
@@ -375,6 +382,7 @@ export class MapSceneRenderer {
     const loadStartMs = performance.now();
     this.logTimingStart('load package');
     this.animationRenderSuspended = true;
+    this.disposeRenderPipelines();
     this.disposeCurrentRoot();
     this.currentPackage = mapPackage;
 
@@ -505,8 +513,7 @@ export class MapSceneRenderer {
       this.skyScene,
       mapPackage,
       this.loader,
-      this.skyboxRenderOptions,
-      this.renderer.getMaxAnisotropy()
+      this.skyboxRenderOptions
     );
     this.onSkyboxStats(skyboxStats);
     this.onLoadProgress({
@@ -1178,13 +1185,30 @@ export class MapSceneRenderer {
     }
 
     const currentPipeline = includeBloom ? this.bloomRenderPipeline : this.baseRenderPipeline;
-    if (currentPipeline && (!includeBloom || currentPipeline.bloomVersion === tightBloomVersion)) {
+    if (currentPipeline?.bloomVersion === tightBloomVersion) {
       return currentPipeline;
     }
     this.disposeRenderPipeline(includeBloom);
 
     const skyPass = pass(this.skyScene, this.skyCamera);
     const scenePass = pass(this.scene, this.camera);
+    const hasSkyboxBloom = this.skyboxController.hasBloomLayers();
+    const skyBloomProfile = ps2SkyBloomProfileForGame(this.currentPackage?.rootManifest.Game);
+    if (hasSkyboxBloom && skyBloomProfile === 'uya') {
+      const frameAlpha = diffuseColor.a.mul(128).floor().div(128);
+      const alphaWrite = step(float(8 / 128), frameAlpha);
+      const skyMrt = mrt({ output, frameAlpha: vec4(frameAlpha, 0, 0, alphaWrite) });
+      const frameAlphaBlend = new THREE.BlendMode(THREE.CustomBlending);
+      frameAlphaBlend.blendSrc = THREE.SrcAlphaFactor;
+      frameAlphaBlend.blendDst = THREE.OneMinusSrcAlphaFactor;
+      frameAlphaBlend.blendEquation = THREE.AddEquation;
+      skyMrt.setBlendMode('frameAlpha', frameAlphaBlend);
+      skyPass.setMRT(skyMrt);
+    } else if (hasSkyboxBloom) {
+      const skyMrt = mrt({ output, bloomSource: vec4(emissive, diffuseColor.a) });
+      skyMrt.setBlendMode('bloomSource', new THREE.BlendMode(THREE.MaterialBlending));
+      skyPass.setMRT(skyMrt);
+    }
     if (includeBloom) {
       scenePass.setMRT(mrt({
         output,
@@ -1194,18 +1218,45 @@ export class MapSceneRenderer {
 
     const sceneColor = scenePass.getTextureNode('output');
     const skyColor = skyPass.getTextureNode('output');
+    // Sky shells were composited in the PS2's nonlinear framebuffer space.
+    const linearSkyRgb = sRGBTransferEOTF(skyColor.rgb) as Node<'vec3'>;
+    const linearSkyColor = vec4(linearSkyRgb, skyColor.a);
     const sceneWithLift = createWorldLiftNode(sceneColor, this.worldDisplayLift);
     const sceneWithAtmosphere = createSubtleFoggedSceneNode(sceneWithLift, scenePass, this.sceneEnvironment.fog, this.sceneHazeStrength);
-    const sceneOverSky = mix(skyColor, sceneWithAtmosphere, sceneColor.a);
-    const bloomPass = includeBloom
+    const sceneOverSky = mix(linearSkyColor, sceneWithAtmosphere, sceneColor.a);
+    const encodedSceneRgb = sRGBTransferOETF(sceneOverSky.rgb) as Node<'vec3'>;
+    let skyBloomPass: BloomNode | null = null;
+    if (hasSkyboxBloom) {
+      // getTextureNode allocates an attachment, so only request auxiliary MRT outputs that exist.
+      const skyBloomSource = skyBloomProfile === 'uya'
+        ? vec4(skyColor.rgb, skyPass.getTextureNode('frameAlpha').r)
+        : skyPass.getTextureNode('bloomSource');
+      skyBloomPass = ps2SkyBloom(
+        vec4(
+          skyBloomSource.rgb.mul(float(1).sub(sceneColor.a)),
+          skyBloomProfile === 'uya' ? skyBloomSource.a : sceneOverSky.a
+        ),
+        skyBloomProfile
+      );
+    }
+    const tieBloomPass = includeBloom
       ? tightBloom(scenePass.getTextureNode('emissive'), 0.45, 0, 0)
       : null;
+    const sceneWithSkyBloom = skyBloomPass
+      ? vec4(
+        sRGBTransferEOTF(encodedSceneRgb.add(skyBloomPass.rgb)) as Node<'vec3'>,
+        sceneOverSky.a
+      )
+      : sceneOverSky;
     const binding: MapRenderPipeline = {
-      renderPipeline: new THREE.RenderPipeline(this.renderer, bloomPass ? sceneOverSky.add(bloomPass) : sceneOverSky),
+      renderPipeline: new THREE.RenderPipeline(
+        this.renderer,
+        tieBloomPass ? sceneWithSkyBloom.add(tieBloomPass) : sceneWithSkyBloom
+      ),
       skyPass,
       scenePass,
-      bloomNode: bloomPass,
-      bloomVersion: includeBloom ? tightBloomVersion : ''
+      bloomNodes: [skyBloomPass, tieBloomPass].filter((node): node is BloomNode => node !== null),
+      bloomVersion: tightBloomVersion
     };
 
     if (includeBloom) {
@@ -1344,7 +1395,9 @@ export class MapSceneRenderer {
     pipeline?.renderPipeline.dispose();
     pipeline?.skyPass.dispose();
     pipeline?.scenePass.dispose();
-    (pipeline?.bloomNode as (BloomNode & { dispose?: () => void }) | null)?.dispose?.();
+    for (const bloomNode of pipeline?.bloomNodes ?? []) {
+      (bloomNode as BloomNode & { dispose?: () => void }).dispose?.();
+    }
     if (includeBloom) {
       this.bloomRenderPipeline = null;
     } else {

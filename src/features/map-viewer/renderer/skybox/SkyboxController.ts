@@ -17,6 +17,7 @@ import {
   cloneSkyboxMaterial,
   configureSkyboxMaterial,
   getSkyboxDrawOrder,
+  isSkyboxBloomLayer,
   isSkyboxReflectionTextureClone,
   selectSkyboxReflectionTexture
 } from './SkyboxMaterials';
@@ -24,6 +25,11 @@ import {
   buildSkyboxStats,
   emptySkyboxStats
 } from './SkyboxStats';
+import {
+  buildSkyboxNightStars,
+  updateSkyboxNightStars,
+  type SkyboxNightStars
+} from './SkyboxNightStars';
 
 export class SkyboxController {
   private parent: THREE.Object3D | null = null;
@@ -31,23 +37,22 @@ export class SkyboxController {
   private cameraEye = new THREE.Vector3();
   private positionOffset = new THREE.Vector3();
   private animations: SkyboxShellAnimation[] = [];
+  private nightStars: SkyboxNightStars | null = null;
   private reflectionTexture: THREE.Texture | null = null;
+  private hasBloom = false;
   private animationStartSeconds = performance.now() / 1000;
   private options: SkyboxRenderOptions = { ...defaultSkyboxRenderOptions };
-  private maxAnisotropy = 1;
   private stats: SkyboxStats = { ...emptySkyboxStats };
 
   async load(
     parent: THREE.Object3D,
     mapPackage: LoadedMapPackage,
     loader: GLTFLoader,
-    options: SkyboxRenderOptions,
-    maxAnisotropy = 1
+    options: SkyboxRenderOptions
   ): Promise<SkyboxStats> {
     this.dispose();
     this.parent = parent;
     this.options = { ...options };
-    this.maxAnisotropy = Math.max(1, maxAnisotropy);
 
     if (!mapPackage.skyboxGltfUrl) {
       this.stats = { ...emptySkyboxStats };
@@ -59,6 +64,7 @@ export class SkyboxController {
     root.name = 'skybox';
     this.root = root;
     this.configureSkyboxShell(root);
+    this.nightStars = await buildSkyboxNightStars(root, gltf, this.cameraEye);
     root.visible = this.options.visible;
     parent.add(root);
     this.stats = buildSkyboxStats(root, this.animations);
@@ -108,6 +114,7 @@ export class SkyboxController {
 
   update(nowSeconds = performance.now() / 1000): void {
     updateSkyboxAnimations(this.animations, this.animationStartSeconds, this.options, nowSeconds);
+    updateSkyboxNightStars(this.nightStars, this.animationStartSeconds, this.options, nowSeconds);
   }
 
   isVisible(): boolean {
@@ -116,6 +123,10 @@ export class SkyboxController {
 
   getReflectionTexture(): THREE.Texture | null {
     return this.reflectionTexture;
+  }
+
+  hasBloomLayers(): boolean {
+    return this.hasBloom;
   }
 
   dispose(): void {
@@ -129,10 +140,15 @@ export class SkyboxController {
     this.cameraEye.set(0, 0, 0);
     this.positionOffset.set(0, 0, 0);
     this.animations = [];
+    for (const texture of this.nightStars?.textures ?? []) {
+      texture.dispose();
+    }
+    this.nightStars = null;
     if (this.reflectionTexture && isSkyboxReflectionTextureClone(this.reflectionTexture)) {
       this.reflectionTexture.dispose();
     }
     this.reflectionTexture = null;
+    this.hasBloom = false;
     this.stats = { ...emptySkyboxStats };
   }
 
@@ -156,11 +172,13 @@ export class SkyboxController {
       object.frustumCulled = false;
 
       const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh) {
+      if (!mesh.isMesh || mesh.userData.mapOmaticSkyboxNightStars === true) {
         return;
       }
 
-      mesh.material = cloneSkyboxMaterial(mesh.material, mesh, this.maxAnisotropy);
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      this.hasBloom ||= materials.some((material) => isSkyboxBloomLayer(material, mesh));
+      mesh.material = cloneSkyboxMaterial(mesh.material, mesh);
     });
 
     this.configureSkyboxMaterials(root);
@@ -172,7 +190,7 @@ export class SkyboxController {
   private configureSkyboxMaterials(root: THREE.Object3D): void {
     root.traverse((object) => {
       const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh) {
+      if (!mesh.isMesh || mesh.userData.mapOmaticSkyboxNightStars === true) {
         return;
       }
 
