@@ -25,6 +25,7 @@ import {
   buildSkyboxStats,
   emptySkyboxStats
 } from './SkyboxStats';
+import { setSkyboxShellVisible, skyboxShellIndices } from './skyboxMetadata';
 import {
   buildSkyboxNightStars,
   updateSkyboxNightStars,
@@ -127,6 +128,16 @@ export class SkyboxController {
 
   hasBloomLayers(): boolean {
     return this.hasBloom;
+  }
+
+  getShellIndices(): number[] {
+    return this.root ? skyboxShellIndices(this.root) : [];
+  }
+
+  setShellVisible(index: number, visible: boolean): void {
+    if (this.root) {
+      setSkyboxShellVisible(this.root, index, visible);
+    }
   }
 
   dispose(): void {

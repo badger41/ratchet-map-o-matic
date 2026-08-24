@@ -4,8 +4,7 @@ import type { SkyboxShellAnimation } from './SkyboxAnimation';
 import { isSkyboxAdditiveMaterial } from './SkyboxMaterials';
 import {
   countGeometryTriangles,
-  numberValue,
-  skyboxPrimitiveData
+  skyboxShellIndex
 } from './skyboxMetadata';
 
 export const emptySkyboxStats: SkyboxStats = {
@@ -34,8 +33,7 @@ export function buildSkyboxStats(root: THREE.Object3D, animations: SkyboxShellAn
     }
 
     meshes += 1;
-    const data = skyboxPrimitiveData(mesh);
-    const shellIndex = numberValue(data.SkyboxShellIndex);
+    const shellIndex = skyboxShellIndex(mesh);
     if (shellIndex !== null) {
       shells.add(shellIndex);
     }

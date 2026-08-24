@@ -1,5 +1,5 @@
 import { Badge, Button, Checkbox, Group, Menu, Stack, Text } from '@mantine/core';
-import { Box as BoxIcon, Boxes, Bug, FileArchive, Images, RotateCcw } from 'lucide-react';
+import { Box as BoxIcon, Boxes, Bug, CloudSun, FileArchive, Images, RotateCcw } from 'lucide-react';
 import { useAppChrome } from '../features/app-chrome/AppChromeProvider';
 
 export function AppHeader() {
@@ -61,6 +61,13 @@ export function AppHeader() {
                 </Button>
               </Menu.Target>
               <Menu.Dropdown>
+                <Menu.Item
+                  leftSection={<CloudSun size={14} />}
+                  disabled={!viewerChrome.onOpenSkybox}
+                  onClick={viewerChrome.onOpenSkybox}
+                >
+                  Skybox
+                </Menu.Item>
                 <Menu.Item
                   leftSection={<Boxes size={14} />}
                   disabled={!viewerChrome.onOpenMobys}

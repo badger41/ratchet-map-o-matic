@@ -19,6 +19,7 @@ interface SkyboxReflectionCandidate {
 const skyboxFullOpacityAlphaByte = 128;
 const skyboxFullOpacityAlpha = skyboxFullOpacityAlphaByte / 255;
 const additiveOverlayMinAlphaFalloff = 2;
+const additiveOverlayMaxAlphaByte = 0x60;
 const skyboxTextureByMaterial = new WeakMap<THREE.Material, THREE.Texture>();
 
 export function cloneSkyboxMaterial(
@@ -283,8 +284,7 @@ function skyboxUsesAdditiveOverlayBlend(material: THREE.Material, object: THREE.
 
   const textureMaxAlpha = numberValue(material.userData?.SkyboxTextureMaxAlpha) ?? 255;
   const vertexAlphaMax = numberValue(material.userData?.SkyboxVertexAlphaMax) ?? 1;
-  const textureMaxOpacity = Math.min(Math.max(textureMaxAlpha / skyboxFullOpacityAlphaByte, 0), 1);
-  if (textureMaxOpacity >= 0.9 || vertexAlphaMax < 0.9) {
+  if (textureMaxAlpha > additiveOverlayMaxAlphaByte || vertexAlphaMax < 0.9) {
     return false;
   }
 

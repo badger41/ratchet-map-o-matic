@@ -50,3 +50,20 @@ test('uses UYA legacy bloom without changing the DL path', () => {
   assert.equal(ps2SkyBloomProfileForGame('DL'), 'dl');
   assert.equal(ps2SkyBloomProfileForGame('GC'), 'dl');
 });
+
+test('keeps high-alpha rotating sky shells source-over', () => {
+  const source = new THREE.MeshBasicMaterial();
+  source.userData = {
+    SkyboxDrawBlendMode: 'SourceOver',
+    SkyboxMaterialAlphaMode: 'Blend',
+    SkyboxTextureMaxAlpha: 103,
+    SkyboxVertexAlphaMax: 1
+  };
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), source);
+  mesh.userData.SkyboxShellHasRuntimeRotation = true;
+  const material = cloneSkyboxMaterial(source, mesh) as THREE.MeshBasicNodeMaterial;
+
+  configureSkyboxMaterial(material, mesh, defaultSkyboxRenderOptions);
+
+  assert.equal(material.blendDst, THREE.OneMinusSrcAlphaFactor);
+});

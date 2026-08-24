@@ -41,8 +41,7 @@ import {
 } from '../../../services/mapPackages/mapPackageTypes';
 import type {
   DlMobyInstances,
-  DlLevelSettings,
-  DlRgb96
+  DlLevelSettings
 } from '../../../services/wasm/ratchetPs2Wasm';
 import {
   createInitialSceneCameraFrame,
@@ -74,6 +73,7 @@ import {
   type WaterPlaneDebugOptions
 } from './mobys/simulation/dl/2871/WaterPlane';
 import { SkyboxController } from './skybox/SkyboxController';
+import { mapLinearColorFromRgb96 } from './skybox/SkyboxBackground';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
 import { TieInstanceController } from './ties/TieInstanceController';
 import { setTieBloomDistanceFadeRange } from './ties/TieMaterials';
@@ -1638,7 +1638,7 @@ function resolveMapSceneEnvironment(levelSettings: DlLevelSettings | null): MapS
   }
 
   return {
-    backgroundColor: colorFromDlRgb96(levelSettings.backgroundColor),
+    backgroundColor: mapLinearColorFromRgb96(levelSettings.backgroundColor),
     fog: resolveMapSceneFog(levelSettings)
   };
 }
@@ -1658,26 +1658,12 @@ function resolveMapSceneFog(levelSettings: DlLevelSettings): MapSceneFog | null 
   }
 
   return {
-    color: colorFromDlRgb96(levelSettings.fogColor),
+    color: mapLinearColorFromRgb96(levelSettings.fogColor),
     nearDistance: rawNearDistance * dlFogDistanceScale,
     farDistance: rawFarDistance * dlFogDistanceScale,
     nearIntensity,
     farIntensity
   };
-}
-
-function colorFromDlRgb96(color: DlRgb96): THREE.Color {
-  return new THREE.Color().setRGB(
-    normalizeColorChannel(color.red),
-    normalizeColorChannel(color.green),
-    normalizeColorChannel(color.blue),
-    THREE.SRGBColorSpace
-  );
-}
-
-function normalizeColorChannel(value: number): number {
-  const numeric = finiteNumber(value) ?? 0;
-  return clamp01(numeric > 1 ? numeric / 255 : numeric);
 }
 
 function fogAmountFromDlIntensity(value: number): number {

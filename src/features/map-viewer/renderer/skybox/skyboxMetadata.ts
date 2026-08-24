@@ -7,6 +7,30 @@ export function skyboxPrimitiveData(object: THREE.Mesh): Record<string, unknown>
   };
 }
 
+export function skyboxShellIndex(object: THREE.Object3D): number | null {
+  const mesh = object as THREE.Mesh;
+  return mesh.isMesh ? numberValue(skyboxPrimitiveData(mesh).SkyboxShellIndex) : null;
+}
+
+export function skyboxShellIndices(root: THREE.Object3D): number[] {
+  const indices = new Set<number>();
+  root.traverse((object) => {
+    const index = skyboxShellIndex(object);
+    if (index !== null) {
+      indices.add(index);
+    }
+  });
+  return [...indices].sort((left, right) => left - right);
+}
+
+export function setSkyboxShellVisible(root: THREE.Object3D, index: number, visible: boolean): void {
+  root.traverse((object) => {
+    if (skyboxShellIndex(object) === index) {
+      object.visible = visible;
+    }
+  });
+}
+
 export function readVector3(value: unknown): THREE.Vector3 {
   if (Array.isArray(value) && value.length >= 3) {
     return new THREE.Vector3(
