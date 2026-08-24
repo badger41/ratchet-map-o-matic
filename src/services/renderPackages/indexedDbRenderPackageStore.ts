@@ -1,3 +1,4 @@
+import ratchetPs2WasmVersion from '../../../ratchetps2-wasm.version?raw';
 import type {
   DlMobyInstances,
   DlLevelSettings,
@@ -10,7 +11,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'dl-night-stars-v5';
+const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : ratchetPs2WasmVersion.trim();
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
