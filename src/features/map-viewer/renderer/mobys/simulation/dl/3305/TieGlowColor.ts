@@ -3,9 +3,13 @@ import type { TieInstanceRecord } from '../../../../../../../services/mapPackage
 import type { DlMobyInstance } from '../../../../../../../services/wasm/ratchetPs2Wasm';
 import {
   MobyClass,
-  type MobyClassContext,
-  type MobyClassUpdate
+  type MobyClassContext
 } from '../../MobyClass';
+import {
+  tieGlowDisplayByte,
+  tieGlowRgbForPhase,
+  wrapTieGlowAngle
+} from './TieGlowColorMath';
 
 export const tieGlowColorMobyClassId = 0x0ce9;
 
@@ -13,20 +17,18 @@ interface TieGlowColorConfig {
   tieGroupIndex: number;
   phaseRadiansPerStep: number;
   thresholdRadians: number;
-  colorA: THREE.Color;
-  colorB: THREE.Color;
-  current: THREE.Color;
+  colorA: number;
+  colorB: number;
+  current: number;
+  displayColor: THREE.Color;
   phase: number;
   spatialPhaseVector: THREE.Vector3 | null;
 }
 
-const pvarByteLength = 0x26;
-const spatialPvarByteLength = 0x80;
+const pvarByteLength = 0x90;
 const degreesToRadians = Math.PI / 180;
 const byteToColor = 1 / 255;
-const glowDisplayGamma = 2.2;
 const gameStepSeconds = 1 / 60;
-const thresholdBlendAmount = 0.1;
 const tau = Math.PI * 2;
 
 export class TieGlowColorMobyClass extends MobyClass {
@@ -65,18 +67,12 @@ export class TieGlowColorMobyClass extends MobyClass {
     }
   }
 
-  override update(update: MobyClassUpdate): void {
+  override update(): void {
     for (const config of this.configs) {
-      config.phase = wrapAngle(config.phase + config.phaseRadiansPerStep * update.stepSeconds / gameStepSeconds);
+      config.phase = wrapTieGlowAngle(config.phase + config.phaseRadiansPerStep);
       if (!config.spatialPhaseVector) {
-        if (config.thresholdRadians === 0) {
-          colorForPhase(config, config.phase, config.current);
-        } else {
-          config.current.lerp(
-            config.phase > config.thresholdRadians ? config.colorB : config.colorA,
-            thresholdBlendAmount * update.stepSeconds / gameStepSeconds
-          );
-        }
+        config.current = colorForPhase(config, config.phase, false);
+        setDisplayColor(config.displayColor, config.current);
       }
     }
 
@@ -92,13 +88,16 @@ export class TieGlowColorMobyClass extends MobyClass {
   private applyGlowColors(): void {
     for (const config of this.configs) {
       if (!config.spatialPhaseVector) {
-        this.context.tieController.setTieGroupGlowColor(config.tieGroupIndex, config.current);
+        this.context.tieController.setTieGroupGlowColor(config.tieGroupIndex, config.displayColor);
         continue;
       }
 
       this.context.tieController.setTieGroupGlowColorForRecords(
         config.tieGroupIndex,
-        (record) => colorForPhase(config, spatialPhaseForRecord(config, record), this.scratchColor)
+        (record) => setDisplayColor(
+          this.scratchColor,
+          colorForPhase(config, spatialPhaseForRecord(config, record), true)
+        )
       );
     }
   }
@@ -118,29 +117,34 @@ function parseTieGlowColorPvar(instance: DlMobyInstance): TieGlowColorConfig | n
 
   const view = new DataView(pvar.buffer, pvar.byteOffset, pvar.byteLength);
   const tieGroupIndex = view.getInt32(0x00, true);
-  if (tieGroupIndex < 0) {
+  if (tieGroupIndex < 0 || view.getInt32(0x1c, true) === 0 || view.getInt32(0x80, true) !== 0) {
     return null;
   }
 
   const colorA = readRgb(pvar, 0x20);
+  const current = readRgb(pvar, 0x10);
   return {
     tieGroupIndex,
     phaseRadiansPerStep: finiteOrZero(view.getFloat32(0x04, true)) * degreesToRadians * gameStepSeconds,
-    thresholdRadians: wrapAngle(finiteOrZero(view.getFloat32(0x08, true)) * degreesToRadians),
+    thresholdRadians: wrapTieGlowAngle(finiteOrZero(view.getFloat32(0x08, true)) * degreesToRadians),
     colorA,
     colorB: readRgb(pvar, 0x23),
-    current: colorA.clone(),
-    phase: wrapAngle(finiteOrZero(view.getFloat32(0x0c, true))),
-    spatialPhaseVector: readSpatialPhaseVector(view, pvar.byteLength)
+    current,
+    displayColor: setDisplayColor(new THREE.Color(), current),
+    phase: wrapTieGlowAngle(finiteOrZero(view.getFloat32(0x0c, true))),
+    spatialPhaseVector: readSpatialPhaseVector(view)
   };
 }
 
-function colorForPhase(config: TieGlowColorConfig, phase: number, target: THREE.Color): THREE.Color {
-  if (config.thresholdRadians === 0) {
-    return target.copy(config.colorA).lerp(config.colorB, Math.cos(phase) * 0.5 + 0.5);
-  }
-
-  return target.copy(phase > config.thresholdRadians ? config.colorB : config.colorA);
+function colorForPhase(config: TieGlowColorConfig, phase: number, spatial: boolean): number {
+  return tieGlowRgbForPhase(
+    config.current,
+    config.colorA,
+    config.colorB,
+    phase,
+    config.thresholdRadians,
+    spatial
+  );
 }
 
 function spatialPhaseForRecord(config: TieGlowColorConfig, record: TieInstanceRecord): number {
@@ -149,17 +153,15 @@ function spatialPhaseForRecord(config: TieGlowColorConfig, record: TieInstanceRe
     return config.phase;
   }
 
-  const row = record.matrixRows[2];
-  return wrapAngle(config.phase - (row[0] * vector.x + row[1] * vector.y + row[2] * vector.z) * tau);
+  const position = record.position;
+  return wrapTieGlowAngle(
+    config.phase - (position[0] * vector.x + position[1] * vector.y + position[2] * vector.z) * tau
+  );
 }
 
-function readSpatialPhaseVector(view: DataView, byteLength: number): THREE.Vector3 | null {
-  if (byteLength < spatialPvarByteLength || view.getInt32(0x1c, true) === 0) {
-    return null;
-  }
-
-  const spatialScale = Math.abs(finiteOrZero(view.getFloat32(0x7c, true)));
-  if (spatialScale === 0) {
+function readSpatialPhaseVector(view: DataView): THREE.Vector3 | null {
+  const wavelength = finiteOrZero(view.getFloat32(0x7c, true));
+  if (wavelength === 0) {
     return null;
   }
 
@@ -172,35 +174,21 @@ function readSpatialPhaseVector(view: DataView, byteLength: number): THREE.Vecto
     return null;
   }
 
-  return vector.normalize().multiplyScalar(1 / Math.sqrt(spatialScale));
+  return vector.normalize().multiplyScalar(1 / wavelength);
 }
 
-function readRgb(bytes: Uint8Array, offset: number): THREE.Color {
-  return new THREE.Color(
-    pvarColorToRaw(bytes[offset]),
-    pvarColorToRaw(bytes[offset + 1]),
-    pvarColorToRaw(bytes[offset + 2])
+function readRgb(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16;
+}
+
+function setDisplayColor(target: THREE.Color, rgb: number): THREE.Color {
+  return target.setRGB(
+    tieGlowDisplayByte(rgb, 0) * byteToColor,
+    tieGlowDisplayByte(rgb, 8) * byteToColor,
+    tieGlowDisplayByte(rgb, 16) * byteToColor
   );
-}
-
-function pvarColorToRaw(value: number | undefined): number {
-  return Math.pow((((value ?? 255) >> 2) << 2) * byteToColor, glowDisplayGamma);
 }
 
 function finiteOrZero(value: number): number {
   return Number.isFinite(value) ? value : 0;
-}
-
-function wrapAngle(value: number): number {
-  const wrapped = value > tau || value < -tau
-    ? value % tau
-    : value;
-  if (wrapped > Math.PI) {
-    return wrapped - tau;
-  }
-  if (wrapped < -Math.PI) {
-    return wrapped + tau;
-  }
-
-  return wrapped;
 }

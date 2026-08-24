@@ -216,7 +216,7 @@ function createTieDisplayMaterial(
   if (modelMaterialInfo.usesGlowEmission) {
     const glowNode = createTieGlowNode(material, modelMaterialInfo, glowColorBinding);
     const bloomFadeNode = createTieBloomDistanceFadeNode();
-    material.colorNode = glowNode;
+    material.colorNode = glowNode.mul(float(1).sub(bloomFadeNode));
     (material as MeshBasicWithEmissiveNode).emissiveNode = glowNode.mul(bloomFadeNode);
     return material;
   }
@@ -408,7 +408,7 @@ function createTieGlowNode(
   ));
   const glowStrength = uniform(modelMaterialInfo.glowEmissionStrength);
   if (!glowColorBinding) {
-    return baseColor.mul(exportedTint).mul(glowStrength);
+    return applyModelDisplayModulateNode(baseColor, exportedTint).mul(glowStrength);
   }
 
   const row = attribute<'float'>(tieGlowColorRowAttributeName, 'float');
@@ -416,7 +416,10 @@ function createTieGlowNode(
     glowColorBinding.texture,
     vec2(float(0.5), row.add(float(0.5)).div(uniform(Math.max(1, glowColorBinding.instanceCount))).clamp(0, 1))
   ));
-  return baseColor.mul(mix(exportedTint, runtimeTint.rgb.mul(float(255 / 128)), runtimeTint.a)).mul(glowStrength);
+  return applyModelDisplayModulateNode(
+    baseColor,
+    mix(exportedTint, runtimeTint.rgb.mul(float(255 / 128)), runtimeTint.a)
+  ).mul(mix(glowStrength, float(1), runtimeTint.a));
 }
 
 function hasTieSecondUvReflection(

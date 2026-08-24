@@ -5,7 +5,7 @@ import { Fn, step, textureSize, uv, vec2, vec4 } from 'three/tsl';
 import BloomNode from 'three/addons/tsl/display/BloomNode.js';
 import type Node from 'three/src/nodes/core/Node.js';
 
-export const tightBloomVersion = '2026-08-23-sky-bloom-attachment-guard';
+export const tightBloomVersion = '2026-08-24-tie-bloom-framebuffer-space';
 
 export type Ps2SkyBloomProfile = 'uya' | 'dl';
 

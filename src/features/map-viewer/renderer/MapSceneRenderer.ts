@@ -1239,19 +1239,26 @@ export class MapSceneRenderer {
         skyBloomProfile
       );
     }
-    const tieBloomPass = includeBloom
-      ? tightBloom(scenePass.getTextureNode('emissive'), 0.45, 0, 0)
+    const tieBloomSource = includeBloom ? scenePass.getTextureNode('emissive') : null;
+    const tieBloomPass = tieBloomSource
+      ? tightBloom(vec4(
+        sRGBTransferOETF(tieBloomSource.rgb) as Node<'vec3'>,
+        tieBloomSource.a
+      ), 0.45, 0, 0)
       : null;
-    const sceneWithSkyBloom = skyBloomPass
+    const encodedBloomRgb = skyBloomPass
+      ? encodedSceneRgb.add(skyBloomPass.rgb)
+      : encodedSceneRgb;
+    const sceneWithBloom = skyBloomPass || tieBloomPass
       ? vec4(
-        sRGBTransferEOTF(encodedSceneRgb.add(skyBloomPass.rgb)) as Node<'vec3'>,
+        sRGBTransferEOTF(tieBloomPass ? encodedBloomRgb.add(tieBloomPass.rgb) : encodedBloomRgb) as Node<'vec3'>,
         sceneOverSky.a
       )
       : sceneOverSky;
     const binding: MapRenderPipeline = {
       renderPipeline: new THREE.RenderPipeline(
         this.renderer,
-        tieBloomPass ? sceneWithSkyBloom.add(tieBloomPass) : sceneWithSkyBloom
+        sceneWithBloom
       ),
       skyPass,
       scenePass,
