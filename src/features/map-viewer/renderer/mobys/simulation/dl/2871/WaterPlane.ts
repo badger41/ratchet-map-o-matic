@@ -323,7 +323,8 @@ function parseWaterPvar(instance: DlMobyInstance): WaterPvar | null {
 }
 
 function getWaterRenderPosZ(config: WaterPvar): number {
-  return config.posZ + config.waves.amplitudeSum;
+  // The summed amplitude is the draw envelope, not an offset from the PVar surface height.
+  return config.posZ;
 }
 
 function fxLevelTextureBaseIdForGame(game: unknown): number {
