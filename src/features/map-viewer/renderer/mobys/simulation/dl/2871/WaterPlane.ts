@@ -4,6 +4,7 @@ import {
   joinPackagePath
 } from '../../../../../../../services/mapAssets/mapAssetPackage';
 import type { DlMobyInstance } from '../../../../../../../services/wasm/ratchetPs2Wasm';
+import { numberValue } from '../../../../../../../shared/valueParsing.ts';
 import { ps2ToGltfBasisMatrix } from '../../../../shrubs/ShrubTypes';
 import {
   MobyClass,
@@ -442,10 +443,6 @@ async function loadTexture(loader: THREE.TextureLoader, url: string): Promise<TH
   } catch {
     return null;
   }
-}
-
-function numberValue(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function stringValue(value: unknown): string | null {

@@ -1,9 +1,10 @@
-import ratchetPs2WasmVersion from '../../../ratchetps2-wasm.version?raw';
-import type {
-  DlMobyInstances,
-  DlLevelSettings,
-  PackedFileEntry
+import {
+  ratchetPs2WasmVersion,
+  type DlMobyInstances,
+  type DlLevelSettings,
+  type PackedFileEntry
 } from '../wasm/ratchetPs2Wasm';
+import { numberValue } from '../../shared/valueParsing.ts';
 
 const databaseName = 'ratchet-map-o-matic';
 const databaseVersion = 1;
@@ -11,7 +12,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = import.meta.env.DEV ? `dev-${Date.now()}` : ratchetPs2WasmVersion.trim();
+const renderPackageFormatVersion = ratchetPs2WasmVersion;
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
@@ -312,8 +313,4 @@ function readPackedJson<T>(packedBytes: Uint8Array, entries: PackedFileEntry[], 
 
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-function numberValue(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }

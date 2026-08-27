@@ -1,3 +1,5 @@
+import { isRecord } from '../../shared/valueParsing.ts';
+
 export interface MapAssetEntry {
   path: string;
   length: number;
@@ -300,8 +302,4 @@ function contentTypeForPath(path: string): string {
     default:
       return 'application/octet-stream';
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

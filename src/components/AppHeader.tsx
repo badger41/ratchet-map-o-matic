@@ -89,6 +89,13 @@ export function AppHeader() {
                 >
                   FX textures
                 </Menu.Item>
+                <Menu.Item
+                  leftSection={<Images size={14} />}
+                  disabled={!viewerChrome.onOpenHudBanks}
+                  onClick={viewerChrome.onOpenHudBanks}
+                >
+                  HUD banks
+                </Menu.Item>
               </Menu.Dropdown>
             </Menu>
           </Group>

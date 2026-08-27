@@ -54,6 +54,7 @@ import { MapViewerStageList } from './MapViewerStageList';
 import { MobileCameraControls } from './MobileCameraControls';
 
 const MobyWindow = lazy(() => import('./MobyWindow'));
+const HudBanksWindow = lazy(() => import('./HudBanksWindow'));
 const SkyboxWindow = lazy(() => import('./SkyboxWindow'));
 const TieWindow = lazy(() => import('./TieWindow'));
 
@@ -111,6 +112,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [fxTextures, setFxTextures] = useState<FxTextureView[]>([]);
   const [fxTextureLoadError, setFxTextureLoadError] = useState<string | null>(null);
   const [fxTextureWindowOpen, setFxTextureWindowOpen] = useState(false);
+  const [hudBanksWindowOpen, setHudBanksWindowOpen] = useState(false);
   const [mobyWindowOpen, setMobyWindowOpen] = useState(false);
   const [skyboxWindowOpen, setSkyboxWindowOpen] = useState(false);
   const [tieWindowOpen, setTieWindowOpen] = useState(false);
@@ -150,6 +152,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
 
   const openMobyWindow = useCallback(() => {
     setMobyWindowOpen(true);
+  }, []);
+
+  const openHudBanksWindow = useCallback(() => {
+    setHudBanksWindowOpen(true);
   }, []);
 
   const openSkyboxWindow = useCallback(() => {
@@ -196,6 +202,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       state: lastError ? 'failed' : ready ? 'ready' : 'loading',
       onChooseAnother,
       onOpenFxTextures: ready ? openFxTextureWindow : undefined,
+      onOpenHudBanks: ready ? openHudBanksWindow : undefined,
       onOpenMobys: ready ? openMobyWindow : undefined,
       onOpenSkybox: ready ? openSkyboxWindow : undefined,
       onOpenTies: ready ? openTieWindow : undefined
@@ -204,6 +211,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     lastError,
     onChooseAnother,
     openFxTextureWindow,
+    openHudBanksWindow,
     openMobyWindow,
     openSkyboxWindow,
     openTieWindow,
@@ -219,9 +227,9 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
 
   useEffect(() => {
     rendererRef.current?.setRenderPaused(
-      fxTextureWindowOpen || mobyWindowOpen || skyboxWindowOpen || tieWindowOpen
+      fxTextureWindowOpen || hudBanksWindowOpen || mobyWindowOpen || skyboxWindowOpen || tieWindowOpen
     );
-  }, [fxTextureWindowOpen, mobyWindowOpen, skyboxWindowOpen, tieWindowOpen]);
+  }, [fxTextureWindowOpen, hudBanksWindowOpen, mobyWindowOpen, skyboxWindowOpen, tieWindowOpen]);
 
   useEffect(() => {
     rendererRef.current?.setTerrainVisible(terrainVisible);
@@ -388,6 +396,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       setFxTextures([]);
       setFxTextureLoadError(null);
       setFxTextureWindowOpen(false);
+      setHudBanksWindowOpen(false);
       setMobyWindowOpen(false);
       setSkyboxWindowOpen(false);
       setTieWindowOpen(false);
@@ -711,6 +720,15 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         error={fxTextureLoadError}
         onClose={() => setFxTextureWindowOpen(false)}
       />
+      {hudBanksWindowOpen ? (
+        <Suspense fallback={null}>
+          <HudBanksWindow
+            opened
+            mapPackage={loadedMapPackage}
+            onClose={() => setHudBanksWindowOpen(false)}
+          />
+        </Suspense>
+      ) : null}
       {mobyWindowOpen ? (
         <Suspense fallback={null}>
           <MobyWindow

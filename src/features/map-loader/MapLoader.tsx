@@ -33,6 +33,29 @@ const gameOptions: Array<{ gameId: RatchetGameId; label: string }> = [
 const vanillaRouteSegment = 'vanilla';
 const customRouteSegment = 'custom';
 const routeBasePath = resolveRouteBasePath();
+const availableMaps = [
+  ...mapCatalog,
+  ...(import.meta.env.DEV ? Array.from({ length: 27 }, (_, level): MapDefinition => ({
+    id: `gc-preview-level${level}`,
+    gameId: 'GC',
+    category: 'SP',
+    level,
+    name: `Preview LEVEL${level}.WAD`,
+    label: `Preview: LEVEL${level}.WAD`,
+    wadUrl: `/preview-wads/level${level}.wad`,
+    sourceKind: 'vanillaWad'
+  })) : []),
+  ...(import.meta.env.DEV ? [1, 2, 3, 4, 7, 8, 9, 27, 28, 31, 33].map((level): MapDefinition => ({
+    id: `uya-may26-preview-level${level}`,
+    gameId: 'UYA',
+    category: 'SP',
+    level,
+    name: `May 26 Preview LEVEL${level}.WAD`,
+    label: `May 26 Preview: LEVEL${level}.WAD`,
+    wadUrl: `/uya-preview-wads/level${level}.wad`,
+    sourceKind: 'vanillaWad'
+  })) : [])
+];
 
 interface MapRouteSeed {
   gameId: RatchetGameId | null;
@@ -69,7 +92,7 @@ export function MapLoader() {
         ?? defaultMap;
     }
 
-    return mapCatalog.find((map) => map.id === selectedMapId)
+    return availableMaps.find((map) => map.id === selectedMapId)
       ?? firstMapForGame(selectedGameId)
       ?? defaultMap;
   }, [customMaps, selectedCustomMapId, selectedGameId, selectedMapId, selectedSource]);
@@ -211,7 +234,7 @@ export function MapLoader() {
   }, []);
 
   const selectMap = useCallback((mapId: string | null) => {
-    const map = mapCatalog.find((candidate) => candidate.id === mapId);
+    const map = availableMaps.find((candidate) => candidate.id === mapId);
     if (!map) {
       return;
     }
@@ -354,7 +377,7 @@ export function MapLoader() {
 
 function mapsForGame(gameId: RatchetGameId | null): MapDefinition[] {
   return gameId
-    ? mapCatalog.filter((map) => map.gameId === gameId)
+    ? availableMaps.filter((map) => map.gameId === gameId)
     : [];
 }
 

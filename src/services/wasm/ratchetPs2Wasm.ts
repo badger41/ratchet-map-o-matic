@@ -1,3 +1,7 @@
+import ratchetPs2WasmVersionText from '../../../ratchetps2-wasm.version?raw';
+
+export const ratchetPs2WasmVersion = import.meta.env.DEV ? `dev-${Date.now()}` : ratchetPs2WasmVersionText.trim();
+
 export interface PackedFileEntry {
   path: string;
   offset: number;
@@ -206,7 +210,6 @@ export interface RatchetPs2WasmModule {
 }
 
 let wasmModulePromise: Promise<RatchetPs2WasmModule> | null = null;
-const ratchetPs2WasmAssetVersion = import.meta.env.DEV ? `dev-${Date.now()}` : 'skybox-v6';
 
 export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
   if (!wasmModulePromise) {
@@ -222,7 +225,7 @@ export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
 async function initializeRatchetPs2WasmModule(): Promise<RatchetPs2WasmModule> {
   const assetBaseUrl = resolveRatchetPs2WasmAssetBaseUrl();
   const moduleUrl = new URL('ratchetps2-wasm.js', assetBaseUrl);
-  moduleUrl.searchParams.set('v', ratchetPs2WasmAssetVersion);
+  moduleUrl.searchParams.set('v', ratchetPs2WasmVersion);
   const wasm = await import(/* @vite-ignore */ moduleUrl.toString()) as RatchetPs2WasmModule;
   await wasm.initializeRatchetPs2Wasm({ assetBaseUrl });
   return wasm;

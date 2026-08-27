@@ -16,6 +16,7 @@ export interface ViewerChromeState {
   state: ViewerChromeStateKind;
   onChooseAnother?: () => void;
   onOpenFxTextures?: () => void;
+  onOpenHudBanks?: () => void;
   onOpenMobys?: () => void;
   onOpenSkybox?: () => void;
   onOpenTies?: () => void;
