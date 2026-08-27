@@ -13,7 +13,7 @@ export abstract class PreviewWadsPlugin implements Plugin {
 
   abstract normalize(bytes: Uint8Array): Buffer;
 
-  configureServer(server: ViteDevServer): void {
+  configureServer = (server: ViteDevServer): void => {
     server.middlewares.use(this.mountPath, (request, response, next) => {
       const match = /^\/level(\d+)\.wad$/i.exec(request.url?.split('?')[0] ?? '');
       const level = match ? Number(match[1]) : -1;
@@ -59,7 +59,7 @@ export abstract class PreviewWadsPlugin implements Plugin {
       );
       response.on('close', () => extractor.kill());
     });
-  }
+  };
 
   protected static sectorAlignedSize(size: number): number {
     return Math.ceil(size / sectorSize) * sectorSize;

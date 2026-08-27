@@ -5,7 +5,8 @@ import { UyaPreviewWadsPlugin } from '../vite/previewWads/UyaPreviewWadsPlugin.t
 
 test('serves only WADs present in the GC preview ISO', () => {
   let middleware: ((request: { url: string; method: string }, response: HeadResponse, next: () => void) => void) | undefined;
-  new GcPreviewWadsPlugin().configureServer({
+  const plugin = new GcPreviewWadsPlugin();
+  plugin.configureServer.call({} as never, {
     middlewares: {
       use(_path: string, handler: typeof middleware) {
         middleware = handler;
