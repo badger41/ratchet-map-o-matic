@@ -80,8 +80,10 @@ test('keeps high-detail moby faces and drops lower LOD groups', () => {
   assert.equal(blendMaterial.alphaTest, 0);
   assert.equal(blendMaterial.forceSinglePass, true);
   const blendMesh = new THREE.Mesh(new THREE.BufferGeometry(), blendMaterial);
+  blendMesh.visible = false;
   syncModelAlphaOpaquePass(blendMesh);
   const opaquePass = blendMesh.children[0] as THREE.Mesh;
+  assert.equal(opaquePass.visible, true);
   assert.equal((opaquePass.material as THREE.Material).colorWrite, true);
   assert.equal((opaquePass.material as THREE.Material).depthWrite, true);
   assert.equal((opaquePass.material as THREE.Material).alphaTest, 254 / 255);

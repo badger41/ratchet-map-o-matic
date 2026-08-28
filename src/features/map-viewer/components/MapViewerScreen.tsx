@@ -6,6 +6,7 @@ import {
   Group,
   Paper,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text
@@ -124,6 +125,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   const [tiesVisible, setTiesVisible] = useState(true);
   const [shrubsVisible, setShrubsVisible] = useState(true);
   const [mobysVisible, setMobysVisible] = useState(true);
+  const [mobyMission, setMobyMission] = useState<number | null>(null);
   const [mobySimulationEnabled, setMobySimulationEnabled] = useState(true);
   const [tieMaterialMode, setTieMaterialMode] = useState<TieMaterialMode>('full');
   const [tieColorsEnabled, setTieColorsEnabled] = useState(true);
@@ -251,6 +253,10 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
   }, [mobysVisible]);
 
   useEffect(() => {
+    rendererRef.current?.setMobyMission(mobyMission);
+  }, [mobyMission]);
+
+  useEffect(() => {
     rendererRef.current?.setMobySimulationEnabled(mobySimulationEnabled);
   }, [mobySimulationEnabled]);
 
@@ -322,6 +328,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       },
       levelSettings: result.levelSettings,
       mobyInstances: result.mobyInstances,
+      mobyMissions: result.mobyMissions,
       glowBloomEnabled,
       glowBloomFalloffDistance,
       mobySimulationEnabled,
@@ -451,6 +458,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
         renderer.setTieVisible(tiesVisible);
         renderer.setTieMaterialMode(tieMaterialMode);
         renderer.setMobyVisible(mobysVisible);
+        renderer.setMobyMission(mobyMission);
         renderer.setMobySimulationEnabled(mobySimulationEnabled);
         renderer.setTieBundleEnabled(tieBundleEnabled);
         renderer.setGlowBloomEnabled(glowBloomEnabled);
@@ -480,7 +488,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       rendererRef.current = null;
       renderer.dispose();
     };
-  }, [result.packageSource, result.levelSettings, result.mobyInstances, debugModeEnabled]);
+  }, [result.packageSource, result.levelSettings, result.mobyInstances, result.mobyMissions, debugModeEnabled]);
 
   return (
     <Box
@@ -494,35 +502,72 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     >
       <Box pos="absolute" inset={0} ref={viewportRef} />
 
-      <Paper
+      <Group
         pos="absolute"
         top={{ base: 10, sm: 16 }}
         right={{ base: 10, sm: 16 }}
-        p="xs"
-        radius="md"
-        bg="rgba(17, 24, 32, 0.9)"
-        withBorder
-        style={{
-          zIndex: 2,
-          borderColor: 'rgba(159, 174, 188, 0.22)',
-          backdropFilter: 'blur(10px)'
-        }}
+        gap={10}
+        wrap="nowrap"
+        align="flex-start"
+        style={{ zIndex: 2 }}
       >
-        <Group gap="sm" wrap="nowrap" align="center">
-          <Stack gap={0} w={42}>
-            <Text size="xs" c="dimmed" fw={700}>FPS</Text>
-            <Text size="lg" fw={700}>
-              {frameStats.fps > 0 ? frameStats.fps.toFixed(0) : '-'}
-            </Text>
-          </Stack>
-          <SegmentedControl
-            size="xs"
-            value={String(frameRateLimit)}
-            data={frameRateOptions}
-            onChange={(value) => setFrameRateLimit(Number(value))}
-          />
-        </Group>
-      </Paper>
+        {result.mobyMissions.length > 0 ? (
+          <Paper
+            p="xs"
+            radius="md"
+            bg="rgba(17, 24, 32, 0.9)"
+            withBorder
+            style={{
+              borderColor: 'rgba(159, 174, 188, 0.22)',
+              backdropFilter: 'blur(10px)'
+            }}
+          >
+            <Stack gap={0} w={120}>
+              <Text size="xs" c="dimmed" fw={700}>MISSION</Text>
+              <Select
+                size="xs"
+                aria-label="Moby mission"
+                value={mobyMission === null ? 'core' : String(mobyMission)}
+                data={[
+                  { value: 'core', label: 'Core only' },
+                  ...result.mobyMissions.map(({ missionIndex }) => ({
+                    value: String(missionIndex),
+                    label: `Mission ${missionIndex}`
+                  }))
+                ]}
+                allowDeselect={false}
+                disabled={!ready}
+                onChange={(value) => setMobyMission(value === 'core' || value === null ? null : Number(value))}
+              />
+            </Stack>
+          </Paper>
+        ) : null}
+        <Paper
+          p="xs"
+          radius="md"
+          bg="rgba(17, 24, 32, 0.9)"
+          withBorder
+          style={{
+            borderColor: 'rgba(159, 174, 188, 0.22)',
+            backdropFilter: 'blur(10px)'
+          }}
+        >
+          <Group gap="sm" wrap="nowrap" align="center">
+            <Stack gap={0} w={42}>
+              <Text size="xs" c="dimmed" fw={700}>FPS</Text>
+              <Text size="lg" fw={700}>
+                {frameStats.fps > 0 ? frameStats.fps.toFixed(0) : '-'}
+              </Text>
+            </Stack>
+            <SegmentedControl
+              size="xs"
+              value={String(frameRateLimit)}
+              data={frameRateOptions}
+              onChange={(value) => setFrameRateLimit(Number(value))}
+            />
+          </Group>
+        </Paper>
+      </Group>
 
       {!ready || lastError ? (
         <Center pos="absolute" inset={0} p="md" style={{ zIndex: 2, pointerEvents: 'none' }}>

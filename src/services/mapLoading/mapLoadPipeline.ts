@@ -8,6 +8,7 @@ import {
 } from '../renderPackages/indexedDbRenderPackageStore';
 import {
   loadRatchetPs2Wasm,
+  type DlMobyMissionInstances,
   type DlMobyInstances,
   type DlMobyInstance,
   type DlLevelSettings,
@@ -18,6 +19,7 @@ import {
   type RatchetPs2WasmModule
 } from '../wasm/ratchetPs2Wasm';
 import { fetchMapSourceBytes } from './fetchMapSourceBytes';
+import { findDlMissionGameplayEntries } from './dlMobyMissions';
 
 export type MapLoadStageId = 'download' | 'convert' | 'store';
 export type MapLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
@@ -46,12 +48,14 @@ export interface MapLoadResult {
   packageSource: string;
   levelSettings: DlLevelSettings | null;
   mobyInstances: DlMobyInstances | null;
+  mobyMissions: DlMobyMissionInstances[];
   durationMs: number;
 }
 
 interface GameplayData {
   levelSettings: DlLevelSettings | null;
   mobyInstances: DlMobyInstances | null;
+  mobyMissions: DlMobyMissionInstances[];
 }
 
 interface UyaGameplayCoreFiles {
@@ -141,6 +145,7 @@ export async function loadMapRenderPackage(
       packageSource: toIndexedDbPackageSource(existingPackage.id),
       levelSettings: existingPackage.levelSettings ?? null,
       mobyInstances: existingPackage.mobyInstances ?? null,
+      mobyMissions: existingPackage.mobyMissions ?? [],
       durationMs: performance.now() - startedAt
     };
   }
@@ -225,7 +230,8 @@ export async function loadMapRenderPackage(
     packedBytes: renderPackage.packedBytes,
     entries: renderPackage.entries,
     levelSettings: gameplayData.levelSettings,
-    mobyInstances: gameplayData.mobyInstances
+    mobyInstances: gameplayData.mobyInstances,
+    mobyMissions: gameplayData.mobyMissions
   });
   onStageUpdate?.({
     id: 'store',
@@ -246,6 +252,7 @@ export async function loadMapRenderPackage(
     packageSource: toIndexedDbPackageSource(cachedPackage.id),
     levelSettings: gameplayData.levelSettings,
     mobyInstances: gameplayData.mobyInstances,
+    mobyMissions: gameplayData.mobyMissions,
     durationMs: performance.now() - startedAt
   };
 }
@@ -366,7 +373,11 @@ async function parsePackedGameplayData(
   }
 
   try {
-    return await parseGameplayCore(wasm, gameplayCore);
+    const gameplayData = await parseGameplayCore(wasm, gameplayCore);
+    return {
+      ...gameplayData,
+      mobyMissions: await parseDlMobyMissions(wasm, renderPackage)
+    };
   } catch (error) {
     console.warn('Failed to parse packed DL gameplay data.', error);
     return emptyGameplayData();
@@ -414,8 +425,43 @@ async function parseGameplayCore(wasm: RatchetPs2WasmModule, gameplayCore: Uint8
   const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
   return {
     levelSettings: gameplay.blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
-    mobyInstances: attachMobyPvars(mobyInstances, pvarTables)
+    mobyInstances: attachMobyPvars(mobyInstances, pvarTables),
+    mobyMissions: []
   };
+}
+
+async function parseDlMobyMissions(
+  wasm: RatchetPs2WasmModule,
+  missionPackage: PackedFilePackageResult
+): Promise<DlMobyMissionInstances[]> {
+  const missions: DlMobyMissionInstances[] = [];
+  for (const entry of findDlMissionGameplayEntries(missionPackage.entries)) {
+    try {
+      const mission = await parseDlMobyMission(
+        wasm,
+        entry.missionIndex,
+        readRequiredPackedFileBytes(missionPackage, entry.path)
+      );
+      if (mission) {
+        missions.push(mission);
+      }
+    } catch (error) {
+      console.warn(`Failed to parse DL mission ${entry.missionIndex} gameplay data.`, error);
+    }
+  }
+
+  return missions;
+}
+
+async function parseDlMobyMission(
+  wasm: RatchetPs2WasmModule,
+  missionIndex: number,
+  gameplayBytes: Uint8Array
+): Promise<DlMobyMissionInstances | null> {
+  const gameplay = await wasm.parseDlGameplayMission(gameplayBytes);
+  const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
+  const withPvars = attachMobyPvars(mobyInstances, normalizeDlPvarTables(gameplay.pvarTables));
+  return withPvars?.instances.length ? { missionIndex, mobyInstances: withPvars } : null;
 }
 
 async function parseLooseUyaGameplayData(manifestUrl: string): Promise<GameplayData> {
@@ -485,7 +531,8 @@ function parseUyaGameplayCoreFiles(files: UyaGameplayCoreFiles): GameplayData {
     levelSettings: files.levelSettings ? parseUyaLevelSettings(files.levelSettings) : null,
     mobyInstances: attachMobyPvars(
       files.mobyInstances ? parseUyaMobyInstances(files.mobyInstances) : null,
-      pvarTables)
+      pvarTables),
+    mobyMissions: []
   };
 }
 
@@ -791,7 +838,8 @@ function decodeBase64Bytes(value: string): Uint8Array {
 function emptyGameplayData(): GameplayData {
   return {
     levelSettings: null,
-    mobyInstances: null
+    mobyInstances: null,
+    mobyMissions: []
   };
 }
 
@@ -843,6 +891,7 @@ async function loadLooseViewerPackage(
     packageSource: sourceUrl,
     levelSettings: gameplayData.levelSettings,
     mobyInstances: gameplayData.mobyInstances,
+    mobyMissions: gameplayData.mobyMissions,
     durationMs: performance.now() - startedAt
   };
 }

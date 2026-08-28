@@ -1,5 +1,6 @@
 import {
   ratchetPs2WasmVersion,
+  type DlMobyMissionInstances,
   type DlMobyInstances,
   type DlLevelSettings,
   type PackedFileEntry
@@ -28,6 +29,7 @@ export interface IndexedDbRenderPackageMetadata {
   entries: PackedFileEntry[];
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
+  mobyMissions?: DlMobyMissionInstances[];
 }
 
 export interface IndexedDbRenderPackageRecord extends IndexedDbRenderPackageMetadata {
@@ -42,6 +44,7 @@ export interface SaveIndexedDbRenderPackageOptions {
   entries: PackedFileEntry[];
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
+  mobyMissions?: DlMobyMissionInstances[];
 }
 
 interface IndexedDbRenderPackagePayload {
@@ -88,7 +91,8 @@ export async function saveIndexedDbRenderPackage(
     entryCount: entries.length,
     entries,
     levelSettings: options.levelSettings ?? null,
-    mobyInstances: options.mobyInstances ?? null
+    mobyInstances: options.mobyInstances ?? null,
+    mobyMissions: options.mobyMissions ?? []
   };
 
   const db = await openDatabase();
@@ -185,7 +189,9 @@ export function hasViewerRenderPackageEntries(entries: PackedFileEntry[]): boole
 }
 
 function hasGameplayMetadata(record: IndexedDbRenderPackageMetadata): boolean {
-  return record.levelSettings !== undefined && record.mobyInstances !== undefined;
+  return record.levelSettings !== undefined
+    && record.mobyInstances !== undefined
+    && record.mobyMissions !== undefined;
 }
 
 async function getMetadata(id: string): Promise<IndexedDbRenderPackageMetadata | null> {

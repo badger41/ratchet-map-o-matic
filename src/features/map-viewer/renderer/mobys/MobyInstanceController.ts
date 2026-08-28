@@ -33,8 +33,10 @@ import {
 } from '../../../../services/mapPackages/mapPackageTypes';
 import type {
   DlMobyInstance,
+  DlMobyMissionInstances,
   DlMobyInstances
 } from '../../../../services/wasm/ratchetPs2Wasm';
+import { mobyMissionVisible } from '../../../../services/mapLoading/dlMobyMissions';
 import {
   createInstancedGeometry,
   estimateTriangleCount,
@@ -100,11 +102,13 @@ interface MobyPrimitive {
 
 interface MobyMeshBinding {
   classId: number;
+  mission: number;
   mesh: THREE.InstancedMesh;
   material: THREE.Material | THREE.Material[];
 }
 
 interface PreparedMobyRecord {
+  mission: number;
   instanceMatrix: THREE.Matrix4;
   colorTone: [number, number, number];
 }
@@ -140,6 +144,7 @@ export class MobyInstanceController {
   private options: ShrubRenderOptions = { ...defaultShrubRenderOptions };
   private modelDisplayOptions: ModelDisplayNodeOptions | null = null;
   private bundleEnabled = false;
+  private selectedMission: number | null = null;
   private hiddenClassIds = new Set<number>();
   private readonly lightSelectorsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
   private readonly colorTonesByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
@@ -150,6 +155,7 @@ export class MobyInstanceController {
     mapPackage: LoadedMapPackage,
     loader: GLTFLoader,
     mobyInstances: DlMobyInstances | null,
+    mobyMissions: DlMobyMissionInstances[],
     options: ShrubRenderOptions,
     modelDisplayOptions: ModelDisplayNodeOptions,
     onProgress?: MobyLoadProgressCallback
@@ -173,7 +179,10 @@ export class MobyInstanceController {
     this.applyBundleMode();
     this.directionalLightBinding = createShrubDirectionalLightBinding(mapPackage.directionalLights);
 
-    const records = mobyInstances?.instances ?? [];
+    const records = [
+      ...(mobyInstances?.instances ?? []),
+      ...mobyMissions.flatMap((mission) => mission.mobyInstances.instances)
+    ];
     if (records.length === 0 || mapPackage.mobyEntries.length === 0) {
       return this.getStats();
     }
@@ -247,8 +256,17 @@ export class MobyInstanceController {
 
     for (const binding of this.meshBindings) {
       if (binding.classId === classId) {
-        binding.mesh.visible = visible;
+        binding.mesh.visible = visible && mobyMissionVisible(binding.mission, this.selectedMission);
       }
+    }
+    this.markBundleNeedsUpdate();
+  }
+
+  setMission(mission: number | null): void {
+    this.selectedMission = mission;
+    for (const binding of this.meshBindings) {
+      binding.mesh.visible = !this.hiddenClassIds.has(binding.classId)
+        && mobyMissionVisible(binding.mission, mission);
     }
     this.markBundleNeedsUpdate();
   }
@@ -430,9 +448,10 @@ export class MobyInstanceController {
       );
     }
     const mesh = new THREE.InstancedMesh(geometry, material, records.length);
+    const mission = records[0]?.mission ?? -1;
     mesh.name = `moby_${String(classId).padStart(5, '0')}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder + (primitive.metal ? 1 : 0);
-    mesh.visible = !this.hiddenClassIds.has(classId);
+    mesh.visible = !this.hiddenClassIds.has(classId) && mobyMissionVisible(mission, this.selectedMission);
     mesh.frustumCulled = !this.bundleEnabled;
     mesh.static = true;
     mesh.matrixAutoUpdate = false;
@@ -455,7 +474,7 @@ export class MobyInstanceController {
     if (!primitive.metal) {
       syncModelAlphaOpaquePass(mesh);
     }
-    this.meshBindings.push({ classId, mesh, material });
+    this.meshBindings.push({ classId, mission, mesh, material });
 
     this.stats.batches += 1;
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;
@@ -575,6 +594,7 @@ function isUyaFormatMapPackage(mapPackage: LoadedMapPackage): boolean {
 
 function prepareMobyRecord(record: DlMobyInstance): PreparedMobyRecord {
   return {
+    mission: record.mission,
     instanceMatrix: buildMobyInstanceMatrix(record),
     colorTone: [
       mobyColorToneComponent(record.color.red),
@@ -615,6 +635,20 @@ function chunkMobyRecords(records: PreparedMobyRecord[]): PreparedMobyRecord[][]
     return [];
   }
 
+  const recordsByMission = new Map<number, PreparedMobyRecord[]>();
+  for (const record of records) {
+    const missionRecords = recordsByMission.get(record.mission);
+    if (missionRecords) {
+      missionRecords.push(record);
+    } else {
+      recordsByMission.set(record.mission, [record]);
+    }
+  }
+
+  return [...recordsByMission.values()].flatMap(chunkMobyMissionRecords);
+}
+
+function chunkMobyMissionRecords(records: PreparedMobyRecord[]): PreparedMobyRecord[][] {
   const recordsByCell = new Map<string, PreparedMobyRecord[]>();
   for (const record of records) {
     const cellKey = mobyRecordCellKey(record);

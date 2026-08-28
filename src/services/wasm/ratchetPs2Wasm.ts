@@ -79,6 +79,11 @@ export interface DlMobyInstances {
   trailingByteLength: number;
 }
 
+export interface DlMobyMissionInstances {
+  missionIndex: number;
+  mobyInstances: DlMobyInstances;
+}
+
 export interface DlPvarTableEntry {
   index: number;
   offset: number;

@@ -243,6 +243,7 @@ export function syncModelAlphaOpaquePass(mesh: THREE.Mesh): void {
   const opaquePass = mesh.clone(false) as THREE.Mesh;
   opaquePass.name = `${mesh.name || 'model'}_alpha_opaque_pass`;
   opaquePass.material = opaqueMaterial;
+  opaquePass.visible = true;
   opaquePass.userData = { [modelAlphaOpaquePassKey]: true };
   opaquePass.position.set(0, 0, 0);
   opaquePass.quaternion.identity();

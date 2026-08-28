@@ -40,6 +40,7 @@ import {
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import type {
+  DlMobyMissionInstances,
   DlMobyInstances,
   DlLevelSettings
 } from '../../../services/wasm/ratchetPs2Wasm';
@@ -102,6 +103,7 @@ interface MapSceneRendererOptions {
   shrubRenderOptions?: ShrubRenderOptions;
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
+  mobyMissions?: DlMobyMissionInstances[];
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
   mobySimulationEnabled?: boolean;
@@ -257,6 +259,7 @@ export class MapSceneRenderer {
   private shrubRenderOptions: ShrubRenderOptions;
   private readonly sceneEnvironment: MapSceneEnvironment;
   private readonly mobyInstances: DlMobyInstances | null;
+  private readonly mobyMissions: DlMobyMissionInstances[];
   private readonly lightingDebugEnabled: boolean;
   private debugTuning: MapSceneDebugTuning;
   private renderer: WebGPURenderer | null = null;
@@ -310,6 +313,7 @@ export class MapSceneRenderer {
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
     this.sceneEnvironment = resolveMapSceneEnvironment(options.levelSettings ?? null);
     this.mobyInstances = options.mobyInstances ?? null;
+    this.mobyMissions = options.mobyMissions ?? [];
     this.lightingDebugEnabled = options.lightingDebugEnabled ?? false;
     this.debugTuning = resolveMapSceneDebugTuning(this.lightingDebugEnabled ? options.debugTuning : undefined);
     setModelFog(this.sceneEnvironment.fog);
@@ -410,6 +414,7 @@ export class MapSceneRenderer {
       await this.timeAsyncStep('load moby simulation', () => this.mobySimulationController.load(
         root,
         mapPackage,
+        // ponytail: missions affect instanced rendering only; include selected mission records if mission simulation is needed.
         this.mobyInstances,
         this.mobyController,
         this.tieController,
@@ -607,6 +612,7 @@ export class MapSceneRenderer {
       mapPackage,
       this.loader,
       this.mobyInstances,
+      this.mobyMissions,
       this.resolveShrubRenderOptions(),
       modelDisplayOptions,
       (loaded, total) => {
@@ -894,6 +900,10 @@ export class MapSceneRenderer {
 
   setMobyVisible(visible: boolean): void {
     this.mobyController.setVisible(visible);
+  }
+
+  setMobyMission(mission: number | null): void {
+    this.mobyController.setMission(mission);
   }
 
   setMobySimulationEnabled(enabled: boolean): void {
