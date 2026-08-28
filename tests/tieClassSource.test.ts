@@ -105,6 +105,16 @@ test('tie base render-state flag does not add a reflection pass', () => {
   assert.equal(color, litColor);
 });
 
+test('tie glow tint preserves relative packed RGB channels', () => {
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.userData = {
+    TieGlowRgba: '#4E5C6780',
+    TieUsesGlowEmission: true
+  };
+
+  assert.deepEqual(resolveModelMaterialInfo(material, 'tie').glowTint.toArray(), [78 / 103, 92 / 103, 1]);
+});
+
 test('tie environment flags add the generated reflection pass', () => {
   const material = new THREE.MeshBasicNodeMaterial({ map: new THREE.Texture() });
   material.userData = {

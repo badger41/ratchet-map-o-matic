@@ -14,6 +14,7 @@ import {
   type MobyClassUpdate
 } from './simulation/MobyClass';
 import { dlMobyClassFactories } from './simulation/dl/dlMobyClasses';
+import { gcMobyClassFactories } from './simulation/gc/gcMobyClasses';
 import { uyaMobyClassFactories } from './simulation/uya/uyaMobyClasses';
 
 export interface MobySimulationStats {
@@ -153,5 +154,9 @@ function getMobyClassFactoriesForGame(game: unknown): Map<number, MobyClassFacto
     return dlMobyClassFactories;
   }
 
-  return key === 'gc' || key === 'uya' ? uyaMobyClassFactories : new Map();
+  if (key === 'gc') {
+    return gcMobyClassFactories;
+  }
+
+  return key === 'uya' ? uyaMobyClassFactories : new Map();
 }

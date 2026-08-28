@@ -8,7 +8,7 @@ import {
   binaryByteLength,
   createDataView,
   type BinaryBuffer
-} from './binaryBuffer';
+} from './binaryBuffer.ts';
 
 export function parseTieClassIds(buffer: BinaryBuffer): number[] {
   const byteLength = binaryByteLength(buffer);
@@ -76,10 +76,25 @@ export function parseTieGroupRecords(buffer: BinaryBuffer, instanceCount: number
       continue;
     }
 
-    const startOffset = Math.max(0, view.getInt32(offsetPosition, true));
-    const nextOffset = groupIndex + 1 < groupCount && offsetPosition + 8 <= byteLength
-      ? Math.max(0, view.getInt32(offsetPosition + 4, true))
-      : groupDataByteCount;
+    const startOffset = view.getInt32(offsetPosition, true);
+    if (startOffset < 0) {
+      groups.push([]);
+      continue;
+    }
+
+    let nextOffset = groupDataByteCount;
+    for (let nextGroupIndex = groupIndex + 1; nextGroupIndex < groupCount; nextGroupIndex += 1) {
+      const nextOffsetPosition = 0x10 + nextGroupIndex * 4;
+      if (nextOffsetPosition + 4 > byteLength) {
+        break;
+      }
+
+      const candidate = view.getInt32(nextOffsetPosition, true);
+      if (candidate >= 0) {
+        nextOffset = candidate;
+        break;
+      }
+    }
     const safeEndOffset = Math.max(startOffset, nextOffset);
     const start = Math.min(dataEnd, dataStart + startOffset);
     const end = Math.min(dataEnd, dataStart + safeEndOffset);

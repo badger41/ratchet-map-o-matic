@@ -609,11 +609,9 @@ function readPs2GlowTint(value: string | null): THREE.Color | null {
   const g = (rgb >> 8) & 0xff;
   const b = rgb & 0xff;
   const max = Math.max(r, g, b);
-  return new THREE.Color(
-    r === max ? 1 : r / 255,
-    g === max ? 1 : g / 255,
-    b === max ? 1 : b / 255
-  );
+  return max === 0
+    ? new THREE.Color(0, 0, 0)
+    : new THREE.Color(r / max, g / max, b / max);
 }
 
 function readMaterialEmissiveTint(source: THREE.Material): THREE.Color | null {
