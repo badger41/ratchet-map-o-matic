@@ -1,10 +1,12 @@
 import * as THREE from 'three/webgpu';
+import type { DlMobyInstance } from '../../../../services/wasm/ratchetPs2Wasm';
 
 export const mobyLodNames = ['high_lod', 'low_lod', 'far_lod'] as const;
 export const mobyMetalReflectionScaleAttributeName = '_moby_metal_reflection_scale';
 export const mobyReflectionOriginAttributeName = 'mobyReflectionOrigin';
 export const mobyMetalFadeStart = 8;
 export const mobyMetalFadeEnd = 24;
+export const mobyPs2NeutralByte = 128;
 // MobyProc adds 1000 to clip Z; UpdateViewContext converts it through this W scale into 24-bit depth.
 export const mobyMetalDepthBiasScale = 1000 / (1024 * 0.0016240659169852734 * 0xffffff);
 export type MobyLodName = typeof mobyLodNames[number];
@@ -13,6 +15,27 @@ export interface MobyViewOptions {
   lods: MobyLodName[];
   bangles: string[];
   hasMetals: boolean;
+}
+
+export function prepareMobyInstanceLighting(
+  record: Pick<DlMobyInstance, 'color' | 'light'>
+): { ambientColor: [number, number, number]; lightSelector: number } {
+  return {
+    ambientColor: [
+      mobyAmbientColorComponent(record.color.red),
+      mobyAmbientColorComponent(record.color.green),
+      mobyAmbientColorComponent(record.color.blue)
+    ],
+    lightSelector: decodeMobyLightSelector(record.light)
+  };
+}
+
+export function usesStoredMobyAmbient(game: string | null | undefined): boolean {
+  return ['GC', 'UYA'].includes(game?.toUpperCase() ?? '');
+}
+
+export function resolveMobyMission(mission: number, game: string | null | undefined): number {
+  return game?.toUpperCase() === 'DL' ? mission : -1;
 }
 
 export function pruneMobyLods(root: THREE.Object3D): void {
@@ -92,4 +115,15 @@ export function mobyPreviewAlphaScale(fullOpacityAlpha: number): number {
 
 function isMobyLodName(name: string): name is MobyLodName {
   return mobyLodNames.includes(name as MobyLodName);
+}
+
+function mobyAmbientColorComponent(value: number): number {
+  const component = Number.isFinite(value) ? value : mobyPs2NeutralByte;
+  return Math.max(0, Math.min(255, component)) / mobyPs2NeutralByte;
+}
+
+function decodeMobyLightSelector(value: number): number {
+  const packed = Number.isFinite(value) ? value >>> 0 : 0;
+  // MobyProc packs primary, secondary, and blend into bits 0, 8, and 16.
+  return (packed & 0xf) | ((packed >>> 8) & 0xf) << 4 | ((packed >>> 16) & 0xff) << 8;
 }

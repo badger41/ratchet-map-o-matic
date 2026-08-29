@@ -5,6 +5,7 @@ import {
   cameraViewMatrix,
   depth,
   float,
+  floor,
   modelWorldMatrix,
   normalView,
   normalize,
@@ -82,9 +83,13 @@ import {
   mobyMetalDepthBiasScale,
   mobyMetalFadeEnd,
   mobyMetalFadeStart,
+  mobyPs2NeutralByte,
   mobyMetalReflectionScaleAttributeName,
   mobyReflectionOriginAttributeName,
-  pruneMobyLods
+  prepareMobyInstanceLighting,
+  pruneMobyLods,
+  resolveMobyMission,
+  usesStoredMobyAmbient
 } from './MobyGltfSupport';
 import { mergeAdjacentModelPrimitives } from '../ModelPrimitiveMerge';
 
@@ -112,7 +117,8 @@ interface MobyMeshBinding {
 interface PreparedMobyRecord {
   mission: number;
   instanceMatrix: THREE.Matrix4;
-  colorTone: [number, number, number];
+  ambientColor: [number, number, number];
+  lightSelector: number;
 }
 
 type MobyLoadProgressCallback = (loadedClasses: number, totalClasses: number) => void;
@@ -133,8 +139,7 @@ const mobyClassLoadConcurrency = 2;
 const mobyLoadFrameBudgetMs = 6;
 const mobyInstanceChunkCellSize = 2400;
 const mobyInstanceChunkMaxRecords = 768;
-const mobyColorToneAttributeName = 'mobyColorTone';
-const mobyColorToneNeutralByte = 128;
+const mobyAmbientColorAttributeName = 'mobyAmbientColor';
 
 export class MobyInstanceController {
   private group: MobyGroup | null = null;
@@ -149,7 +154,7 @@ export class MobyInstanceController {
   private selectedMission: number | null = null;
   private hiddenClassIds = new Set<number>();
   private readonly lightSelectorsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
-  private readonly colorTonesByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
+  private readonly ambientColorsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
   private readonly reflectionOriginsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
 
   async load(
@@ -386,8 +391,9 @@ export class MobyInstanceController {
 
       this.stats.loadedClasses += 1;
       this.stats.primitives += primitives.length;
-      const useColorTone = isUyaFormatMapPackage(mapPackage);
-      const preparedRecords = classRecords.map(prepareMobyRecord);
+      const game = mapPackage.rootManifest.Game;
+      const useStoredAmbient = usesStoredMobyAmbient(game);
+      const preparedRecords = classRecords.map((record) => prepareMobyRecord(record, game));
       const chunks = chunkMobyRecords(preparedRecords);
 
       for (const primitive of primitives) {
@@ -406,9 +412,9 @@ export class MobyInstanceController {
           this.directionalLightBinding,
           this.options,
           displayOptions,
-          useColorTone);
+          useStoredAmbient);
         for (const [chunkIndex, records] of chunks.entries()) {
-          this.addInstancedPrimitive(group, classId, records, primitive, chunkIndex, material, useColorTone);
+          this.addInstancedPrimitive(group, classId, records, primitive, chunkIndex, material, useStoredAmbient);
         }
 
         await yieldController.maybeYield();
@@ -427,17 +433,20 @@ export class MobyInstanceController {
     primitive: MobyPrimitive,
     chunkIndex: number,
     material: THREE.Material | THREE.Material[],
-    useColorTone: boolean
+    useStoredAmbient: boolean
   ): void {
     const geometry = createMobyInstancedGeometry(primitive.geometry);
     geometry.setAttribute(
       lightSelectorAttributeName,
-      this.getChunkAttribute(this.lightSelectorsByChunk, records, () => createMobyLightSelectorInstanceAttribute(records))
+      this.getChunkAttribute(
+        this.lightSelectorsByChunk,
+        records,
+        () => createMobyLightSelectorInstanceAttribute(records))
     );
-    if (useColorTone) {
+    if (useStoredAmbient) {
       geometry.setAttribute(
-        mobyColorToneAttributeName,
-        this.getChunkAttribute(this.colorTonesByChunk, records, () => createMobyColorToneInstanceAttribute(records))
+        mobyAmbientColorAttributeName,
+        this.getChunkAttribute(this.ambientColorsByChunk, records, () => createMobyAmbientColorInstanceAttribute(records))
       );
     }
     if (primitive.metal && this.chromeTexture) {
@@ -590,19 +599,11 @@ function groupMobyRecordsByClassId(records: DlMobyInstance[]): Map<number, DlMob
   return groups;
 }
 
-function isUyaFormatMapPackage(mapPackage: LoadedMapPackage): boolean {
-  return ['GC', 'UYA'].includes(mapPackage.rootManifest.Game?.toUpperCase() ?? '');
-}
-
-function prepareMobyRecord(record: DlMobyInstance): PreparedMobyRecord {
+function prepareMobyRecord(record: DlMobyInstance, game: string | null | undefined): PreparedMobyRecord {
   return {
-    mission: record.mission,
+    mission: resolveMobyMission(record.mission, game),
     instanceMatrix: buildMobyInstanceMatrix(record),
-    colorTone: [
-      mobyColorToneComponent(record.color.red),
-      mobyColorToneComponent(record.color.green),
-      mobyColorToneComponent(record.color.blue)
-    ]
+    ...prepareMobyInstanceLighting(record)
   };
 }
 
@@ -692,7 +693,6 @@ function compareMobyRecordPosition(left: PreparedMobyRecord, right: PreparedMoby
     || (leftElements[13] - rightElements[13]);
 }
 
-const defaultMobyLightSelector = 0;
 const mobyAmbientScale = 0.65;
 
 function createMobyInstancedGeometry(source: THREE.BufferGeometry): THREE.BufferGeometry {
@@ -710,11 +710,11 @@ function cloneMaterial(
   directionalLightBinding: ShrubDirectionalLightBinding | null,
   options: ShrubRenderOptions,
   displayOptions: ModelDisplayNodeOptions,
-  useColorTone: boolean
+  useStoredAmbient: boolean
 ): THREE.Material | THREE.Material[] {
   return Array.isArray(primitive.material)
-    ? primitive.material.map((item) => createMobyMaterial(item, primitive.geometry, chromeTexture, directionalLightBinding, options, displayOptions, useColorTone))
-    : createMobyMaterial(primitive.material, primitive.geometry, chromeTexture, directionalLightBinding, options, displayOptions, useColorTone);
+    ? primitive.material.map((item) => createMobyMaterial(item, primitive.geometry, chromeTexture, directionalLightBinding, options, displayOptions, useStoredAmbient))
+    : createMobyMaterial(primitive.material, primitive.geometry, chromeTexture, directionalLightBinding, options, displayOptions, useStoredAmbient);
 }
 
 function createMobyMaterial(
@@ -724,7 +724,7 @@ function createMobyMaterial(
   directionalLightBinding: ShrubDirectionalLightBinding | null,
   options: ShrubRenderOptions,
   displayOptions: ModelDisplayNodeOptions,
-  useColorTone: boolean
+  useStoredAmbient: boolean
 ): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshStandardMaterial>;
   const modelMaterialInfo = resolveModelMaterialInfo(source, 'moby');
@@ -780,7 +780,7 @@ function createMobyMaterial(
     uniforms,
     options,
     displayOptions,
-    useColorTone,
+    useStoredAmbient,
     chromeSampleNode?.rgb ?? null);
   material.opacityNode = chromeSampleNode
     ? chromeSampleNode.a.div(float(128 / 255)).clamp(0, 1)
@@ -823,7 +823,7 @@ function createMobyColorNode(
   uniforms: ShrubLightingUniforms,
   options: ShrubRenderOptions,
   displayOptions: ModelDisplayNodeOptions,
-  useColorTone: boolean,
+  useStoredAmbient: boolean,
   chromeColorNode: Node<'vec3'> | null
 ) {
   const displayMaterialColorNode = sRGBTransferOETF(
@@ -835,10 +835,9 @@ function createMobyColorNode(
   const baseDisplayColorNode = chromeColorNode ?? (hasVertexColors
     ? textureDisplayColorNode.mul(vertexColor().rgb)
     : textureDisplayColorNode);
-  const tonedDisplayColorNode = useColorTone
-    ? baseDisplayColorNode.mul(attribute<'vec3'>(mobyColorToneAttributeName, 'vec3'))
-    : baseDisplayColorNode;
-  const ambientTermNode = vec3(mobyAmbientScale, mobyAmbientScale, mobyAmbientScale)
+  const ambientTermNode = (useStoredAmbient
+    ? attribute<'vec3'>(mobyAmbientColorAttributeName, 'vec3')
+    : vec3(mobyAmbientScale, mobyAmbientScale, mobyAmbientScale))
     .mul(uniforms.ambientScale);
   const directionalLightNode = directionalLightBinding
     ? createShrubDirectionalLightNode(
@@ -851,11 +850,11 @@ function createMobyColorNode(
       directionalLightNode.rgb,
       displayOptions.dynamic ? uniforms.directionalColorStrength : options.directionalColorStrength)
       .mul(uniforms.directionalScale)
-      .mul(float(0.5))
     : vec3(0, 0, 0);
+  const lightTermNode = ambientTermNode.add(directionalTermNode);
   const litColorNode = applyModelDisplayTextureModulateNode(
-    tonedDisplayColorNode,
-    ambientTermNode.add(directionalTermNode).clamp(0, 1)
+    baseDisplayColorNode,
+    quantizeMobyLightTermNode(lightTermNode)
   ).saturate();
   const exposureNode = displayOptions.dynamic ? uniforms.exposureScale : float(Math.max(0, options.exposure));
   return applyShrubFogNode(
@@ -866,15 +865,17 @@ function createMobyColorNode(
 
 function createMobyLightSelectorInstanceAttribute(records: PreparedMobyRecord[]): THREE.InstancedBufferAttribute {
   const selectors = new Float32Array(records.length);
-  selectors.fill(defaultMobyLightSelector);
+  for (let index = 0; index < records.length; index += 1) {
+    selectors[index] = records[index].lightSelector;
+  }
 
   return new THREE.InstancedBufferAttribute(selectors, 1);
 }
 
-function createMobyColorToneInstanceAttribute(records: PreparedMobyRecord[]): THREE.InstancedBufferAttribute {
+function createMobyAmbientColorInstanceAttribute(records: PreparedMobyRecord[]): THREE.InstancedBufferAttribute {
   const colors = new Float32Array(records.length * 3);
   for (let index = 0; index < records.length; index += 1) {
-    const color = records[index].colorTone;
+    const color = records[index].ambientColor;
     const offset = index * 3;
     colors[offset] = color[0];
     colors[offset + 1] = color[1];
@@ -896,8 +897,12 @@ function createMobyReflectionOriginAttribute(records: PreparedMobyRecord[]): THR
   return new THREE.InstancedBufferAttribute(positions, 3);
 }
 
-function mobyColorToneComponent(value: number): number {
-  return Math.max(0, Math.min(255, finiteNumber(value, mobyColorToneNeutralByte))) / mobyColorToneNeutralByte;
+function quantizeMobyLightTermNode(lightTermNode: Node<'vec3'>): Node<'vec3'> {
+  return floor(
+    lightTermNode.clamp(0, 255 / mobyPs2NeutralByte)
+      .mul(float(mobyPs2NeutralByte))
+      .add(float(0.5))
+  ).div(float(mobyPs2NeutralByte));
 }
 
 function finiteNumber(value: number, fallback = 0): number {

@@ -5,11 +5,14 @@ import {
   inspectMobyViewOptions,
   isMobyMetalObject,
   mobyPreviewAlphaScale,
+  prepareMobyInstanceLighting,
   pruneMobyLods,
+  resolveMobyMission,
   setMobyBangles,
   setMobyBindPose,
   setMobyLod,
-  setMobyMetalsVisible
+  setMobyMetalsVisible,
+  usesStoredMobyAmbient
 } from '../src/features/map-viewer/renderer/mobys/MobyGltfSupport.ts';
 import {
   configureModelMaterialTransparency,
@@ -17,6 +20,28 @@ import {
   syncModelAlphaOpaquePass
 } from '../src/features/map-viewer/renderer/model-materials/ModelMaterialNodes.ts';
 import { mergeMissionMobyEntries } from '../src/services/mapPackages/mobyPackageEntries.ts';
+
+test('uses UYA moby color as ambient light and preserves its directional-light selector', () => {
+  assert.equal(usesStoredMobyAmbient('UYA'), true);
+  assert.equal(usesStoredMobyAmbient('DL'), false);
+  assert.equal(resolveMobyMission(8, 'UYA'), -1);
+  assert.equal(resolveMobyMission(8, 'DL'), 8);
+  assert.deepEqual(prepareMobyInstanceLighting({
+    color: { red: 75, green: 60, blue: 47 },
+    light: 1
+  }), {
+    ambientColor: [75 / 128, 60 / 128, 47 / 128],
+    lightSelector: 1
+  });
+  assert.equal(prepareMobyInstanceLighting({
+    color: { red: 128, green: 128, blue: 128 },
+    light: 0x05806603
+  }).lightSelector, 0x8063);
+  assert.equal(prepareMobyInstanceLighting({
+    color: { red: 72, green: 69, blue: 80 },
+    light: 0x0707
+  }).lightSelector, 0x77);
+});
 
 test('keeps high-detail moby faces and drops lower LOD groups', () => {
   const root = new THREE.Group();
