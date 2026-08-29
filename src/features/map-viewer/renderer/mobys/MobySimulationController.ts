@@ -3,6 +3,7 @@ import type { LoadedMapPackage } from '../../../../services/mapPackages/mapPacka
 import type {
   DlMobyInstance,
   DlMobyInstances,
+  GameplayCuboid,
   GameplaySpline
 } from '../../../../services/wasm/ratchetPs2Wasm';
 import { disposeObject3D } from '../RendererDisposal';
@@ -39,6 +40,7 @@ export class MobySimulationController {
     mobyController: MobyInstanceController,
     tieController: TieInstanceController,
     camera: THREE.Camera,
+    cuboids: GameplayCuboid[],
     splines: GameplaySpline[]
   ): Promise<MobySimulationStats> {
     this.dispose();
@@ -65,6 +67,7 @@ export class MobySimulationController {
         tieController,
         camera,
         instances,
+        cuboids,
         splines
       });
       if (mobyClass) {

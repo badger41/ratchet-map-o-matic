@@ -16,8 +16,33 @@ import {
   createWaterTristripFade,
   waterTristripColorPasses
 } from '../src/features/map-viewer/renderer/mobys/simulation/WaterTristripData.ts';
+import { isPointInsideAnyGameplayCuboid } from '../src/features/map-viewer/renderer/mobys/simulation/GameplayCuboid.ts';
 import { parseWaterTristripPvar } from '../src/features/map-viewer/renderer/mobys/simulation/dl/6576/WaterTristripData.ts';
 import { parseUyaWaterTristripPvar } from '../src/features/map-viewer/renderer/mobys/simulation/uya/6576/WaterTristripData.ts';
+
+test('matches the game cuboid containment used to hide ocean planes', () => {
+  const cuboid = {
+    index: 4,
+    matrix: [
+      0, 2, 0, 0,
+      -3, 0, 0, 0,
+      0, 0, 4, 0,
+      10, 20, 30, 0.01
+    ],
+    inverseRotationMatrix: [
+      0, -1 / 3, 0, 0,
+      1 / 2, 0, 0, 0,
+      0, 0, 1 / 4, 0
+    ],
+    rotation: { x: 0, y: 0, z: Math.PI / 2 }
+  };
+
+  const cuboids = Array(5);
+  cuboids[4] = cuboid;
+  assert.equal(isPointInsideAnyGameplayCuboid({ x: 7.3, y: 21.8, z: 33.6 }, [-1, 4], cuboids), true);
+  assert.equal(isPointInsideAnyGameplayCuboid({ x: 10, y: 22.02, z: 30 }, [-1, 4], cuboids), false);
+  assert.equal(isPointInsideAnyGameplayCuboid({ x: 10, y: 20, z: 30 }, [-1], cuboids), false);
+});
 
 test('decodes DL water tristrips and preserves triangle-strip winding', () => {
   const pvarData = new Uint8Array(0x70);

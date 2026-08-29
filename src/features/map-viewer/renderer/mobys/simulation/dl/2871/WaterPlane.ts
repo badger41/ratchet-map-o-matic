@@ -1,6 +1,9 @@
 import * as THREE from 'three/webgpu';
 import type { DlMobyInstance } from '../../../../../../../services/wasm/ratchetPs2Wasm';
-import { ps2ToGltfBasisMatrix } from '../../../../shrubs/ShrubTypes';
+import {
+  gltfToPs2BasisMatrix,
+  ps2ToGltfBasisMatrix
+} from '../../../../shrubs/ShrubTypes';
 import {
   MobyClass,
   type MobyClassContext,
@@ -36,6 +39,7 @@ import {
   loadFxTextureUrls,
   resolveFxTextureUrl
 } from '../../FxTextures';
+import { isPointInsideAnyGameplayCuboid } from '../../GameplayCuboid';
 
 export {
   defaultWaterPlaneDebugOptions,
@@ -57,6 +61,7 @@ interface WaterPvar {
   fog: WaterFog | null;
   waves: WaterWaveSettings;
   posZ: number;
+  hiddenCuboidIds: [number, number];
 }
 
 interface WaterLayer {
@@ -77,7 +82,9 @@ const waterFogIntensityScale = 1 / 100;
 
 export class WaterPlaneMobyClass extends MobyClass {
   private readonly layers: WaterLayer[] = [];
+  private readonly hiddenCuboidIds: number[];
   private readonly ps2Position = new THREE.Vector3();
+  private readonly cameraPs2Position = new THREE.Vector3();
   private readonly viewerPosition = new THREE.Vector3();
   private readonly cameraForward = new THREE.Vector3();
   private readonly waterPatchForward = new THREE.Vector2(0, 1);
@@ -109,6 +116,7 @@ export class WaterPlaneMobyClass extends MobyClass {
     private readonly configs: WaterPvar[]
   ) {
     super(context, waterPlaneMobyClassId);
+    this.hiddenCuboidIds = configs.flatMap((config) => config.hiddenCuboidIds);
     this.surfaceY = resolveWaterSurfaceHeight(configs.map(getWaterRenderPosZ));
     this.group.renderOrder = waterRenderOrder;
   }
@@ -127,6 +135,14 @@ export class WaterPlaneMobyClass extends MobyClass {
   override render(_frame: MobyClassFrame): void {
     this.updateWaterPatchBasis();
     setWaterPlaneViewDirection(this.waterPatchForward.x, this.waterPatchForward.y);
+    this.context.camera
+      .getWorldPosition(this.cameraPs2Position)
+      .applyMatrix4(gltfToPs2BasisMatrix);
+    const waterHidden = isPointInsideAnyGameplayCuboid(
+      this.cameraPs2Position,
+      this.hiddenCuboidIds,
+      this.context.cuboids
+    );
     let updatedGeometry: THREE.BufferGeometry | null = null;
     for (const layer of this.layers) {
       const config = this.configs[layer.configIndex];
@@ -142,7 +158,8 @@ export class WaterPlaneMobyClass extends MobyClass {
         updatedGeometry = layer.object.geometry;
       }
       layer.object.position.copy(this.viewerPosition);
-      layer.object.visible = this.context.camera.position.y >= layer.object.position.y;
+      layer.object.visible = this.context.camera.position.y >= layer.object.position.y
+        && !waterHidden;
       if (layer.texture && layer.textureMode === 'world') {
         // DL water VU packet uses overlay UVs in a rotated PS2 basis: u = -Y, v = X.
         const scrollDistance = layer.speed * this.elapsedSeconds;
@@ -311,7 +328,11 @@ function parseWaterPvar(instance: DlMobyInstance): WaterPvar | null {
     underlayColor: readWaterColor(view, 0x34),
     fog: readWaterFog(view),
     waves: readWaterWaves(view),
-    posZ: view.getFloat32(0x4c, true)
+    posZ: view.getFloat32(0x4c, true),
+    hiddenCuboidIds: [
+      view.getInt32(0x54, true),
+      view.getInt32(0x58, true)
+    ]
   };
 }
 

@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import type { LoadedMapPackage } from '../../../../../services/mapPackages/mapPackageTypes';
 import type {
   DlMobyInstance,
+  GameplayCuboid,
   GameplaySpline
 } from '../../../../../services/wasm/ratchetPs2Wasm';
 import { disposeObject3D } from '../../RendererDisposal';
@@ -15,6 +16,7 @@ export interface MobyClassContext {
   tieController: TieInstanceController;
   camera: THREE.Camera;
   instances: DlMobyInstance[];
+  cuboids: GameplayCuboid[];
   splines: GameplaySpline[];
 }
 

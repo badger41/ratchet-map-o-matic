@@ -38,6 +38,7 @@ import type {
   DlMobyMissionInstances,
   DlMobyInstances,
   DlLevelSettings,
+  GameplayCuboid,
   GameplaySpline
 } from '../../../services/wasm/ratchetPs2Wasm';
 import {
@@ -99,6 +100,7 @@ interface MapSceneRendererOptions {
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
   mobyMissions?: DlMobyMissionInstances[];
+  cuboids?: GameplayCuboid[];
   splines?: GameplaySpline[];
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
@@ -229,6 +231,7 @@ export class MapSceneRenderer {
   private readonly sceneEnvironment: MapSceneEnvironment;
   private readonly mobyInstances: DlMobyInstances | null;
   private readonly mobyMissions: DlMobyMissionInstances[];
+  private readonly cuboids: GameplayCuboid[];
   private readonly splines: GameplaySpline[];
   private readonly lightingDebugEnabled: boolean;
   private debugTuning: MapSceneDebugTuning;
@@ -281,6 +284,7 @@ export class MapSceneRenderer {
     this.sceneEnvironment = resolveMapSceneEnvironment(options.levelSettings ?? null);
     this.mobyInstances = options.mobyInstances ?? null;
     this.mobyMissions = options.mobyMissions ?? [];
+    this.cuboids = options.cuboids ?? [];
     this.splines = options.splines ?? [];
     this.lightingDebugEnabled = options.lightingDebugEnabled ?? false;
     this.debugTuning = resolveMapSceneDebugTuning(this.lightingDebugEnabled ? options.debugTuning : undefined);
@@ -387,6 +391,7 @@ export class MapSceneRenderer {
         this.mobyController,
         this.tieController,
         this.camera,
+        this.cuboids,
         this.splines
       ));
       this.tieController.moveAlphaBlendPassToEnd();
