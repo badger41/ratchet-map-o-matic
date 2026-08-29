@@ -196,7 +196,9 @@ function createTieDisplayMaterial(
   material.side = source.side;
   material.opacityNode = createModelOpacityNode(material, modelMaterialInfo);
   if (modelMaterialInfo.usesGlowEmission) {
-    const glowNode = createTieGlowNode(material, modelMaterialInfo, glowColorBinding);
+    const glowNode = applyTieFogNode(
+      createTieGlowNode(material, modelMaterialInfo, glowColorBinding),
+      displayOptions);
     const bloomFadeNode = createTieBloomDistanceFadeNode();
     material.colorNode = glowNode.mul(float(1).sub(bloomFadeNode));
     (material as MeshBasicWithEmissiveNode).emissiveNode = glowNode.mul(bloomFadeNode);
