@@ -93,7 +93,7 @@ test('keeps high-detail moby faces and drops lower LOD groups', () => {
     TextureFullOpacityAlpha: 255
   };
   const blendInfo = resolveModelMaterialInfo(blendMaterial, 'moby');
-  assert.equal(blendInfo.fullOpacityAlpha, 128 / 255);
+  assert.equal(blendInfo.fullOpacityAlpha, 127 / 255);
   assert.equal(blendInfo.hasOpaqueTexels, true);
   assert.equal(blendInfo.usesAlphaCutout, false);
   configureModelMaterialTransparency(blendMaterial, blendInfo);

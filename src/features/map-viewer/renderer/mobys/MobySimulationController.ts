@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 import type { LoadedMapPackage } from '../../../../services/mapPackages/mapPackageTypes';
 import type {
   DlMobyInstance,
-  DlMobyInstances
+  DlMobyInstances,
+  GameplaySpline
 } from '../../../../services/wasm/ratchetPs2Wasm';
 import { disposeObject3D } from '../RendererDisposal';
 import type { MobyInstanceController } from './MobyInstanceController';
@@ -37,7 +38,8 @@ export class MobySimulationController {
     mobyInstances: DlMobyInstances | null,
     mobyController: MobyInstanceController,
     tieController: TieInstanceController,
-    camera: THREE.Camera
+    camera: THREE.Camera,
+    splines: GameplaySpline[]
   ): Promise<MobySimulationStats> {
     this.dispose();
 
@@ -62,7 +64,8 @@ export class MobySimulationController {
         mobyController,
         tieController,
         camera,
-        instances
+        instances,
+        splines
       });
       if (mobyClass) {
         mobyClass.setEnabled(this.enabled);

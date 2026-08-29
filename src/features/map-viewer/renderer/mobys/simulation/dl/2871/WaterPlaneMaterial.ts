@@ -137,6 +137,7 @@ export function createWaterUnderlayMaterial(
     applyWaterPs2ColorNode(vec3(1, 0.55, 0)),
     createWaterUnderlayRingDebugMask(underlayUv)
   );
+  // The ocean underlay is a fixed-alpha pass; tristrip GS modes are isolated in 6576.
   setWaterGsOutputNode(material, layerColor, opacity, false);
   return material;
 }

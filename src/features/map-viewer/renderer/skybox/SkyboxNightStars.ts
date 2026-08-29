@@ -5,7 +5,8 @@ import type { SkyboxRenderOptions } from '../../../../services/mapPackages/mapPa
 
 const nightStarRadius = 50;
 const nightStarFrameRate = 60;
-const ps2FullOpacity = 128;
+const ps2FullOpacity = 127;
+const ps2FullIntensity = 128;
 const nightStarUpdateColor = new THREE.Color();
 
 export interface SkyboxNightStarDefinition {
@@ -200,7 +201,7 @@ function setNightStarColor(color: THREE.Color, star: SkyboxNightStarDefinition, 
 
 function nightStarChannel(star: SkyboxNightStarDefinition, tick: number, index: number, alpha: number): number {
   const twinkle = star.twinkles ? hash5(star.seed, tick, index) * 4 - 0x20 : 0;
-  return THREE.MathUtils.clamp((star.baseRgb[index] + twinkle) / ps2FullOpacity, 0, 1) * alpha;
+  return THREE.MathUtils.clamp((star.baseRgb[index] + twinkle) / ps2FullIntensity, 0, 1) * alpha;
 }
 
 function createNightStarMaterial(textureSource: THREE.Texture, textureId: number): THREE.MeshBasicNodeMaterial {

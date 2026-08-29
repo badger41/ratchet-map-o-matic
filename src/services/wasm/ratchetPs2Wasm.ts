@@ -105,6 +105,45 @@ export interface DlPvarTables {
   relativePointers: DlPvarRelativePointer[];
 }
 
+export interface GameplayVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface GameplayVector4 extends GameplayVector3 {
+  w: number;
+}
+
+export interface GameplayCuboid {
+  index: number;
+  matrix: number[];
+  inverseRotationMatrix: number[];
+  rotation: GameplayVector3;
+}
+
+export interface GameplaySpline {
+  index: number;
+  points: GameplayVector4[];
+}
+
+export interface GameplayArea {
+  index: number;
+  boundingSphere: GameplayVector4;
+  lastUpdateTime: number;
+  splineIndices: number[];
+  cuboidIndices: number[];
+  sphereIndices: number[];
+  cylinderIndices: number[];
+  negativeCuboidIndices: number[];
+}
+
+export interface GameplayGeometry {
+  cuboids: GameplayCuboid[];
+  splines: GameplaySpline[];
+  areas: GameplayArea[];
+}
+
 export interface DlGameplayBlock {
   index: number;
   headerOffset: number;
@@ -119,6 +158,7 @@ export interface DlGameplayBlocks {
   kind: string;
   headerSize: number;
   pvarTables: DlPvarTables | null;
+  geometry: GameplayGeometry;
   blocks: DlGameplayBlock[];
 }
 
@@ -191,6 +231,7 @@ export interface UyaGameplayBlocks {
   headerSize: number;
   headerBytes: Uint8Array;
   pvarTables: DlPvarTables | null;
+  geometry: GameplayGeometry;
   blocks: UyaGameplayBlock[];
 }
 
@@ -201,6 +242,7 @@ export interface RatchetPs2WasmModule {
   unpackUyaLevelWad(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   parseDlGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
   parseDlGameplayMission(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
+  parseGcGameplayCore?(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
   parseUyaGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
   buildDlLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   buildDlLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;

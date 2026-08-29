@@ -13,8 +13,13 @@ import {
   type DlMobyInstance,
   type DlLevelSettings,
   type DlPvarTables,
+  type GameplayArea,
+  type GameplayCuboid,
+  type GameplayGeometry,
+  type GameplaySpline,
   type PackedFileEntry,
   type PackedFilePackageResult,
+  type UyaMobyInstances,
   type WasmByteArray,
   type RatchetPs2WasmModule
 } from '../wasm/ratchetPs2Wasm';
@@ -49,6 +54,9 @@ export interface MapLoadResult {
   levelSettings: DlLevelSettings | null;
   mobyInstances: DlMobyInstances | null;
   mobyMissions: DlMobyMissionInstances[];
+  cuboids: GameplayCuboid[];
+  splines: GameplaySpline[];
+  areas: GameplayArea[];
   durationMs: number;
 }
 
@@ -56,15 +64,9 @@ interface GameplayData {
   levelSettings: DlLevelSettings | null;
   mobyInstances: DlMobyInstances | null;
   mobyMissions: DlMobyMissionInstances[];
-}
-
-interface UyaGameplayCoreFiles {
-  levelSettings: Uint8Array | null;
-  mobyInstances: Uint8Array | null;
-  pvarMobyLinks: Uint8Array | null;
-  pvarTable: Uint8Array | null;
-  pvarData: Uint8Array | null;
-  pvarRelativePointers: Uint8Array | null;
+  cuboids: GameplayCuboid[];
+  splines: GameplaySpline[];
+  areas: GameplayArea[];
 }
 
 export const mapLoadStageDefinitions: MapLoadStageDefinition[] = [
@@ -146,6 +148,9 @@ export async function loadMapRenderPackage(
       levelSettings: existingPackage.levelSettings ?? null,
       mobyInstances: existingPackage.mobyInstances ?? null,
       mobyMissions: existingPackage.mobyMissions ?? [],
+      cuboids: existingPackage.cuboids ?? [],
+      splines: existingPackage.splines ?? [],
+      areas: existingPackage.areas ?? [],
       durationMs: performance.now() - startedAt
     };
   }
@@ -231,7 +236,10 @@ export async function loadMapRenderPackage(
     entries: renderPackage.entries,
     levelSettings: gameplayData.levelSettings,
     mobyInstances: gameplayData.mobyInstances,
-    mobyMissions: gameplayData.mobyMissions
+    mobyMissions: gameplayData.mobyMissions,
+    cuboids: gameplayData.cuboids,
+    splines: gameplayData.splines,
+    areas: gameplayData.areas
   });
   onStageUpdate?.({
     id: 'store',
@@ -253,6 +261,9 @@ export async function loadMapRenderPackage(
     levelSettings: gameplayData.levelSettings,
     mobyInstances: gameplayData.mobyInstances,
     mobyMissions: gameplayData.mobyMissions,
+    cuboids: gameplayData.cuboids,
+    splines: gameplayData.splines,
+    areas: gameplayData.areas,
     durationMs: performance.now() - startedAt
   };
 }
@@ -364,7 +375,7 @@ async function parsePackedGameplayData(
   gameId: MapDefinition['gameId']
 ): Promise<GameplayData> {
   if (gameId !== 'DL') {
-    return parsePackedUyaGameplayData(renderPackage);
+    return parsePackedUyaGameplayData(wasm, renderPackage, gameId);
   }
 
   const gameplayCore = readPackedFileBytes(renderPackage, 'gameplay/gameplay_core.bin');
@@ -390,7 +401,7 @@ async function parseLooseGameplayData(
 ): Promise<GameplayData> {
   if (gameId !== 'DL') {
     try {
-      return await parseLooseUyaGameplayData(manifestUrl);
+      return await parseLooseUyaGameplayData(manifestUrl, gameId);
     } catch (error) {
       console.warn(`Failed to parse loose ${gameId} gameplay data.`, error);
       return emptyGameplayData();
@@ -426,7 +437,8 @@ async function parseGameplayCore(wasm: RatchetPs2WasmModule, gameplayCore: Uint8
   return {
     levelSettings: gameplay.blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
     mobyInstances: attachMobyPvars(mobyInstances, pvarTables),
-    mobyMissions: []
+    mobyMissions: [],
+    ...normalizeGameplayGeometry(gameplay.geometry)
   };
 }
 
@@ -464,75 +476,50 @@ async function parseDlMobyMission(
   return withPvars?.instances.length ? { missionIndex, mobyInstances: withPvars } : null;
 }
 
-async function parseLooseUyaGameplayData(manifestUrl: string): Promise<GameplayData> {
-  return parseUyaGameplayCoreFiles(await fetchLooseUyaGameplayCoreFiles(manifestUrl));
+async function parseLooseUyaGameplayData(
+  manifestUrl: string,
+  gameId: 'GC' | 'UYA'
+): Promise<GameplayData> {
+  const gameplayCore = await fetchLooseGameplayCore(manifestUrl);
+  if (!gameplayCore) {
+    return emptyGameplayData();
+  }
+
+  return parseUyaGameplayCore(await loadRatchetPs2Wasm(), gameplayCore, gameId);
 }
 
-async function fetchLooseUyaGameplayCoreFiles(manifestUrl: string): Promise<UyaGameplayCoreFiles> {
-  const [
-    levelSettings,
-    mobyInstances,
-    pvarMobyLinks,
-    pvarTable,
-    pvarData,
-    pvarRelativePointers
-  ] = await Promise.all([
-    fetchLooseUyaCoreFile(manifestUrl, 'level_settings.bin'),
-    fetchLooseUyaCoreFile(manifestUrl, 'moby_instances.bin'),
-    fetchLooseUyaCoreFile(manifestUrl, 'pvar_moby_links.bin'),
-    fetchLooseUyaCoreFile(manifestUrl, 'pvar_table.bin'),
-    fetchLooseUyaCoreFile(manifestUrl, 'pvar_data.bin'),
-    fetchLooseUyaCoreFile(manifestUrl, 'pvar_relative_pointers.bin')
-  ]);
-
-  return {
-    levelSettings,
-    mobyInstances,
-    pvarMobyLinks,
-    pvarTable,
-    pvarData,
-    pvarRelativePointers
-  };
-}
-
-function parsePackedUyaGameplayData(renderPackage: PackedFilePackageResult): GameplayData {
-  const files: UyaGameplayCoreFiles = {
-    levelSettings: readPackedFileBytes(renderPackage, 'gameplay/core/level_settings.bin'),
-    mobyInstances: readRequiredPackedFileBytes(renderPackage, 'gameplay/core/moby_instances.bin'),
-    pvarMobyLinks: readPackedFileBytes(renderPackage, 'gameplay/core/pvar_moby_links.bin'),
-    pvarTable: readPackedFileBytes(renderPackage, 'gameplay/core/pvar_table.bin'),
-    pvarData: readPackedFileBytes(renderPackage, 'gameplay/core/pvar_data.bin'),
-    pvarRelativePointers: readPackedFileBytes(renderPackage, 'gameplay/core/pvar_relative_pointers.bin')
-  };
+async function parsePackedUyaGameplayData(
+  wasm: RatchetPs2WasmModule,
+  renderPackage: PackedFilePackageResult,
+  gameId: 'GC' | 'UYA'
+): Promise<GameplayData> {
   try {
-    return parseUyaGameplayCoreFiles(files);
+    return await parseUyaGameplayCore(
+      wasm,
+      readRequiredPackedFileBytes(renderPackage, 'gameplay/gameplay_core.bin'),
+      gameId);
   } catch (error) {
-    console.warn('Failed to parse packed UYA gameplay data.', error);
+    console.warn(`Failed to parse packed ${gameId} gameplay data.`, error);
     return emptyGameplayData();
   }
 }
 
-async function fetchLooseUyaCoreFile(manifestUrl: string, fileName: string): Promise<Uint8Array | null> {
-  const fileUrl = new URL(`gameplay/core/${fileName}`, new URL(manifestUrl, window.location.href));
-  const response = await fetch(fileUrl);
-  return response.ok && !isHtmlResponse(response)
-    ? new Uint8Array(await response.arrayBuffer())
-    : null;
-}
-
-function parseUyaGameplayCoreFiles(files: UyaGameplayCoreFiles): GameplayData {
-  const pvarTables = parsePvarTables(
-    files.pvarMobyLinks,
-    files.pvarTable,
-    files.pvarData,
-    files.pvarRelativePointers);
+async function parseUyaGameplayCore(
+  wasm: RatchetPs2WasmModule,
+  gameplayCore: Uint8Array,
+  gameId: 'GC' | 'UYA'
+): Promise<GameplayData> {
+  const gameplay = gameId === 'GC' && wasm.parseGcGameplayCore
+    ? await wasm.parseGcGameplayCore(gameplayCore)
+    : await wasm.parseUyaGameplayCore(gameplayCore);
+  const pvarTables = normalizeDlPvarTables(gameplay.pvarTables);
+  const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
 
   return {
-    levelSettings: files.levelSettings ? parseUyaLevelSettings(files.levelSettings) : null,
-    mobyInstances: attachMobyPvars(
-      files.mobyInstances ? parseUyaMobyInstances(files.mobyInstances) : null,
-      pvarTables),
-    mobyMissions: []
+    levelSettings: gameplay.blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
+    mobyInstances: attachMobyPvars(normalizeUyaMobyInstances(mobyInstances), pvarTables),
+    mobyMissions: [],
+    ...normalizeGameplayGeometry(gameplay.geometry)
   };
 }
 
@@ -563,175 +550,48 @@ function normalizePackagePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-function parseUyaLevelSettings(bytes: Uint8Array): DlLevelSettings {
-  const requiredLength = 0x28;
-  if (bytes.byteLength < requiredLength) {
-    throw new Error(`UYA level settings payload is too small: ${bytes.byteLength} bytes`);
-  }
-
-  const view = dataViewFor(bytes);
-  return {
-    backgroundColor: readRgb96(view, 0x00),
-    fogColor: readRgb96(view, 0x0c),
-    fogNearDistance: readFloat32(view, 0x18),
-    fogFarDistance: readFloat32(view, 0x1c),
-    fogNearIntensity: readFloat32(view, 0x20),
-    fogFarIntensity: readFloat32(view, 0x24)
-  };
+function isHtmlResponse(response: Response): boolean {
+  return response.headers.get('content-type')?.toLowerCase().includes('text/html') ?? false;
 }
 
-function parseUyaMobyInstances(bytes: Uint8Array): DlMobyInstances {
-  const headerSize = 0x10;
-  const recordSize = 0x88;
-  if (bytes.byteLength < headerSize) {
-    throw new Error(`UYA moby instances payload is too small: ${bytes.byteLength} bytes`);
-  }
-
-  const view = dataViewFor(bytes);
-  const staticCount = view.getInt32(0x00, true);
-  if (staticCount < 0) {
-    throw new Error('UYA moby instance count cannot be negative.');
-  }
-
-  const recordsLength = staticCount * recordSize;
-  if (headerSize + recordsLength > bytes.byteLength) {
-    throw new Error(`UYA moby instances payload has ${bytes.byteLength} bytes, expected at least ${headerSize + recordsLength}.`);
-  }
-
-  const instances: DlMobyInstance[] = [];
-  for (let index = 0; index < staticCount; index += 1) {
-    instances.push(parseUyaMobyInstance(view, headerSize + index * recordSize));
-  }
-
-  return {
-    staticCount,
-    spawnableMobyCount: view.getInt32(0x04, true),
-    pad8: view.getInt32(0x08, true),
-    padC: view.getInt32(0x0c, true),
-    instances,
-    trailingByteLength: bytes.byteLength - headerSize - recordsLength
-  };
-}
-
-function parseUyaMobyInstance(view: DataView, offset: number): DlMobyInstance {
-  return {
-    size: view.getInt32(offset + 0x00, true),
-    mission: view.getInt32(offset + 0x04, true),
-    uid: view.getInt32(offset + 0x10, true),
-    bolts: view.getInt32(offset + 0x14, true),
-    classId: view.getInt32(offset + 0x28, true),
-    scale: readFloat32(view, offset + 0x2c),
-    drawDistance: view.getInt32(offset + 0x30, true),
-    updateDistance: view.getInt32(offset + 0x34, true),
-    unused20: view.getInt32(offset + 0x20, true),
-    unused24: view.getInt32(offset + 0x24, true),
-    position: readVector3(view, offset + 0x40),
-    rotation: readVector3(view, offset + 0x4c),
-    group: view.getInt32(offset + 0x58, true),
-    isRooted: view.getInt32(offset + 0x5c, true),
-    rootedDistance: readFloat32(view, offset + 0x60),
-    unused4C: view.getInt32(offset + 0x64, true),
-    pvarIndex: view.getInt32(offset + 0x68, true),
-    occlusion: view.getInt32(offset + 0x6c, true),
-    modeBits: view.getInt32(offset + 0x70, true),
-    color: readRgb96(view, offset + 0x74),
-    light: view.getInt32(offset + 0x80, true),
-    unused6C: view.getInt32(offset + 0x84, true)
-  };
-}
-
-function parsePvarTables(
-  mobyLinksBytes: Uint8Array | null,
-  tableBytes: Uint8Array | null,
-  dataBytes: Uint8Array | null,
-  relativePointerBytes: Uint8Array | null
-): DlPvarTables | null {
-  if (!mobyLinksBytes && !tableBytes && !dataBytes && !relativePointerBytes) {
+function normalizeUyaMobyInstances(instances: UyaMobyInstances | null): DlMobyInstances | null {
+  if (!instances) {
     return null;
   }
 
-  const table = tableBytes ?? new Uint8Array();
-  const data = dataBytes ?? new Uint8Array();
   return {
-    mobyLinksBytes: mobyLinksBytes ?? new Uint8Array(),
-    tableBytes: table,
-    dataBytes: data,
-    relativePointerBytes: relativePointerBytes ?? new Uint8Array(),
-    entries: parsePvarTableEntries(table, data),
-    relativePointers: parsePvarRelativePointers(relativePointerBytes ?? new Uint8Array())
+    ...instances,
+    instances: instances.instances.map((instance) => ({
+      size: instance.size,
+      mission: instance.mission,
+      uid: instance.uid,
+      bolts: instance.bolts,
+      classId: instance.classId,
+      scale: instance.scale,
+      drawDistance: instance.drawDistance,
+      updateDistance: instance.updateDistance,
+      unused20: instance.unknown20,
+      unused24: instance.unknown24,
+      position: instance.position,
+      rotation: instance.rotation,
+      group: instance.group,
+      isRooted: instance.isRooted,
+      rootedDistance: instance.rootedDistance,
+      unused4C: instance.unknown64,
+      pvarIndex: instance.pvarIndex,
+      occlusion: instance.occlusion,
+      modeBits: instance.modeBits,
+      color: instance.color,
+      light: instance.light,
+      unused6C: instance.unknown84
+    }))
   };
 }
 
-function parsePvarTableEntries(tableBytes: Uint8Array, dataBytes: Uint8Array): DlPvarTables['entries'] {
-  const entrySize = 8;
-  if (tableBytes.byteLength % entrySize !== 0) {
-    throw new Error(`UYA pvar table length must be divisible by ${entrySize}.`);
-  }
-
-  const tableView = dataViewFor(tableBytes);
-  const entries: DlPvarTables['entries'] = [];
-  for (let index = 0; index < tableBytes.byteLength / entrySize; index += 1) {
-    const offset = tableView.getInt32(index * entrySize, true);
-    const length = tableView.getInt32(index * entrySize + 4, true);
-    if (offset < 0 || length < 0 || offset + length > dataBytes.byteLength) {
-      throw new Error(`UYA pvar table entry ${index} points outside pvar data.`);
-    }
-
-    entries.push({
-      index,
-      offset,
-      length,
-      data: dataBytes.subarray(offset, offset + length)
-    });
-  }
-
-  return entries;
-}
-
-function parsePvarRelativePointers(bytes: Uint8Array): DlPvarTables['relativePointers'] {
-  const entrySize = 8;
-  if (bytes.byteLength % entrySize !== 0) {
-    throw new Error(`UYA pvar relative pointer table length must be divisible by ${entrySize}.`);
-  }
-
-  const view = dataViewFor(bytes);
-  const pointers: DlPvarTables['relativePointers'] = [];
-  for (let offset = 0; offset < bytes.byteLength; offset += entrySize) {
-    pointers.push({
-      pvarIndex: view.getInt32(offset, true),
-      offset: view.getInt32(offset + 4, true)
-    });
-  }
-
-  return pointers;
-}
-
-function readRgb96(view: DataView, offset: number): { red: number; green: number; blue: number } {
-  return {
-    red: view.getInt32(offset, true),
-    green: view.getInt32(offset + 4, true),
-    blue: view.getInt32(offset + 8, true)
-  };
-}
-
-function readVector3(view: DataView, offset: number): { x: number; y: number; z: number } {
-  return {
-    x: readFloat32(view, offset),
-    y: readFloat32(view, offset + 4),
-    z: readFloat32(view, offset + 8)
-  };
-}
-
-function readFloat32(view: DataView, offset: number): number {
-  return view.getFloat32(offset, true);
-}
-
-function dataViewFor(bytes: Uint8Array): DataView {
-  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-}
-
-function isHtmlResponse(response: Response): boolean {
-  return response.headers.get('content-type')?.toLowerCase().includes('text/html') ?? false;
+function normalizeGameplayGeometry(
+  geometry: GameplayGeometry | null | undefined
+): Pick<GameplayData, 'cuboids' | 'splines' | 'areas'> {
+  return geometry ?? emptyGameplayGeometry();
 }
 
 function attachMobyPvars(mobyInstances: DlMobyInstances | null, pvarTables: DlPvarTables | null): DlMobyInstances | null {
@@ -839,8 +699,13 @@ function emptyGameplayData(): GameplayData {
   return {
     levelSettings: null,
     mobyInstances: null,
-    mobyMissions: []
+    mobyMissions: [],
+    ...emptyGameplayGeometry()
   };
+}
+
+function emptyGameplayGeometry(): Pick<GameplayData, 'cuboids' | 'splines' | 'areas'> {
+  return { cuboids: [], splines: [], areas: [] };
 }
 
 async function loadLooseViewerPackage(
@@ -868,7 +733,10 @@ async function loadLooseViewerPackage(
   onStageUpdate?.({
     id: 'convert',
     status: 'done',
-    detail: gameplayData.mobyInstances || gameplayData.levelSettings ? 'Parsed gameplay data' : 'Skipped',
+    detail: gameplayData.mobyInstances || gameplayData.levelSettings
+      || gameplayData.cuboids.length || gameplayData.splines.length || gameplayData.areas.length
+      ? 'Parsed gameplay data'
+      : 'Skipped',
     loaded: null,
     total: null
   });
@@ -892,6 +760,9 @@ async function loadLooseViewerPackage(
     levelSettings: gameplayData.levelSettings,
     mobyInstances: gameplayData.mobyInstances,
     mobyMissions: gameplayData.mobyMissions,
+    cuboids: gameplayData.cuboids,
+    splines: gameplayData.splines,
+    areas: gameplayData.areas,
     durationMs: performance.now() - startedAt
   };
 }

@@ -50,7 +50,7 @@ test('only remaps tfrag UVs that do not rely on texture wrapping', () => {
 
 test('normalizes PS2 tfrag alpha without letting blends punch the depth buffer', () => {
   assert.deepEqual(resolveTfragAlphaState(true, 1, 0, false), {
-    opacityScale: 255 / 128,
+    opacityScale: 255 / 127,
     depthWrite: false,
     alphaTest: 0.06
   });

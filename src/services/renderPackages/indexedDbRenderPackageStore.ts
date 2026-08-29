@@ -3,6 +3,9 @@ import {
   type DlMobyMissionInstances,
   type DlMobyInstances,
   type DlLevelSettings,
+  type GameplayArea,
+  type GameplayCuboid,
+  type GameplaySpline,
   type PackedFileEntry
 } from '../wasm/ratchetPs2Wasm';
 import { numberValue } from '../../shared/valueParsing.ts';
@@ -13,7 +16,7 @@ const metadataStoreName = 'renderPackageMetadata';
 const payloadStoreName = 'renderPackagePayloads';
 const sourcePrefix = 'idb:';
 const textDecoder = new TextDecoder();
-const renderPackageFormatVersion = ratchetPs2WasmVersion;
+const renderPackageFormatVersion = `${ratchetPs2WasmVersion}:gameplay-v2`;
 
 export interface IndexedDbRenderPackageMetadata {
   id: string;
@@ -30,6 +33,9 @@ export interface IndexedDbRenderPackageMetadata {
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
   mobyMissions?: DlMobyMissionInstances[];
+  cuboids?: GameplayCuboid[];
+  splines?: GameplaySpline[];
+  areas?: GameplayArea[];
 }
 
 export interface IndexedDbRenderPackageRecord extends IndexedDbRenderPackageMetadata {
@@ -45,6 +51,9 @@ export interface SaveIndexedDbRenderPackageOptions {
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
   mobyMissions?: DlMobyMissionInstances[];
+  cuboids?: GameplayCuboid[];
+  splines?: GameplaySpline[];
+  areas?: GameplayArea[];
 }
 
 interface IndexedDbRenderPackagePayload {
@@ -92,7 +101,10 @@ export async function saveIndexedDbRenderPackage(
     entries,
     levelSettings: options.levelSettings ?? null,
     mobyInstances: options.mobyInstances ?? null,
-    mobyMissions: options.mobyMissions ?? []
+    mobyMissions: options.mobyMissions ?? [],
+    cuboids: options.cuboids ?? [],
+    splines: options.splines ?? [],
+    areas: options.areas ?? []
   };
 
   const db = await openDatabase();
@@ -191,7 +203,10 @@ export function hasViewerRenderPackageEntries(entries: PackedFileEntry[]): boole
 function hasGameplayMetadata(record: IndexedDbRenderPackageMetadata): boolean {
   return record.levelSettings !== undefined
     && record.mobyInstances !== undefined
-    && record.mobyMissions !== undefined;
+    && record.mobyMissions !== undefined
+    && record.cuboids !== undefined
+    && record.splines !== undefined
+    && record.areas !== undefined;
 }
 
 async function getMetadata(id: string): Promise<IndexedDbRenderPackageMetadata | null> {

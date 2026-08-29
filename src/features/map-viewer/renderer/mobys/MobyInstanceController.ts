@@ -783,7 +783,7 @@ function createMobyMaterial(
     useStoredAmbient,
     chromeSampleNode?.rgb ?? null);
   material.opacityNode = chromeSampleNode
-    ? chromeSampleNode.a.div(float(128 / 255)).clamp(0, 1)
+    ? chromeSampleNode.a.div(float(127 / 255)).clamp(0, 1)
     : createModelOpacityNode(material, modelMaterialInfo);
   return material;
 }

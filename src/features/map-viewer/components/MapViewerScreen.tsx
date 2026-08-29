@@ -327,6 +327,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       levelSettings: result.levelSettings,
       mobyInstances: result.mobyInstances,
       mobyMissions: result.mobyMissions,
+      splines: result.splines,
       glowBloomEnabled,
       glowBloomFalloffDistance,
       mobySimulationEnabled,
@@ -486,7 +487,7 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
       rendererRef.current = null;
       renderer.dispose();
     };
-  }, [result.packageSource, result.levelSettings, result.mobyInstances, result.mobyMissions, debugModeEnabled]);
+  }, [result.packageSource, result.levelSettings, result.mobyInstances, result.mobyMissions, result.splines, debugModeEnabled]);
 
   return (
     <Box

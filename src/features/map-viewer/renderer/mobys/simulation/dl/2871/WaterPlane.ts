@@ -334,7 +334,7 @@ function fxLevelTextureBaseIdForGame(game: unknown): number {
     : dlFxLevelTextureBaseId;
 }
 
-function resolveFxTextureUrl(textureUrls: Map<number, string>, pvarTextureId: number, fxLevelTextureBaseId: number): string | null {
+export function resolveFxTextureUrl(textureUrls: Map<number, string>, pvarTextureId: number, fxLevelTextureBaseId: number): string | null {
   return pvarTextureId >= 0 ? textureUrls.get(fxLevelTextureBaseId + pvarTextureId) ?? null : null;
 }
 
@@ -410,7 +410,7 @@ function readWaterFog(view: DataView): WaterFog | null {
   };
 }
 
-async function loadFxTextureUrls(context: MobyClassContext): Promise<Map<number, string>> {
+export async function loadFxTextureUrls(context: MobyClassContext): Promise<Map<number, string>> {
   const assetRootPath = dirnamePackagePath(context.mapPackage.assetManifestPath);
   const manifest = await context.mapPackage.assetPackage.readOptionalJson<FxTextureManifest>(
     joinPackagePath(assetRootPath, 'fx/manifest.json')
@@ -429,7 +429,7 @@ async function loadFxTextureUrls(context: MobyClassContext): Promise<Map<number,
   return urls;
 }
 
-async function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Texture | null> {
+export async function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Texture | null> {
   try {
     const texture = await loader.loadAsync(url);
     texture.colorSpace = THREE.NoColorSpace;

@@ -16,7 +16,7 @@ interface SkyboxReflectionCandidate {
   traversalIndex: number;
 }
 
-const skyboxFullOpacityAlphaByte = 128;
+const skyboxFullOpacityAlphaByte = 127;
 const skyboxFullOpacityAlpha = skyboxFullOpacityAlphaByte / 255;
 const additiveOverlayMinAlphaFalloff = 2;
 const additiveOverlayMaxAlphaByte = 0x60;

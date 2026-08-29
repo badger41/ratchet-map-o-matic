@@ -68,7 +68,7 @@ export interface ModelShineOptions {
   useSecondUvReflection?: boolean;
 }
 
-const modelFullOpacityAlphaByte = 128;
+const modelFullOpacityAlphaByte = 127;
 const modelDefaultAlphaCutoff = 0.06;
 // Mixed-alpha textures get depth only for effectively opaque texels; glass remains in the blend pass.
 const modelOpaqueAlphaCutoff = 254 / 255;

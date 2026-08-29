@@ -1,4 +1,4 @@
-const tfragFullOpacityAlpha = 0x80 / 0xff;
+const tfragFullOpacityAlpha = 0x7f / 0xff;
 const tfragAlphaCutoff = 0.06;
 const ps2VertexColorScale = 128;
 const ps2VertexColorMax = 255 / ps2VertexColorScale;

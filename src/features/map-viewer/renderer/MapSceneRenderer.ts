@@ -37,7 +37,8 @@ import {
 import type {
   DlMobyMissionInstances,
   DlMobyInstances,
-  DlLevelSettings
+  DlLevelSettings,
+  GameplaySpline
 } from '../../../services/wasm/ratchetPs2Wasm';
 import {
   createInitialSceneCameraFrame,
@@ -98,6 +99,7 @@ interface MapSceneRendererOptions {
   levelSettings?: DlLevelSettings | null;
   mobyInstances?: DlMobyInstances | null;
   mobyMissions?: DlMobyMissionInstances[];
+  splines?: GameplaySpline[];
   glowBloomEnabled?: boolean;
   glowBloomFalloffDistance?: number;
   mobySimulationEnabled?: boolean;
@@ -227,6 +229,7 @@ export class MapSceneRenderer {
   private readonly sceneEnvironment: MapSceneEnvironment;
   private readonly mobyInstances: DlMobyInstances | null;
   private readonly mobyMissions: DlMobyMissionInstances[];
+  private readonly splines: GameplaySpline[];
   private readonly lightingDebugEnabled: boolean;
   private debugTuning: MapSceneDebugTuning;
   private renderer: WebGPURenderer | null = null;
@@ -278,6 +281,7 @@ export class MapSceneRenderer {
     this.sceneEnvironment = resolveMapSceneEnvironment(options.levelSettings ?? null);
     this.mobyInstances = options.mobyInstances ?? null;
     this.mobyMissions = options.mobyMissions ?? [];
+    this.splines = options.splines ?? [];
     this.lightingDebugEnabled = options.lightingDebugEnabled ?? false;
     this.debugTuning = resolveMapSceneDebugTuning(this.lightingDebugEnabled ? options.debugTuning : undefined);
     setModelFog(this.sceneEnvironment.fog);
@@ -382,7 +386,8 @@ export class MapSceneRenderer {
         this.mobyInstances,
         this.mobyController,
         this.tieController,
-        this.camera
+        this.camera,
+        this.splines
       ));
       this.tieController.moveAlphaBlendPassToEnd();
       this.shrubController.moveAlphaBlendPassToEnd();
