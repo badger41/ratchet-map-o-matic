@@ -10,6 +10,7 @@ import {
   normalize,
   positionView,
   reflect,
+  sRGBTransferOETF,
   texture,
   uniform,
   uv,
@@ -57,9 +58,10 @@ import {
 } from '../model-materials/ModelMaterialNodes';
 import {
   applyModelColorStrengthNode,
-  applyModelDisplayModulateNode,
+  applyModelDisplayTextureModulateNode,
   applyShrubDisplayLiftNode,
   applyShrubFogNode,
+  configureModelDisplayTexture,
   type ModelDisplayNodeOptions
 } from '../ModelFog';
 import {
@@ -528,7 +530,7 @@ async function loadMobyChromeTexture(
   try {
     const chrome = await new THREE.TextureLoader(loader.manager).loadAsync(mapPackage.chromeTextureUrl);
     chrome.name = 'level_chrome';
-    chrome.colorSpace = THREE.SRGBColorSpace;
+    configureModelDisplayTexture(chrome);
     chrome.flipY = false;
     chrome.wrapS = THREE.RepeatWrapping;
     chrome.wrapT = THREE.RepeatWrapping;
@@ -754,11 +756,11 @@ function createMobyMaterial(
   });
 
   if (material.map) {
-    material.map.colorSpace = THREE.SRGBColorSpace;
+    configureModelDisplayTexture(material.map);
   }
 
   if (material.alphaMap) {
-    material.alphaMap.colorSpace = THREE.SRGBColorSpace;
+    configureModelDisplayTexture(material.alphaMap);
   }
 
   configureModelMaterialTransparency(material, modelMaterialInfo);
@@ -824,16 +826,18 @@ function createMobyColorNode(
   useColorTone: boolean,
   chromeColorNode: Node<'vec3'> | null
 ) {
-  const materialColorNode = uniform(new THREE.Vector3(material.color.r, material.color.g, material.color.b));
-  const textureColorNode = material.map
-    ? texture(material.map, uv()).rgb.mul(materialColorNode)
-    : materialColorNode;
-  const baseColorNode = chromeColorNode ?? (hasVertexColors
-    ? textureColorNode.mul(vertexColor().rgb)
-    : textureColorNode);
-  const tonedColorNode = useColorTone
-    ? baseColorNode.mul(attribute<'vec3'>(mobyColorToneAttributeName, 'vec3'))
-    : baseColorNode;
+  const displayMaterialColorNode = sRGBTransferOETF(
+    uniform(new THREE.Vector3(material.color.r, material.color.g, material.color.b))
+  ) as Node<'vec3'>;
+  const textureDisplayColorNode = material.map
+    ? texture(material.map, uv()).rgb.mul(displayMaterialColorNode)
+    : displayMaterialColorNode;
+  const baseDisplayColorNode = chromeColorNode ?? (hasVertexColors
+    ? textureDisplayColorNode.mul(vertexColor().rgb)
+    : textureDisplayColorNode);
+  const tonedDisplayColorNode = useColorTone
+    ? baseDisplayColorNode.mul(attribute<'vec3'>(mobyColorToneAttributeName, 'vec3'))
+    : baseDisplayColorNode;
   const ambientTermNode = vec3(mobyAmbientScale, mobyAmbientScale, mobyAmbientScale)
     .mul(uniforms.ambientScale);
   const directionalLightNode = directionalLightBinding
@@ -849,8 +853,8 @@ function createMobyColorNode(
       .mul(uniforms.directionalScale)
       .mul(float(0.5))
     : vec3(0, 0, 0);
-  const litColorNode = applyModelDisplayModulateNode(
-    tonedColorNode,
+  const litColorNode = applyModelDisplayTextureModulateNode(
+    tonedDisplayColorNode,
     ambientTermNode.add(directionalTermNode).clamp(0, 1)
   ).saturate();
   const exposureNode = displayOptions.dynamic ? uniforms.exposureScale : float(Math.max(0, options.exposure));

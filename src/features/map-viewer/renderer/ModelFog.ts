@@ -6,6 +6,8 @@ import {
   mix,
   positionView,
   pow,
+  sRGBTransferEOTF,
+  sRGBTransferOETF,
   uniform,
   vec3
 } from 'three/tsl';
@@ -25,8 +27,6 @@ const modelFogNearIntensityScale = uniform(1);
 const modelFogFarIntensityScale = uniform(1);
 const modelFogColorScale = uniform(1);
 const modelFogModulationMaxAmount = uniform(1);
-const modelTfragDisplayLift = uniform(1);
-const modelTieDisplayLift = uniform(1);
 const modelShrubDisplayLift = uniform(1);
 const modelTfragFogEnabled = uniform(1);
 const modelTieFogEnabled = uniform(1);
@@ -43,16 +43,14 @@ export interface ModelFogDebugOptions {
 
 export const defaultModelFogDebugOptions: ModelFogDebugOptions = {
   fogNearDistanceScale: 1,
-  fogFarDistanceScale: 1.5,
+  fogFarDistanceScale: 1,
   fogNearIntensityScale: 1,
   fogFarIntensityScale: 1,
   fogMeshColorStrength: 1,
-  fogModulationMaxAmount: 0.5
+  fogModulationMaxAmount: 1
 };
 
 export interface ModelFamilyDisplayOptions {
-  tfragUplift: number;
-  tieUplift: number;
   shrubUplift: number;
   tfragFogEnabled: boolean;
   tieFogEnabled: boolean;
@@ -112,26 +110,10 @@ export function setModelFogDebugOptions(options: ModelFogDebugOptions): void {
 }
 
 export function setModelFamilyDisplayOptions(options: ModelFamilyDisplayOptions): void {
-  modelTfragDisplayLift.value = finiteNonNegative(options.tfragUplift, 1);
-  modelTieDisplayLift.value = finiteNonNegative(options.tieUplift, 1);
   modelShrubDisplayLift.value = finiteNonNegative(options.shrubUplift, 1);
   modelTfragFogEnabled.value = options.tfragFogEnabled ? 1 : 0;
   modelTieFogEnabled.value = options.tieFogEnabled ? 1 : 0;
   modelShrubFogEnabled.value = options.shrubFogEnabled ? 1 : 0;
-}
-
-export function applyTfragDisplayLiftNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
-  return applyModelDisplayLiftNode(
-    colorNode,
-    options && !options.dynamic ? options.familyOptions.tfragUplift : modelTfragDisplayLift
-  );
-}
-
-export function applyTieDisplayLiftNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
-  return applyModelDisplayLiftNode(
-    colorNode,
-    options && !options.dynamic ? options.familyOptions.tieUplift : modelTieDisplayLift
-  );
 }
 
 export function applyShrubDisplayLiftNode(colorNode: Node<'vec3'>, options?: ModelDisplayNodeOptions): Node<'vec3'> {
@@ -175,10 +157,10 @@ function applyModelFogNode(
     .mul(modelFogEnabled)
     .mul(familyFogEnabled)
     .clamp(0, modelFogModulationMaxAmount);
-  const displayColor = applyModelColorGammaNode(colorNode, 1 / 2.2);
-  const displayFogBase = applyModelColorGammaNode(vec3(modelFogRed, modelFogGreen, modelFogBlue), 1 / 2.2);
+  const displayColor = sRGBTransferOETF(colorNode) as Node<'vec3'>;
+  const displayFogBase = sRGBTransferOETF(vec3(modelFogRed, modelFogGreen, modelFogBlue)) as Node<'vec3'>;
   const displayFog = displayFogBase.mul(modelFogColorScale).clamp(0, 1);
-  return applyModelColorGammaNode(mix(displayColor, displayFog, fogAmount), 2.2);
+  return sRGBTransferEOTF(mix(displayColor, displayFog, fogAmount)) as Node<'vec3'>;
 }
 
 function applyStaticModelFogNode(
@@ -213,12 +195,12 @@ function applyStaticModelFogNode(
     .div(float(farDistance - nearDistance))
     .clamp(0, 1);
   const fogAmount = mix(float(nearIntensity), float(farIntensity), distanceMix).clamp(0, maxAmount);
-  const displayColor = applyModelColorGammaNode(colorNode, 1 / 2.2);
-  const displayFogBase = applyModelColorGammaNode(vec3(fog.color.r, fog.color.g, fog.color.b), 1 / 2.2);
+  const displayColor = sRGBTransferOETF(colorNode) as Node<'vec3'>;
+  const displayFogBase = sRGBTransferOETF(vec3(fog.color.r, fog.color.g, fog.color.b)) as Node<'vec3'>;
   const displayFog = displayFogBase
     .mul(float(finiteNonNegative(fogOptions.fogMeshColorStrength, defaultModelFogDebugOptions.fogMeshColorStrength)))
     .clamp(0, 1);
-  return applyModelColorGammaNode(mix(displayColor, displayFog, fogAmount), 2.2);
+  return sRGBTransferEOTF(mix(displayColor, displayFog, fogAmount)) as Node<'vec3'>;
 }
 
 export function applyModelColorGammaNode(colorNode: Node<'vec3'>, exponent: number): Node<'vec3'> {
@@ -230,10 +212,28 @@ export function applyModelColorGammaNode(colorNode: Node<'vec3'>, exponent: numb
 }
 
 export function applyModelDisplayModulateNode(baseColorNode: Node<'vec3'>, lightTermNode: Node<'vec3'>): Node<'vec3'> {
-  return applyModelColorGammaNode(
-    applyModelColorGammaNode(baseColorNode, 1 / 2.2).mul(lightTermNode),
-    2.2
-  );
+  const displayColor = sRGBTransferOETF(baseColorNode) as Node<'vec3'>;
+  return sRGBTransferEOTF(displayColor.mul(lightTermNode).clamp(0, 1)) as Node<'vec3'>;
+}
+
+export function configureModelDisplayTexture(texture: THREE.Texture): void {
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.anisotropy = 1;
+  texture.needsUpdate = true;
+}
+
+export function decodeModelDisplayTextureNode(displayColorNode: Node<'vec3'>): Node<'vec3'> {
+  return sRGBTransferEOTF(displayColorNode) as Node<'vec3'>;
+}
+
+export function applyModelDisplayTextureModulateNode(
+  displayColorNode: Node<'vec3'>,
+  lightTermNode: Node<'vec3'>
+): Node<'vec3'> {
+  return decodeModelDisplayTextureNode(displayColorNode.mul(lightTermNode).clamp(0, 1));
 }
 
 export function applyModelColorStrengthNode(colorNode: Node<'vec3'>, strengthNode: FloatNodeOrNumber): Node<'vec3'> {

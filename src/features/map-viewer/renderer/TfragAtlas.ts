@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { configureModelDisplayTexture } from './ModelFog.ts';
 
 export interface TfragAtlasRegion {
   offsetX: number;
@@ -62,14 +63,13 @@ export function createTfragAtlas(root: THREE.Object3D): TfragAtlas | null {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.name = `tfrag_atlas_${packed.width}x${packed.height}`;
-  texture.colorSpace = THREE.SRGBColorSpace;
+  configureModelDisplayTexture(texture);
   texture.flipY = false;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
-  texture.needsUpdate = true;
   return { texture, regionsByTexture };
 }
 

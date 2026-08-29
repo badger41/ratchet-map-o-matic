@@ -6,7 +6,12 @@ import {
   packTfragAtlasRects,
   remapTfragAtlasUv
 } from '../src/features/map-viewer/renderer/TfragAtlas.ts';
-import { resolveTfragAlphaState } from '../src/features/map-viewer/renderer/TfragMaterialState.ts';
+import {
+  decodeTfragRgb5Color,
+  resolveTfragAlphaState,
+  scaleTfragVertexColor
+} from '../src/features/map-viewer/renderer/TfragMaterialState.ts';
+import { configureModelDisplayTexture } from '../src/features/map-viewer/renderer/ModelFog.ts';
 import {
   createWaterSurfaceMaterialPasses,
   resolveWaterSurfaceHeight
@@ -50,6 +55,21 @@ test('normalizes PS2 tfrag alpha without letting blends punch the depth buffer',
     alphaTest: 0.06
   });
   assert.equal(resolveTfragAlphaState(false, 1, 0, true), null);
+});
+
+test('decodes normalized tfrag RGB5 as the game PEXT5 modulation bytes', () => {
+  assert.deepEqual(decodeTfragRgb5Color([66 / 255, 132 / 255, 1]), [0.5, 1, 31 / 16]);
+  assert.deepEqual(scaleTfragVertexColor([0.5 + Math.SQRT1_2, 0, 3], 0.5), [77 / 128, 0, 127 / 128]);
+});
+
+test('samples PS2 model textures without pre-filter sRGB decoding', () => {
+  const texture = new THREE.Texture();
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  configureModelDisplayTexture(texture);
+  assert.equal(texture.colorSpace, THREE.NoColorSpace);
+  assert.equal(texture.minFilter, THREE.LinearFilter);
+  assert.equal(texture.generateMipmaps, false);
 });
 
 test('only shares a water split plane when every water instance has the same surface', () => {

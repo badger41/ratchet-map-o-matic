@@ -216,9 +216,9 @@ function tieAmbientRecipeColor(
 
   const divisor = Math.max(1, Math.floor(recipe.divisor || recipe.sourceIndices.length || 1));
   return {
-    r: clampByte(r / divisor),
-    g: clampByte(g / divisor),
-    b: clampByte(b / divisor),
+    r: clampByte(Math.floor(r / divisor)),
+    g: clampByte(Math.floor(g / divisor)),
+    b: clampByte(Math.floor(b / divisor)),
     valid: true
   };
 }

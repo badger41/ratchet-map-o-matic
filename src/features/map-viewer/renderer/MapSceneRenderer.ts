@@ -3,10 +3,8 @@ import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   diffuseColor,
-  dot,
   emissive,
   float,
-  max,
   mix,
   mrt,
   output,
@@ -21,12 +19,10 @@ import {
 import type BloomNode from 'three/addons/tsl/display/BloomNode.js';
 import type Node from 'three/src/nodes/core/Node.js';
 import type PassNode from 'three/src/nodes/display/PassNode.js';
-import type UniformNode from 'three/src/nodes/core/UniformNode.js';
 import {
   defaultShrubRenderOptions,
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
-  defaultTfragMaterialOptions,
   type LoadedMapPackage,
   type MapSceneLoadStageUpdate,
   type MobyStats,
@@ -36,7 +32,6 @@ import {
   type SkyboxStats,
   type TieRenderOptions,
   type TieStats,
-  type TfragMaterialOptions,
   type TfragStats
 } from '../../../services/mapPackages/mapPackageTypes';
 import type {
@@ -97,7 +92,6 @@ import {
 
 interface MapSceneRendererOptions {
   container: HTMLElement;
-  materialOptions?: TfragMaterialOptions;
   skyboxRenderOptions?: SkyboxRenderOptions;
   tieRenderOptions?: TieRenderOptions;
   shrubRenderOptions?: ShrubRenderOptions;
@@ -131,53 +125,29 @@ interface TfragGltfSource {
 const canvasClearColor = 0x070a0d;
 const canvasClearAlpha = 1;
 const statsUpdateIntervalMs = 500;
-const defaultWorldDisplayLift = 2.4;
 const dlWorldPositionScale = 1 / 1024;
 const dlFogDistanceScale = dlWorldPositionScale;
-const subtleSceneFogStrength = 0.3;
 export const defaultGlowBloomFalloffDistance = 100;
 const glowBloomFullStrengthRatio = 0.25;
 const mobySimulationStepSeconds = 1 / 60;
 const mobySimulationMaxStepsPerFrame = 5;
 
 export interface MapSceneDebugTuning extends ModelFogDebugOptions, WaterPlaneDebugOptions {
-  directionalFrontScale: number;
-  directionalBackScale: number;
-  directionalColorStrength: number;
-  sceneExposure: number;
-  tfragExposure: number;
-  tieExposure: number;
-  tieAmbientScale: number;
   shrubExposure: number;
-  worldDisplayLift: number;
-  tfragUplift: number;
-  tieUplift: number;
   shrubUplift: number;
   tfragFogEnabled: boolean;
   tieFogEnabled: boolean;
   shrubFogEnabled: boolean;
-  sceneHazeStrength: number;
 }
 
 export const defaultMapSceneDebugTuning: MapSceneDebugTuning = {
   ...defaultModelFogDebugOptions,
   ...defaultWaterPlaneDebugOptions,
-  directionalFrontScale: 1,
-  directionalBackScale: 0,
-  directionalColorStrength: 1,
-  sceneExposure: 0.8,
-  tfragExposure: 0.9,
-  tieExposure: 2,
-  tieAmbientScale: 0.55,
   shrubExposure: 1,
-  worldDisplayLift: defaultWorldDisplayLift,
-  tfragUplift: 4,
-  tieUplift: 1,
   shrubUplift: 1,
   tfragFogEnabled: true,
   tieFogEnabled: true,
-  shrubFogEnabled: true,
-  sceneHazeStrength: subtleSceneFogStrength
+  shrubFogEnabled: true
 };
 
 interface MapSceneEnvironment {
@@ -211,8 +181,6 @@ interface RendererRenderInfo {
   drawCalls?: number;
   triangles?: number;
 }
-
-type PassTextureNode = ReturnType<PassNode['getTextureNode']>;
 
 type MapRenderPipeline = {
   renderPipeline: THREE.RenderPipeline;
@@ -253,7 +221,6 @@ export class MapSceneRenderer {
   private readonly shrubController = new ShrubInstanceController();
   private readonly mobyController = new MobyInstanceController();
   private readonly mobySimulationController = new MobySimulationController();
-  private readonly materialOptions: TfragMaterialOptions;
   private skyboxRenderOptions: SkyboxRenderOptions;
   private tieRenderOptions: TieRenderOptions;
   private shrubRenderOptions: ShrubRenderOptions;
@@ -271,8 +238,6 @@ export class MapSceneRenderer {
   private currentRoot: THREE.Object3D | null = null;
   private terrainRoot: THREE.Object3D | null = null;
   private currentPackage: LoadedMapPackage | null = null;
-  private readonly worldDisplayLift = uniform(defaultWorldDisplayLift);
-  private readonly sceneHazeStrength = uniform(subtleSceneFogStrength);
   private frameRateLimit: number;
   private minRenderIntervalMs: number;
   private glowBloomEnabled: boolean;
@@ -307,7 +272,6 @@ export class MapSceneRenderer {
     this.onMobyStats = options.onMobyStats;
     this.onFrameStats = options.onFrameStats;
     this.onRuntimeError = options.onRuntimeError;
-    this.materialOptions = options.materialOptions ?? defaultTfragMaterialOptions;
     this.skyboxRenderOptions = options.skyboxRenderOptions ?? defaultSkyboxRenderOptions;
     this.tieRenderOptions = options.tieRenderOptions ?? defaultTieRenderOptions;
     this.shrubRenderOptions = options.shrubRenderOptions ?? defaultShrubRenderOptions;
@@ -495,7 +459,6 @@ export class MapSceneRenderer {
     const tfragStats = this.tfragController.prepare(
       tfragRoot,
       mapPackage.directionalLights,
-      this.resolveTfragMaterialOptions(),
       modelDisplayOptions
     );
     this.onTfragStats(tfragStats);
@@ -540,7 +503,7 @@ export class MapSceneRenderer {
       root,
       mapPackage,
       this.loader,
-      this.resolveTieRenderOptions(),
+      this.tieRenderOptions,
       this.skyboxController.getReflectionTexture(),
       modelDisplayOptions,
       (loaded, total) => {
@@ -944,16 +907,8 @@ export class MapSceneRenderer {
       return;
     }
 
-    const previousTfragOptions = this.resolveTfragMaterialOptions();
     this.debugTuning = resolveMapSceneDebugTuning(tuning);
     this.applyDebugTuning();
-
-    const nextTfragOptions = this.resolveTfragMaterialOptions();
-    if (this.currentPackage && this.terrainRoot && !sameTfragBakeOptions(previousTfragOptions, nextTfragOptions)) {
-      this.onTfragStats(this.tfragController.update(this.currentPackage.directionalLights, nextTfragOptions));
-    }
-
-    this.tieController.updateLightingOptions(this.resolveTieRenderOptions());
     this.shrubController.updateLightingOptions(this.resolveShrubRenderOptions());
     this.mobyController.updateLightingOptions(this.resolveShrubRenderOptions());
 
@@ -962,7 +917,7 @@ export class MapSceneRenderer {
 
   setTieRenderOptions(options: TieRenderOptions): TieStats | null {
     this.tieRenderOptions = options;
-    const stats = this.tieController.setOptions(this.resolveTieRenderOptions());
+    const stats = this.tieController.setOptions(options);
     if (stats) {
       this.onTieStats(stats);
     }
@@ -985,8 +940,6 @@ export class MapSceneRenderer {
     setModelFogDebugOptions(this.debugTuning);
     setModelFamilyDisplayOptions(this.debugTuning);
     setWaterPlaneDebugOptions(this.debugTuning);
-    this.worldDisplayLift.value = finiteNonNegative(this.debugTuning.worldDisplayLift, defaultWorldDisplayLift);
-    this.sceneHazeStrength.value = finiteNonNegative(this.debugTuning.sceneHazeStrength, subtleSceneFogStrength);
   }
 
   private createModelDisplayNodeOptions(): ModelDisplayNodeOptions {
@@ -998,36 +951,10 @@ export class MapSceneRenderer {
     );
   }
 
-  private resolveTfragMaterialOptions(): TfragMaterialOptions {
-    const exposure = finiteNonNegative(this.debugTuning.sceneExposure, 1) * finiteNonNegative(this.debugTuning.tfragExposure, 1);
-    return {
-      ...this.materialOptions,
-      exposure: this.materialOptions.exposure * exposure,
-      directionalFrontIntensity: finiteNonNegative(this.debugTuning.directionalFrontScale, defaultMapSceneDebugTuning.directionalFrontScale),
-      directionalBackIntensity: finiteNonNegative(this.debugTuning.directionalBackScale, defaultMapSceneDebugTuning.directionalBackScale)
-    };
-  }
-
-  private resolveTieRenderOptions(): TieRenderOptions {
-    const exposure = finiteNonNegative(this.debugTuning.sceneExposure, 1) * finiteNonNegative(this.debugTuning.tieExposure, 1);
-    return {
-      ...this.tieRenderOptions,
-      ambientIntensity: this.tieRenderOptions.ambientIntensity * finiteNonNegative(this.debugTuning.tieAmbientScale, 1),
-      directionalColorStrength: finiteNonNegative(this.debugTuning.directionalColorStrength, defaultMapSceneDebugTuning.directionalColorStrength),
-      exposure: this.tieRenderOptions.exposure * exposure,
-      directionalFrontIntensity: finiteNonNegative(this.debugTuning.directionalFrontScale, defaultMapSceneDebugTuning.directionalFrontScale),
-      directionalBackIntensity: finiteNonNegative(this.debugTuning.directionalBackScale, defaultMapSceneDebugTuning.directionalBackScale)
-    };
-  }
-
   private resolveShrubRenderOptions(): ShrubRenderOptions {
-    const exposure = finiteNonNegative(this.debugTuning.sceneExposure, 1) * finiteNonNegative(this.debugTuning.shrubExposure, 1);
     return {
       ...this.shrubRenderOptions,
-      directionalColorStrength: finiteNonNegative(this.debugTuning.directionalColorStrength, defaultMapSceneDebugTuning.directionalColorStrength),
-      exposure: this.shrubRenderOptions.exposure * exposure,
-      directionalFrontIntensity: finiteNonNegative(this.debugTuning.directionalFrontScale, defaultMapSceneDebugTuning.directionalFrontScale),
-      directionalBackIntensity: finiteNonNegative(this.debugTuning.directionalBackScale, defaultMapSceneDebugTuning.directionalBackScale)
+      exposure: this.shrubRenderOptions.exposure * finiteNonNegative(this.debugTuning.shrubExposure, 1)
     };
   }
 
@@ -1231,9 +1158,7 @@ export class MapSceneRenderer {
     // Sky shells were composited in the PS2's nonlinear framebuffer space.
     const linearSkyRgb = sRGBTransferEOTF(skyColor.rgb) as Node<'vec3'>;
     const linearSkyColor = vec4(linearSkyRgb, skyColor.a);
-    const sceneWithLift = createWorldLiftNode(sceneColor, this.worldDisplayLift);
-    const sceneWithAtmosphere = createSubtleFoggedSceneNode(sceneWithLift, scenePass, this.sceneEnvironment.fog, this.sceneHazeStrength);
-    const sceneOverSky = mix(linearSkyColor, sceneWithAtmosphere, sceneColor.a);
+    const sceneOverSky = mix(linearSkyColor, sceneColor, sceneColor.a);
     const encodedSceneRgb = sRGBTransferOETF(sceneOverSky.rgb) as Node<'vec3'>;
     let skyBloomPass: BloomNode | null = null;
     if (hasSkyboxBloom) {
@@ -1490,33 +1415,13 @@ function resolveMapSceneDebugTuning(tuning: Partial<MapSceneDebugTuning> | undef
     ...defaultMapSceneDebugTuning,
     ...current
   };
-  const legacy = current as Partial<Record<
-    | 'frontLightIntensity'
-    | 'backLightIntensity'
-    | 'meshBrightness'
-    | 'tfragBrightness'
-    | 'tieBrightness'
-    | 'tieAmbientIntensity'
-    | 'shrubBrightness',
-    number
-  >>;
+  const legacy = current as Partial<Record<'shrubBrightness', number>>;
   return {
-    directionalFrontScale: finiteNonNegative(current.directionalFrontScale ?? legacy.frontLightIntensity, defaultMapSceneDebugTuning.directionalFrontScale),
-    directionalBackScale: finiteNonNegative(current.directionalBackScale ?? legacy.backLightIntensity, defaultMapSceneDebugTuning.directionalBackScale),
-    directionalColorStrength: finiteNonNegative(merged.directionalColorStrength, defaultMapSceneDebugTuning.directionalColorStrength),
-    sceneExposure: finiteNonNegative(current.sceneExposure ?? legacy.meshBrightness, defaultMapSceneDebugTuning.sceneExposure),
-    tfragExposure: finiteNonNegative(current.tfragExposure ?? legacy.tfragBrightness, defaultMapSceneDebugTuning.tfragExposure),
-    tieExposure: finiteNonNegative(current.tieExposure ?? legacy.tieBrightness, defaultMapSceneDebugTuning.tieExposure),
-    tieAmbientScale: finiteNonNegative(current.tieAmbientScale ?? legacy.tieAmbientIntensity, defaultMapSceneDebugTuning.tieAmbientScale),
     shrubExposure: finiteNonNegative(current.shrubExposure ?? legacy.shrubBrightness, defaultMapSceneDebugTuning.shrubExposure),
-    worldDisplayLift: finiteNonNegative(merged.worldDisplayLift, defaultMapSceneDebugTuning.worldDisplayLift),
-    tfragUplift: finiteNonNegative(merged.tfragUplift, defaultMapSceneDebugTuning.tfragUplift),
-    tieUplift: finiteNonNegative(merged.tieUplift, defaultMapSceneDebugTuning.tieUplift),
     shrubUplift: finiteNonNegative(merged.shrubUplift, defaultMapSceneDebugTuning.shrubUplift),
     tfragFogEnabled: merged.tfragFogEnabled !== false,
     tieFogEnabled: merged.tieFogEnabled !== false,
     shrubFogEnabled: merged.shrubFogEnabled !== false,
-    sceneHazeStrength: finiteNonNegative(merged.sceneHazeStrength, defaultMapSceneDebugTuning.sceneHazeStrength),
     fogNearDistanceScale: finiteNonNegative(merged.fogNearDistanceScale, defaultMapSceneDebugTuning.fogNearDistanceScale),
     fogFarDistanceScale: finiteNonNegative(merged.fogFarDistanceScale, defaultMapSceneDebugTuning.fogFarDistanceScale),
     fogNearIntensityScale: finiteNonNegative(merged.fogNearIntensityScale, defaultMapSceneDebugTuning.fogNearIntensityScale),
@@ -1529,16 +1434,6 @@ function resolveMapSceneDebugTuning(tuning: Partial<MapSceneDebugTuning> | undef
       : defaultMapSceneDebugTuning.waterWaveDirectionOffsetDegrees,
     waterFogStrength: finiteNonNegative(merged.waterFogStrength, defaultMapSceneDebugTuning.waterFogStrength)
   };
-}
-
-function sameTfragBakeOptions(a: TfragMaterialOptions, b: TfragMaterialOptions): boolean {
-  return a.diagnosticMode === b.diagnosticMode
-    && a.lightIntensity === b.lightIntensity
-    && a.directionalFrontIntensity === b.directionalFrontIntensity
-    && a.directionalBackIntensity === b.directionalBackIntensity
-    && a.exposure === b.exposure
-    && a.cacheMix === b.cacheMix
-    && a.postScaleEnabled === b.postScaleEnabled;
 }
 
 function getTfragGltfSources(mapPackage: LoadedMapPackage): TfragGltfSource[] {
@@ -1615,35 +1510,6 @@ function frameIntervalForLimit(limit: number): number {
 
 function formatElapsedMs(startMs: number): string {
   return `${Math.round(performance.now() - startMs).toLocaleString()} ms`;
-}
-
-function createWorldLiftNode(sceneColor: PassTextureNode, lift: UniformNode<'float', number>) {
-  const colorNode = sceneColor.rgb;
-  const lumaNode = dot(colorNode, vec3(0.2126, 0.7152, 0.0722));
-  const liftedLumaNode = lumaNode.mul(lift).clamp(0, 1);
-  const ratioNode = liftedLumaNode.div(max(lumaNode, float(0.001)));
-  return vec4(colorNode.mul(ratioNode).clamp(0, 1), sceneColor.a);
-}
-
-function createSubtleFoggedSceneNode(
-  sceneColor: ReturnType<typeof createWorldLiftNode>,
-  scenePass: PassNode,
-  fog: MapSceneFog | null,
-  hazeStrength: UniformNode<'float', number>
-) {
-  if (!fog) {
-    return sceneColor;
-  }
-
-  const distanceMix = scenePass.getViewZNode().negate()
-    .sub(float(fog.nearDistance))
-    .div(float(fog.farDistance - fog.nearDistance))
-    .clamp(0, 1);
-  const fogAmount = mix(float(fog.nearIntensity), float(fog.farIntensity), distanceMix)
-    .mul(hazeStrength)
-    .clamp(0, 1);
-  const fogColor = vec3(fog.color.r, fog.color.g, fog.color.b);
-  return vec4(mix(sceneColor.rgb, fogColor, fogAmount), sceneColor.a);
 }
 
 function resolveMapSceneEnvironment(levelSettings: DlLevelSettings | null): MapSceneEnvironment {

@@ -73,6 +73,9 @@ export const gltfToPs2BasisMatrix = ps2ToGltfBasisMatrix.clone().invert();
 
 export const shrubAmbientAttributeName = 'shrubAmbientColor';
 export const lightSelectorAttributeName = 'modelLightSelector';
+export const shrubLightBasisXAttributeName = 'shrubLightBasisX';
+export const shrubLightBasisYAttributeName = 'shrubLightBasisY';
+export const shrubLightBasisZAttributeName = 'shrubLightBasisZ';
 export const shrubDirectionalLightSlotCount = 16;
 export const shrubAmbientTintScale = 255 / 128;
 export const shrubClassLoadConcurrency = 2;

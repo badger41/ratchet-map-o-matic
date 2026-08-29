@@ -162,7 +162,7 @@ export function tieAmbientPackedColor(
   }
 
   const packed = words[wordIndex];
-  if (!Number.isFinite(packed) || packed === 0xffff) {
+  if (!Number.isFinite(packed)) {
     return tieAmbientNeutralPackedColor(false);
   }
 
@@ -171,13 +171,17 @@ export function tieAmbientPackedColor(
   const baseR = header0 & 0xff;
   const baseG = (header0 >> 8) & 0xff;
   const baseB = header1 & 0xff;
-  const shift = (header1 >> 8) & 0xff;
+  const shift = ((header1 >> 8) & 0xff) & 0x3f;
   return {
-    r: clampByte(baseR + (((packed & 0x1f) << 3) >> shift)),
-    g: clampByte(baseG + ((((packed >> 5) & 0x1f) << 3) >> shift)),
-    b: clampByte(baseB + ((((packed >> 10) & 0x1f) << 3) >> shift)),
+    r: clampByte(baseR + decodeTieAmbientChannel(packed & 0x1f, shift)),
+    g: clampByte(baseG + decodeTieAmbientChannel((packed >> 5) & 0x1f, shift)),
+    b: clampByte(baseB + decodeTieAmbientChannel((packed >> 10) & 0x1f, shift)),
     valid: true
   };
+}
+
+function decodeTieAmbientChannel(value: number, shift: number): number {
+  return shift >= 8 ? 0 : (value << 3) >> shift;
 }
 
 function readTieInstanceRecord(view: DataView, index: number, offset: number): TieInstanceRecord {

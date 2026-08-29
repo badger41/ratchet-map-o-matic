@@ -46,22 +46,8 @@ export function LightingDebugPanel({
             Reset
           </Button>
         </Group>
-        <Text size="xs" c="dimmed" fw={700}>Scene</Text>
-        <Group gap="xs" align="end">
-          <DebugSlider label="Front light" value={debugTuning.directionalFrontScale} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('directionalFrontScale', value)} />
-          <DebugSlider label="Back light" value={debugTuning.directionalBackScale} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('directionalBackScale', value)} />
-          <DebugSlider label="Light color" value={debugTuning.directionalColorStrength} min={0} max={3} step={debugSliderStep} onChange={(value) => onChange('directionalColorStrength', value)} />
-          <DebugSlider label="All exposure" value={debugTuning.sceneExposure} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('sceneExposure', value)} />
-          <DebugSlider label="World lift" value={debugTuning.worldDisplayLift} min={0} max={4} step={debugSliderStep} onChange={(value) => onChange('worldDisplayLift', value)} />
-          <DebugSlider label="Scene haze" value={debugTuning.sceneHazeStrength} min={0} max={0.5} step={debugSliderStep} onChange={(value) => onChange('sceneHazeStrength', value)} />
-        </Group>
         <Text size="xs" c="dimmed" fw={700}>Meshes</Text>
         <Group gap="xs" align="end">
-          <DebugSlider label="Tfrag exposure" value={debugTuning.tfragExposure} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('tfragExposure', value)} />
-          <DebugSlider label="Tfrag lift" value={debugTuning.tfragUplift} min={0} max={4} step={debugSliderStep} onChange={(value) => onChange('tfragUplift', value)} />
-          <DebugSlider label="Tie exposure" value={debugTuning.tieExposure} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('tieExposure', value)} />
-          <DebugSlider label="Tie ambient" value={debugTuning.tieAmbientScale} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('tieAmbientScale', value)} />
-          <DebugSlider label="Tie lift" value={debugTuning.tieUplift} min={0} max={4} step={debugSliderStep} onChange={(value) => onChange('tieUplift', value)} />
           <DebugSlider label="Shrub exposure" value={debugTuning.shrubExposure} min={0} max={2} step={debugSliderStep} onChange={(value) => onChange('shrubExposure', value)} />
           <DebugSlider label="Shrub lift" value={debugTuning.shrubUplift} min={0} max={4} step={debugSliderStep} onChange={(value) => onChange('shrubUplift', value)} />
         </Group>

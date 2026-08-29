@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import type UniformNode from 'three/src/nodes/core/UniformNode.js';
 import type {
   TieColorEntry,
   TieInstanceRecord,
@@ -41,29 +40,6 @@ export interface TieInstancedMeshBinding {
   coloredMaterial: THREE.Material | THREE.Material[] | null;
   textureMaterial: THREE.Material | THREE.Material[] | null;
   ambientBinding: TieAmbientTextureBinding | null;
-}
-
-export interface TieLightingUniforms {
-  ambientScale: UniformNode<'float', number>;
-  directionalScale: UniformNode<'float', number>;
-  exposureScale: UniformNode<'float', number>;
-  rawColorScale: UniformNode<'float', number>;
-  rawByteScale: UniformNode<'float', number>;
-  rawDirectionalScale: UniformNode<'float', number>;
-  rawDirectionalColorScale: UniformNode<'float', number>;
-  directionalColorStrength: UniformNode<'float', number>;
-  directionalFrontScale: UniformNode<'float', number>;
-  directionalBackScale: UniformNode<'float', number>;
-  colorStrength: UniformNode<'float', number>;
-  blendAdditiveScale: UniformNode<'float', number>;
-  blendTintedWorldScale: UniformNode<'float', number>;
-  blendModulateScale: UniformNode<'float', number>;
-  blendMaxLightScale: UniformNode<'float', number>;
-  shineScale: UniformNode<'float', number>;
-  reflectionScale: UniformNode<'float', number>;
-  materialDebugMode: UniformNode<'float', number>;
-  directionalOverrideEnabled: UniformNode<'float', number>;
-  directionalOverrideSlot: UniformNode<'float', number>;
 }
 
 export interface TieAmbientColorRecipe {

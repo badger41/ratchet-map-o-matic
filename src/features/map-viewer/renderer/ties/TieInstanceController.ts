@@ -46,8 +46,7 @@ import {
   cloneTieMaterial,
   cloneTieTextureMaterial,
   tieMaterialUsesGlowEmission,
-  tieMaterialUsesReflection,
-  updateTieRenderOptionUniforms
+  tieMaterialUsesReflection
 } from './TieMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
 import type { SceneCameraStart } from '../camera/SceneCameraFraming';
@@ -348,17 +347,6 @@ export class TieInstanceController {
     this.markBundleNeedsUpdate();
 
     return this.getStats();
-  }
-
-  updateLightingOptions(options: TieRenderOptions): void {
-    this.options = { ...defaultTieRenderOptions, ...options };
-    if (!this.group) {
-      return;
-    }
-
-    for (const binding of this.meshBindings) {
-      updateTieRenderOptionUniforms(binding, this.options);
-    }
   }
 
   setVisible(visible: boolean): void {
@@ -788,7 +776,6 @@ export class TieInstanceController {
         binding.flatMaterial ??= this.cloneBindingDisplayMaterial(binding, null);
         material = binding.flatMaterial;
       }
-      updateTieRenderOptionUniforms(binding, this.options);
     }
 
     this.applyBindingWaterPasses(binding, material);
@@ -841,7 +828,6 @@ export class TieInstanceController {
       binding.glowColorBinding,
       this.directionalLightBinding,
       this.skyboxReflectionTexture,
-      this.options,
       displayOptions);
   }
 
@@ -932,7 +918,6 @@ export class TieInstanceController {
           glowColorBinding,
           this.directionalLightBinding,
           this.skyboxReflectionTexture,
-          this.options,
           displayOptions)
       : null;
     return {
@@ -945,7 +930,6 @@ export class TieInstanceController {
           glowColorBinding,
           this.directionalLightBinding,
           this.skyboxReflectionTexture,
-          this.options,
           displayOptions),
       coloredMaterial,
       textureMaterial: null,

@@ -32,6 +32,7 @@ import {
   disposeShrubDirectionalLightBinding,
   updateShrubMaterialLightingUniforms
 } from './ShrubLighting';
+import { createShrubLightBasisInstanceAttributes } from './ShrubLightBasis';
 import { cloneShrubMaterial } from './ShrubMaterials';
 import type { ModelDisplayNodeOptions } from '../ModelFog';
 import {
@@ -44,6 +45,9 @@ import {
   instanceMirrorMatrix,
   shrubAmbientAttributeName,
   shrubClassLoadConcurrency,
+  shrubLightBasisXAttributeName,
+  shrubLightBasisYAttributeName,
+  shrubLightBasisZAttributeName,
   shrubLoadFrameBudgetMs,
   type PreparedShrubRecord,
   type ShrubDirectionalLightBinding,
@@ -353,6 +357,10 @@ export class ShrubInstanceController {
       shrubAmbientAttributeName,
       this.getChunkAttribute(this.ambientColorsByChunk, records, () => createShrubAmbientColorInstanceAttribute(records))
     );
+    const lightBasis = createShrubLightBasisInstanceAttributes(records, primitive.matrixWorld);
+    geometry.setAttribute(shrubLightBasisXAttributeName, lightBasis.x);
+    geometry.setAttribute(shrubLightBasisYAttributeName, lightBasis.y);
+    geometry.setAttribute(shrubLightBasisZAttributeName, lightBasis.z);
     const mesh = new THREE.InstancedMesh(geometry, materialPasses?.above ?? material, records.length);
     mesh.name = `shrub_${String(classId).padStart(5, '0')}_${mirroredKey}_c${chunkIndex}_${primitive.name}`;
     mesh.renderOrder = primitive.renderOrder;

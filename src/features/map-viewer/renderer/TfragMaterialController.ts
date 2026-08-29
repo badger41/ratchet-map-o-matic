@@ -1,10 +1,11 @@
 import * as THREE from 'three/webgpu';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
-import { float, texture, uv, vertexColor } from 'three/tsl';
-import type { DirectionalLightRecord, TfragMaterialOptions, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
+import { float, texture, uv, vec3, vertexColor } from 'three/tsl';
+import type { DirectionalLightRecord, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
 import {
+  applyModelDisplayTextureModulateNode,
   applyTfragFogNode,
-  applyTfragDisplayLiftNode,
+  configureModelDisplayTexture,
   type ModelDisplayNodeOptions
 } from './ModelFog';
 import type { SceneCameraStart } from './camera/SceneCameraFraming';
@@ -15,7 +16,7 @@ import {
   type TfragAtlas,
   type TfragAtlasRegion
 } from './TfragAtlas';
-import { resolveTfragAlphaState } from './TfragMaterialState';
+import { decodeTfragRgb5Color, resolveTfragAlphaState, scaleTfragVertexColor } from './TfragMaterialState';
 import {
   aboveWaterRenderOrder,
   belowWaterRenderOrder,
@@ -56,7 +57,6 @@ interface TfragGeometryBatch {
 
 interface BakeContext {
   directionalLights: PreparedDirectionalLightRecord[];
-  options: PreparedTfragBakeOptions;
 }
 
 interface PreparedDirectionalLightRecord {
@@ -64,16 +64,6 @@ interface PreparedDirectionalLightRecord {
   topDirection: [number, number, number];
   inverseColor: Vec4;
   inverseDirection: [number, number, number];
-}
-
-interface PreparedTfragBakeOptions {
-  diagnosticMode: TfragMaterialOptions['diagnosticMode'];
-  lightIntensity: number;
-  directionalFrontIntensity: number;
-  directionalBackIntensity: number;
-  exposure: number;
-  cacheMix: number;
-  postScaleEnabled: boolean;
 }
 
 const selectorAttributeNames = [
@@ -114,6 +104,7 @@ const postScaleAttributeNames = [
 
 const sourceCacheColorUserDataKey = 'mapOMaticSourceTfragCacheColor';
 const tfragTextureSourceKeyUserDataKey = 'mapOMaticTfragTextureSourceKey';
+const ps2VertexColorMax = 255 / 128;
 
 interface GltfTextureJson {
   source?: unknown;
@@ -168,7 +159,6 @@ export class TfragMaterialController {
   prepare(
     root: THREE.Object3D,
     directionalLights: DirectionalLightRecord[],
-    options: TfragMaterialOptions,
     displayOptions: ModelDisplayNodeOptions
   ): TfragStats {
     pruneToLod0(root);
@@ -178,7 +168,7 @@ export class TfragMaterialController {
     root.updateWorldMatrix(true, true);
     const atlas = createTfragAtlas(root);
     this.atlasTexture = atlas?.texture ?? null;
-    const bakeContext = createTfragBakeContext(directionalLights, options);
+    const bakeContext = createTfragBakeContext(directionalLights);
     const batches = new Map<string, TfragGeometryBatch>();
     const materialCache = new Map<string, THREE.Material>();
     const sourceMeshes: THREE.Mesh[] = [];
@@ -281,16 +271,6 @@ export class TfragMaterialController {
         sourcePrimitives: batch.sourcePrimitives
       });
       mergedIndex += 1;
-    }
-
-    this.materialRebakes += this.prepared.length > 0 ? 1 : 0;
-    return this.getStats(directionalLights.length);
-  }
-
-  update(directionalLights: DirectionalLightRecord[], options: TfragMaterialOptions): TfragStats {
-    const bakeContext = createTfragBakeContext(directionalLights, options);
-    for (const prepared of this.prepared) {
-      bakeTfragGeometryColors(prepared.geometry, bakeContext);
     }
 
     this.materialRebakes += this.prepared.length > 0 ? 1 : 0;
@@ -438,7 +418,7 @@ function bakeTfragGeometryColors(geometry: THREE.BufferGeometry, context: BakeCo
     const normal = normalizeVec3(readVec3(lightNormal, index, [0, 1, 0]));
     const selectorValue = Math.floor(Math.max(readScalar(selector, index, 15), 0) + 0.5);
     const postScaleValue = readScalar(postScale, index, 1);
-    const color = computeDiagnosticColor({
+    const color = computeTfragColor({
       base,
       fallbackColor,
       normal,
@@ -474,7 +454,7 @@ function getSourceTfragCacheColor(geometry: THREE.BufferGeometry): THREE.BufferA
   return sourceColor;
 }
 
-function computeDiagnosticColor(input: {
+function computeTfragColor(input: {
   base: [number, number, number];
   fallbackColor: [number, number, number];
   normal: [number, number, number];
@@ -483,42 +463,25 @@ function computeDiagnosticColor(input: {
   context: BakeContext;
 }): [number, number, number] {
   const { base, fallbackColor, normal, selectorValue, postScaleValue, context } = input;
-  const { diagnosticMode, lightIntensity, exposure, cacheMix, postScaleEnabled } = context.options;
 
-  if (diagnosticMode === 'base') {
-    return applyOutputScale(base, exposure, postScaleEnabled ? postScaleValue : 1);
-  }
-
-  if (diagnosticMode === 'cache') {
-    return applyOutputScale(fallbackColor, exposure, postScaleEnabled ? postScaleValue : 1);
-  }
-
-  if (diagnosticMode === 'selector') {
-    return selectorDebugColor(selectorValue);
-  }
-
-  const lightContribution = evaluateSelectedLights(selectorValue, normal, context.directionalLights, context.options);
+  const lightContribution = evaluateSelectedLights(selectorValue, normal, context.directionalLights);
   if (!lightContribution.valid) {
-    return applyOutputScale(fallbackColor, exposure, postScaleEnabled ? postScaleValue : 1);
+    return applyOutputScale(fallbackColor, postScaleValue);
   }
 
-  const directionalScale = lightIntensity / 2;
+  const decodedBase = decodeTfragRgb5Color(base);
   const lit: [number, number, number] = [
-    clamp01(base[0] + lightContribution.color[0] * directionalScale),
-    clamp01(base[1] + lightContribution.color[1] * directionalScale),
-    clamp01(base[2] + lightContribution.color[2] * directionalScale)
+    clampPs2VertexColor(decodedBase[0] + lightContribution.color[0]),
+    clampPs2VertexColor(decodedBase[1] + lightContribution.color[1]),
+    clampPs2VertexColor(decodedBase[2] + lightContribution.color[2])
   ];
-  const cacheAmount = clamp01(Number.isFinite(cacheMix) ? cacheMix : 0);
-  const output = cacheAmount > 0 ? mixVec3(lit, fallbackColor, cacheAmount) : lit;
-
-  return applyOutputScale(output, exposure, postScaleEnabled ? postScaleValue : 1);
+  return applyOutputScale(lit, postScaleValue);
 }
 
 function evaluateSelectedLights(
   selectorValue: number,
   normal: [number, number, number],
-  directionalLights: PreparedDirectionalLightRecord[],
-  options: PreparedTfragBakeOptions
+  directionalLights: PreparedDirectionalLightRecord[]
 ): { valid: false; color: [number, number, number] } | { valid: true; color: [number, number, number] } {
   const primarySlot = selectorValue & 0x0f;
   const primary = directionalLights[primarySlot];
@@ -529,37 +492,36 @@ function evaluateSelectedLights(
 
   const blendByte = (selectorValue >> 8) & 0xff;
   if (blendByte <= 0) {
-    return { valid: true, color: evaluateLightRecord(primary, normal, options) };
+    return { valid: true, color: evaluateLightRecord(primary, normal) };
   }
 
   const blendSlot = (selectorValue >> 4) & 0x0f;
   const blend = directionalLights[blendSlot];
   if (!blend) {
-    return { valid: true, color: evaluateLightRecord(primary, normal, options) };
+    return { valid: true, color: evaluateLightRecord(primary, normal) };
   }
 
   const t = blendByte / 256;
-  return { valid: true, color: evaluateBlendedLightRecord(primary, blend, t, normal, options) };
+  return { valid: true, color: evaluateBlendedLightRecord(primary, blend, t, normal) };
 }
 
-function evaluateLightRecord(record: PreparedDirectionalLightRecord, normal: [number, number, number], options: PreparedTfragBakeOptions): [number, number, number] {
-  return evaluatePreparedLightRecord(record.topColor, record.topDirection, record.inverseColor, record.inverseDirection, normal, options);
+function evaluateLightRecord(record: PreparedDirectionalLightRecord, normal: [number, number, number]): [number, number, number] {
+  return evaluatePreparedLightRecord(record.topColor, record.topDirection, record.inverseColor, record.inverseDirection, normal);
 }
 
 function evaluateBlendedLightRecord(
   primary: PreparedDirectionalLightRecord,
   secondary: PreparedDirectionalLightRecord,
   amount: number,
-  normal: [number, number, number],
-  options: PreparedTfragBakeOptions
+  normal: [number, number, number]
 ): [number, number, number] {
   const t = clamp01(amount);
   const topColor = mixVec4(primary.topColor, secondary.topColor, t);
   const inverseColor = mixVec4(primary.inverseColor, secondary.inverseColor, t);
-  const topDirection = normalizeVec3(mixVec3(primary.topDirection, secondary.topDirection, t));
-  const inverseDirection = normalizeVec3(mixVec3(primary.inverseDirection, secondary.inverseDirection, t));
+  const topDirection = mixVec3(primary.topDirection, secondary.topDirection, t);
+  const inverseDirection = mixVec3(primary.inverseDirection, secondary.inverseDirection, t);
 
-  return evaluatePreparedLightRecord(topColor, topDirection, inverseColor, inverseDirection, normal, options);
+  return evaluatePreparedLightRecord(topColor, topDirection, inverseColor, inverseDirection, normal);
 }
 
 function evaluatePreparedLightRecord(
@@ -567,18 +529,17 @@ function evaluatePreparedLightRecord(
   topDirection: [number, number, number],
   inverseColor: Vec4,
   inverseDirection: [number, number, number],
-  normal: [number, number, number],
-  options: PreparedTfragBakeOptions
+  normal: [number, number, number]
 ): [number, number, number] {
-  const topDotRaw = dotVec3(normal, topDirection);
-  const inverseDotRaw = dotVec3(normal, inverseDirection);
+  const topDotRaw = dotVec3(normal, normalizeVec3(topDirection));
+  const inverseDotRaw = dotVec3(normal, normalizeVec3(inverseDirection));
   const topDot = Math.max(topDotRaw, topDotRaw * topColor[3]);
   const inverseDot = Math.max(inverseDotRaw, inverseDotRaw * inverseColor[3]);
 
   return [
-    Math.max(0, topColor[0] * topDot * options.directionalFrontIntensity + inverseColor[0] * inverseDot * options.directionalBackIntensity),
-    Math.max(0, topColor[1] * topDot * options.directionalFrontIntensity + inverseColor[1] * inverseDot * options.directionalBackIntensity),
-    Math.max(0, topColor[2] * topDot * options.directionalFrontIntensity + inverseColor[2] * inverseDot * options.directionalBackIntensity)
+    Math.max(0, topColor[0] * topDot + inverseColor[0] * inverseDot),
+    Math.max(0, topColor[1] * topDot + inverseColor[1] * inverseDot),
+    Math.max(0, topColor[2] * topDot + inverseColor[2] * inverseDot)
   ];
 }
 
@@ -592,7 +553,6 @@ function createTfragDisplayMaterial(
   const material = new THREE.MeshBasicNodeMaterial({
     name: `${firstMaterial?.name ?? 'tfrag'}_vertex_lit`,
     map: atlasTexture ?? source?.map ?? null,
-    vertexColors: true,
     transparent: firstMaterial?.transparent ?? false,
     opacity: firstMaterial?.opacity ?? 1,
     alphaTest: firstMaterial?.alphaTest ?? 0,
@@ -605,10 +565,10 @@ function createTfragDisplayMaterial(
 
   const map = material.map;
   if (map) {
+    configureModelDisplayTexture(map);
     const mapSample = texture(map, uv());
-    map.colorSpace = THREE.SRGBColorSpace;
     material.colorNode = applyTfragFogNode(
-      applyTfragDisplayLiftNode(mapSample.rgb.mul(vertexColor().rgb), displayOptions),
+      applyModelDisplayTextureModulateNode(mapSample.rgb, vertexColor().rgb),
       displayOptions
     );
 
@@ -626,7 +586,10 @@ function createTfragDisplayMaterial(
       material.alphaTest = alphaState.alphaTest;
     }
   } else {
-    material.colorNode = applyTfragFogNode(applyTfragDisplayLiftNode(vertexColor().rgb, displayOptions), displayOptions);
+    material.colorNode = applyTfragFogNode(
+      applyModelDisplayTextureModulateNode(vec3(1, 1, 1), vertexColor().rgb),
+      displayOptions
+    );
   }
 
   return material;
@@ -1027,69 +990,23 @@ function getWritableColorAttribute(geometry: THREE.BufferGeometry, vertexCount: 
   return new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
 }
 
-function createTfragBakeContext(directionalLights: DirectionalLightRecord[], options: TfragMaterialOptions): BakeContext {
+function createTfragBakeContext(directionalLights: DirectionalLightRecord[]): BakeContext {
   return {
-    directionalLights: directionalLights.map(prepareDirectionalLightRecord),
-    options: {
-      diagnosticMode: options.diagnosticMode,
-      lightIntensity: finiteNonNegative(options.lightIntensity, 1),
-      directionalFrontIntensity: resolveTfragDirectionalFrontIntensity(options),
-      directionalBackIntensity: resolveTfragDirectionalBackIntensity(options),
-      exposure: finiteNonNegative(options.exposure, 1),
-      cacheMix: clamp01(Number.isFinite(options.cacheMix) ? options.cacheMix : 0),
-      postScaleEnabled: options.postScaleEnabled
-    }
+    directionalLights: directionalLights.map(prepareDirectionalLightRecord)
   };
 }
 
 function prepareDirectionalLightRecord(record: DirectionalLightRecord): PreparedDirectionalLightRecord {
   return {
     topColor: record.topColor,
-    topDirection: normalizeVec3(gameDirectionToGltf(record.topDirection)),
+    topDirection: gameDirectionToGltf(record.topDirection),
     inverseColor: record.inverseColor,
-    inverseDirection: normalizeVec3(gameDirectionToGltf(record.inverseDirection))
+    inverseDirection: gameDirectionToGltf(record.inverseDirection)
   };
 }
 
-function resolveTfragDirectionalFrontIntensity(options: TfragMaterialOptions): number {
-  return Number.isFinite(options.directionalFrontIntensity) ? Math.max(0, options.directionalFrontIntensity) : 0.75;
-}
-
-function resolveTfragDirectionalBackIntensity(options: TfragMaterialOptions): number {
-  return Number.isFinite(options.directionalBackIntensity) ? Math.max(0, options.directionalBackIntensity) : 1;
-}
-
-function finiteNonNegative(value: number, fallback: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : fallback;
-}
-
-function applyOutputScale(color: [number, number, number], exposure: number, postScale: number): [number, number, number] {
-  const scale = Math.max(0, exposure) * Math.max(0, postScale);
-  return [clamp01(color[0] * scale), clamp01(color[1] * scale), clamp01(color[2] * scale)];
-}
-
-function selectorDebugColor(selectorValue: number): [number, number, number] {
-  const slot = selectorValue & 0x0f;
-  const palette: Array<[number, number, number]> = [
-    [0.93, 0.22, 0.18],
-    [0.22, 0.62, 0.96],
-    [0.24, 0.76, 0.38],
-    [0.95, 0.76, 0.18],
-    [0.76, 0.39, 0.95],
-    [0.95, 0.49, 0.18],
-    [0.12, 0.78, 0.78],
-    [0.9, 0.9, 0.9],
-    [0.55, 0.2, 0.2],
-    [0.2, 0.36, 0.55],
-    [0.2, 0.5, 0.27],
-    [0.56, 0.47, 0.17],
-    [0.43, 0.25, 0.55],
-    [0.52, 0.3, 0.18],
-    [0.18, 0.5, 0.5],
-    [0.08, 0.08, 0.08]
-  ];
-
-  return palette[slot] ?? palette[15];
+function applyOutputScale(color: [number, number, number], postScale: number): [number, number, number] {
+  return scaleTfragVertexColor(color, postScale);
 }
 
 function gameDirectionToGltf(direction: Vec4): [number, number, number] {
@@ -1124,6 +1041,10 @@ function normalizeVec3(value: [number, number, number]): [number, number, number
 
 function dotVec3(a: [number, number, number], b: [number, number, number]): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function clampPs2VertexColor(value: number): number {
+  return Math.min(ps2VertexColorMax, Math.max(0, value));
 }
 
 function clamp01(value: number): number {

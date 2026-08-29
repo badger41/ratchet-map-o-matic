@@ -2,7 +2,6 @@ import type { MapAssetPackage } from '../mapAssets/mapAssetPackage';
 
 export type Vec4 = [number, number, number, number];
 
-export type DiagnosticMode = 'runtime' | 'base' | 'cache' | 'selector';
 export type SkyboxBlendMode = 'metadata' | 'auto-additive-overlays' | 'additive-blend-layers';
 export type MapSceneLoadStageId = 'manifest' | 'tfrag' | 'skybox' | 'ties' | 'shrubs' | 'mobys' | 'compile';
 export type MapSceneLoadStageStatus = 'pending' | 'active' | 'done' | 'error';
@@ -237,58 +236,12 @@ export interface MobyStats {
   triangles: number;
 }
 
-export interface TfragMaterialOptions {
-  diagnosticMode: DiagnosticMode;
-  lightIntensity: number;
-  directionalFrontIntensity: number;
-  directionalBackIntensity: number;
-  exposure: number;
-  cacheMix: number;
-  ditherStrength: number;
-  postScaleEnabled: boolean;
-}
-
-export type TieLightingMode =
-  | 'combined'
-  | 'directional'
-  | 'ambient'
-  | 'color-data'
-  | 'color-raw'
-  | 'world-rays'
-  | 'world-colors';
-
-export type TieBlendMode =
-  | 'additive'
-  | 'tinted-world'
-  | 'modulate'
-  | 'max-light';
-
-export type TieMaterialDebugMode =
-  | 'normal'
-  | 'base'
-  | 'lit'
-  | 'reflection'
-  | 'mask';
-
 export type ShrubBlendMode =
   | 'additive'
   | 'modulate';
 
 export interface TieRenderOptions {
   colorsEnabled: boolean;
-  lightingMode: TieLightingMode;
-  blendMode: TieBlendMode;
-  colorStrength: number;
-  ambientIntensity: number;
-  directionalIntensity: number;
-  directionalColorStrength: number;
-  exposure: number;
-  directionalFrontIntensity: number;
-  directionalBackIntensity: number;
-  shineIntensity: number;
-  reflectionIntensity: number;
-  materialDebugMode: TieMaterialDebugMode;
-  directionalOverrideSlot: number | null;
 }
 
 export interface ShrubRenderOptions {
@@ -311,32 +264,8 @@ export interface SkyboxRenderOptions {
   alphaFalloff: number;
 }
 
-export const defaultTfragMaterialOptions: TfragMaterialOptions = {
-  diagnosticMode: 'runtime',
-  exposure: 0.9,
-  lightIntensity: 1,
-  directionalFrontIntensity: 0.8,
-  directionalBackIntensity: 1,
-  cacheMix: 0,
-  ditherStrength: 0,
-  postScaleEnabled: true
-};
-
 export const defaultTieRenderOptions: TieRenderOptions = {
-  colorsEnabled: true,
-  lightingMode: 'combined',
-  blendMode: 'modulate',
-  colorStrength: 1,
-  ambientIntensity: 1.01,
-  directionalIntensity: 1,
-  directionalColorStrength: 1,
-  exposure: 1,
-  directionalFrontIntensity: 0.8,
-  directionalBackIntensity: 1,
-  shineIntensity: 1,
-  reflectionIntensity: 1,
-  materialDebugMode: 'normal',
-  directionalOverrideSlot: null
+  colorsEnabled: true
 };
 
 export const defaultShrubRenderOptions: ShrubRenderOptions = {
@@ -347,7 +276,7 @@ export const defaultShrubRenderOptions: ShrubRenderOptions = {
   directionalIntensity: 1,
   directionalColorStrength: 1,
   exposure: 1,
-  directionalFrontIntensity: 0.8,
+  directionalFrontIntensity: 1,
   directionalBackIntensity: 1
 };
 

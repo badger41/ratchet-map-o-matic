@@ -7,8 +7,10 @@ import {
   max,
   mix,
   mod,
+  normalGeometry,
   normalWorldGeometry,
   normalize,
+  step,
   texture,
   uniform,
   vec2,
@@ -26,6 +28,9 @@ import type {
 import {
   lightSelectorAttributeName,
   shrubDirectionalLightSlotCount,
+  shrubLightBasisXAttributeName,
+  shrubLightBasisYAttributeName,
+  shrubLightBasisZAttributeName,
   shrubLightingUniformsUserDataKey,
   type PreparedShrubRecord,
   type ShrubDirectionalLightBinding,
@@ -57,8 +62,8 @@ export function createShrubDirectionalLightBinding(directionalLights: Directiona
 
     writeVec4(topColors, offset, record.topColor);
     writeVec4(inverseColors, offset, record.inverseColor);
-    writeVec3(topDirections, offset, normalizeTuple3(gameDirectionToGltf(record.topDirection)), 1);
-    writeVec3(inverseDirections, offset, normalizeTuple3(gameDirectionToGltf(record.inverseDirection)), 1);
+    writeVec3(topDirections, offset, gameDirectionToGltf(record.topDirection), 1);
+    writeVec3(inverseDirections, offset, gameDirectionToGltf(record.inverseDirection), 1);
   }
 
   return {
@@ -98,6 +103,13 @@ export function createShrubAmbientColorInstanceAttribute(records: PreparedShrubR
   }
 
   return new THREE.InstancedBufferAttribute(colors, 3);
+}
+
+export function createShrubInstanceLightingNormalNode(): Node<'vec3'> {
+  const sourceNormal = normalGeometry;
+  return attribute<'vec3'>(shrubLightBasisXAttributeName, 'vec3').mul(sourceNormal.x)
+    .add(attribute<'vec3'>(shrubLightBasisYAttributeName, 'vec3').mul(sourceNormal.y))
+    .add(attribute<'vec3'>(shrubLightBasisZAttributeName, 'vec3').mul(sourceNormal.z));
 }
 
 export function createShrubLightingUniforms(options: ShrubRenderOptions): ShrubLightingUniforms {
@@ -144,36 +156,40 @@ export function updateShrubMaterialLightingUniforms(
 export function createShrubDirectionalLightNode(
   binding: ShrubDirectionalLightBinding,
   lightingUniforms: ShrubLightingUniforms,
-  staticOptions?: Pick<ShrubRenderOptions, 'directionalFrontIntensity' | 'directionalBackIntensity'>
+  staticOptions?: Pick<ShrubRenderOptions, 'directionalFrontIntensity' | 'directionalBackIntensity'>,
+  lightingNormal: Node<'vec3'> = normalize(normalWorldGeometry)
 ): Node<'vec4'> {
   const selector = floor(max(attribute<'float'>(lightSelectorAttributeName, 'float'), float(0)).add(float(0.5)));
   const primarySlot = mod(selector, float(binding.slotCount));
   const secondarySlot = mod(floor(selector.div(float(16))), float(binding.slotCount));
   const blendAmount = max(float(0), floor(selector.div(float(256))).div(float(256))).min(float(1));
-  const normal = normalize(normalWorldGeometry);
-  const primary = createShrubDirectionalSlotLightNode(binding, primarySlot, normal, lightingUniforms, staticOptions);
-  const secondary = createShrubDirectionalSlotLightNode(binding, secondarySlot, normal, lightingUniforms, staticOptions);
-  const effectiveBlend = blendAmount.mul(secondary.a);
-  return vertexStage(vec4(mix(primary.rgb, secondary.rgb, effectiveBlend), primary.a));
-}
-
-function createShrubDirectionalSlotLightNode(
-  binding: ShrubDirectionalLightBinding,
-  slot: Node<'float'>,
-  normal: Node<'vec3'>,
-  lightingUniforms: ShrubLightingUniforms,
-  staticOptions: Pick<ShrubRenderOptions, 'directionalFrontIntensity' | 'directionalBackIntensity'> | undefined
-): Node<'vec4'> {
-  const lightUv = vec2(slot.add(float(0.5)).div(float(binding.slotCount)), float(0.5));
-  const topColor = texture(binding.topColors, lightUv);
-  const inverseColor = texture(binding.inverseColors, lightUv);
-  const topDirectionSample = texture(binding.topDirections, lightUv);
-  const inverseDirectionSample = texture(binding.inverseDirections, lightUv);
-  const topDirection = normalize(topDirectionSample.rgb);
-  const inverseDirection = normalize(inverseDirectionSample.rgb);
-  const valid = topDirectionSample.a;
-  const topDotRaw = dot(normal, topDirection.mul(float(-1)));
-  const inverseDotRaw = dot(normal, inverseDirection);
+  const primaryUv = vec2(primarySlot.add(float(0.5)).div(float(binding.slotCount)), float(0.5));
+  const secondaryUv = vec2(secondarySlot.add(float(0.5)).div(float(binding.slotCount)), float(0.5));
+  const primaryTopColor = texture(binding.topColors, primaryUv);
+  const secondaryTopColor = texture(binding.topColors, secondaryUv);
+  const primaryInverseColor = texture(binding.inverseColors, primaryUv);
+  const secondaryInverseColor = texture(binding.inverseColors, secondaryUv);
+  const hasBlend = step(float(1 / 512), blendAmount);
+  const topColor = vec4(
+    mix(primaryTopColor.rgb, secondaryTopColor.rgb, blendAmount),
+    primaryTopColor.a.add(secondaryTopColor.a.mul(hasBlend))
+  );
+  const inverseColor = vec4(
+    mix(primaryInverseColor.rgb, secondaryInverseColor.rgb, blendAmount),
+    primaryInverseColor.a.add(secondaryInverseColor.a.mul(hasBlend))
+  );
+  const topDirection = normalize(mix(
+    texture(binding.topDirections, primaryUv).rgb,
+    texture(binding.topDirections, secondaryUv).rgb,
+    blendAmount
+  ));
+  const inverseDirection = normalize(mix(
+    texture(binding.inverseDirections, primaryUv).rgb,
+    texture(binding.inverseDirections, secondaryUv).rgb,
+    blendAmount
+  ));
+  const topDotRaw = dot(lightingNormal, topDirection.mul(float(-1)));
+  const inverseDotRaw = dot(lightingNormal, inverseDirection.mul(float(-1)));
   const topDot = max(topDotRaw, topDotRaw.mul(topColor.a));
   const inverseDot = max(inverseDotRaw, inverseDotRaw.mul(inverseColor.a));
   const frontScale = staticOptions
@@ -187,7 +203,7 @@ function createShrubDirectionalSlotLightNode(
       .add(scaleDirectionalLightNode(inverseColor.rgb.mul(inverseDot), backScale)),
     vec3(0, 0, 0)
   );
-  return vec4(light, valid);
+  return vertexStage(vec4(light, 1));
 }
 
 function scaleDirectionalLightNode(lightNode: Node<'vec3'>, scale: DirectionalLightScale): Node<'vec3'> {
@@ -271,13 +287,4 @@ function writeVec3(target: Float32Array, offset: number, value: [number, number,
 
 function gameDirectionToGltf(direction: Vec4): [number, number, number] {
   return [direction[0], direction[2], -direction[1]];
-}
-
-function normalizeTuple3(value: [number, number, number]): [number, number, number] {
-  const length = Math.hypot(value[0], value[1], value[2]);
-  if (length <= 0.000001) {
-    return [0, 1, 0];
-  }
-
-  return [value[0] / length, value[1] / length, value[2] / length];
 }

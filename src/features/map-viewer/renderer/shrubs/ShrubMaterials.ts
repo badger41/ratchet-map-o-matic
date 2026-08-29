@@ -2,6 +2,8 @@ import * as THREE from 'three/webgpu';
 import {
   attribute,
   float,
+  floor,
+  sRGBTransferOETF,
   texture,
   uv,
   vec3
@@ -14,14 +16,17 @@ import {
   resolveModelMaterialInfo
 } from '../model-materials/ModelMaterialNodes';
 import {
-  applyModelDisplayModulateNode,
+  applyModelDisplayTextureModulateNode,
   applyShrubFogNode,
   applyShrubDisplayLiftNode,
   applyModelColorStrengthNode,
+  configureModelDisplayTexture,
+  decodeModelDisplayTextureNode,
   type ModelDisplayNodeOptions
 } from '../ModelFog';
 import {
   createShrubDirectionalLightNode,
+  createShrubInstanceLightingNormalNode,
   createShrubLightingUniforms
 } from './ShrubLighting';
 import {
@@ -77,11 +82,11 @@ function createShrubDisplayMaterial(
   };
 
   if (material.map) {
-    material.map.colorSpace = THREE.SRGBColorSpace;
+    configureModelDisplayTexture(material.map);
   }
 
   if (material.alphaMap) {
-    material.alphaMap.colorSpace = THREE.SRGBColorSpace;
+    configureModelDisplayTexture(material.alphaMap);
   }
 
   configureModelMaterialTransparency(material, modelMaterialInfo);
@@ -97,10 +102,13 @@ function createShrubColorNode(
   options: ShrubRenderOptions,
   displayOptions: ModelDisplayNodeOptions
 ): Node<'vec3'> {
-  const materialColorNode = vec3(material.color.r, material.color.g, material.color.b);
-  const baseColorNode = material.map
-    ? texture(material.map, uv()).rgb.mul(materialColorNode)
-    : materialColorNode;
+  const displayMaterialColorNode = sRGBTransferOETF(
+    vec3(material.color.r, material.color.g, material.color.b)
+  ) as Node<'vec3'>;
+  const baseDisplayColorNode = material.map
+    ? texture(material.map, uv()).rgb.mul(displayMaterialColorNode)
+    : displayMaterialColorNode;
+  const baseColorNode = decodeModelDisplayTextureNode(baseDisplayColorNode);
   const rawAmbientNode = attribute<'vec3'>(shrubAmbientAttributeName, 'vec3');
   const ambientTermNode = rawAmbientNode
     .mul(float(shrubAmbientTintScale))
@@ -109,20 +117,20 @@ function createShrubColorNode(
     ? createShrubDirectionalLightNode(
       directionalLightBinding,
       uniforms,
-      displayOptions.dynamic ? undefined : options)
+      displayOptions.dynamic ? undefined : options,
+      createShrubInstanceLightingNormalNode())
     : null;
   const directionalTermNode = directionalLightNode
     ? applyModelColorStrengthNode(
       directionalLightNode.rgb,
       displayOptions.dynamic ? uniforms.directionalColorStrength : options.directionalColorStrength)
       .mul(uniforms.directionalScale)
-      .mul(float(0.5))
     : vec3(0, 0, 0);
   const ambientLitNode = baseColorNode.mul(ambientTermNode);
   const directionalLitNode = baseColorNode.mul(directionalTermNode);
   const additiveLitNode = directionalLitNode.add(ambientLitNode);
-  const combinedLightTermNode = ambientTermNode.add(directionalTermNode).clamp(0, 1);
-  const modulateLitNode = applyModelDisplayModulateNode(baseColorNode, combinedLightTermNode);
+  const combinedLightTermNode = quantizeShrubLightTermNode(ambientTermNode.add(directionalTermNode));
+  const modulateLitNode = applyModelDisplayTextureModulateNode(baseDisplayColorNode, combinedLightTermNode);
 
   const litColorNode = additiveLitNode.mul(uniforms.blendAdditiveScale)
     .add(modulateLitNode.mul(uniforms.blendModulateScale))
@@ -132,4 +140,12 @@ function createShrubColorNode(
     applyShrubDisplayLiftNode(litColorNode.mul(exposureNode).saturate(), displayOptions),
     displayOptions
   );
+}
+
+function quantizeShrubLightTermNode(lightTermNode: Node<'vec3'>): Node<'vec3'> {
+  return floor(
+    lightTermNode.clamp(0, shrubAmbientTintScale)
+      .mul(float(128))
+      .add(float(0.5))
+  ).div(float(128));
 }

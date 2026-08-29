@@ -22,7 +22,6 @@ import {
   defaultShrubRenderOptions,
   defaultSkyboxRenderOptions,
   defaultTieRenderOptions,
-  defaultTfragMaterialOptions,
   type MobyStats,
   type ShrubStats,
   type SkyboxStats,
@@ -91,7 +90,7 @@ const tieMaterialOptions: Array<{ value: TieMaterialMode; label: string }> = [
   { value: 'plain', label: 'Plain' }
 ];
 
-const lightingDebugStorageKey = 'map-viewer-lighting-debug-tuning-v15';
+const lightingDebugStorageKey = 'map-viewer-lighting-debug-tuning-v16';
 
 export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -313,7 +312,6 @@ export function MapViewerScreen({ result, onChooseAnother }: MapViewerScreenProp
     let disposed = false;
     const renderer = new MapSceneRenderer({
       container,
-      materialOptions: defaultTfragMaterialOptions,
       skyboxRenderOptions: {
         ...defaultSkyboxRenderOptions,
         visible: skyboxVisible

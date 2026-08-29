@@ -69,7 +69,6 @@ const ps2TextureModulateScale = 255 / ps2FullOpacityAlphaByte;
 // Both GS passes write RGB regardless of sampled alpha; GS ALPHA uses the pvar byte as FIX.
 const waterUnderlayRingDebugWidth = 2 / 128;
 const defaultWaterFogStrength = 1;
-const defaultWaterWorldLift = 2.4;
 
 export const defaultWaterPlaneDebugOptions: WaterPlaneDebugOptions = {
   waterUnderlayRingDebugEnabled: false,
@@ -80,13 +79,12 @@ export const defaultWaterPlaneDebugOptions: WaterPlaneDebugOptions = {
 const waterUnderlayRingDebugEnabled = uniform(defaultWaterPlaneDebugOptions.waterUnderlayRingDebugEnabled ? 1 : 0);
 const waterWaveDirectionOffsetRadians = uniform(degreesToRadians(defaultWaterPlaneDebugOptions.waterWaveDirectionOffsetDegrees));
 const waterFogStrength = uniform(defaultWaterPlaneDebugOptions.waterFogStrength);
-const waterWorldLiftInverse = uniform(1 / defaultWaterWorldLift);
 const waterTimeSeconds = uniform(0);
 const waterViewDirection = uniform(new THREE.Vector2(0, 1));
 const waterWaveBank0Scale = attribute<'float'>('waterWaveBank0Scale', 'float');
 const waterWaveBank1Scale = attribute<'float'>('waterWaveBank1Scale', 'float');
 
-export function setWaterPlaneDebugOptions(options: Partial<WaterPlaneDebugOptions> & { worldDisplayLift?: number }): void {
+export function setWaterPlaneDebugOptions(options: Partial<WaterPlaneDebugOptions>): void {
   waterUnderlayRingDebugEnabled.value = options.waterUnderlayRingDebugEnabled === true ? 1 : 0;
   waterWaveDirectionOffsetRadians.value = degreesToRadians(
     finiteNumber(
@@ -95,8 +93,6 @@ export function setWaterPlaneDebugOptions(options: Partial<WaterPlaneDebugOption
     )
   );
   waterFogStrength.value = finiteNonNegative(options.waterFogStrength, defaultWaterPlaneDebugOptions.waterFogStrength);
-  const lift = finiteNumber(options.worldDisplayLift ?? defaultWaterWorldLift, defaultWaterWorldLift);
-  waterWorldLiftInverse.value = lift > 0 ? 1 / lift : 1;
 }
 
 export function setWaterPlaneTimeSeconds(seconds: number): void {
@@ -198,7 +194,7 @@ function setWaterGsOutputNode(
   // The GS blends its encoded 8-bit colors; WebGPU's fixed blend would blend linear values.
   const destination = viewportTexture();
   const destinationPs2 = applyModelColorGammaNode(
-    destination.rgb.div(waterWorldLiftInverse).clamp(0, 1),
+    destination.rgb.clamp(0, 1),
     1 / 2.2
   );
   const sourcePs2 = applyModelColorGammaNode(sourceColor, 1 / 2.2);
@@ -210,7 +206,7 @@ function setWaterGsOutputNode(
     ? destination.a.add(fixedAlpha)
     : mix(destination.a, float(1), fixedAlpha);
   material.fragmentNode = vec4(
-    applyWaterDisplayNode(applyModelColorGammaNode(blendedPs2.clamp(0, 1), 2.2)),
+    applyModelColorGammaNode(blendedPs2.clamp(0, 1), 2.2),
     blendedAlpha.clamp(0, 1)
   );
 }
@@ -306,10 +302,6 @@ function applyWaterPs2TextureModulateNode(textureColorNode: Node<'vec3'>, colorN
     textureColorNode.mul(colorNode).mul(float(ps2TextureModulateScale)).clamp(0, 1),
     2.2
   );
-}
-
-function applyWaterDisplayNode(colorNode: Node<'vec3'>): Node<'vec3'> {
-  return colorNode.mul(waterWorldLiftInverse).clamp(0, 1);
 }
 
 function createWaterUnderlayStq(waves: WaterWaveNodes | null): Node<'vec3'> {
