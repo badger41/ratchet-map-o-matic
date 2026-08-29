@@ -1,6 +1,6 @@
 import type { MobyClassFactory } from '../MobyClass';
 import { dlMobyClassFactories } from '../dl/dlMobyClasses';
-import { waterTristripMobyClassId } from '../dl/6576/WaterTristrip';
+import { waterTristripMobyClassId } from '../WaterTristrip';
 import {
   GcTieGlowColorMobyClass,
   gcTieGlowColorMobyClassId

@@ -1,10 +1,5 @@
 import * as THREE from 'three/webgpu';
-import {
-  dirnamePackagePath,
-  joinPackagePath
-} from '../../../../../../../services/mapAssets/mapAssetPackage';
 import type { DlMobyInstance } from '../../../../../../../services/wasm/ratchetPs2Wasm';
-import { numberValue } from '../../../../../../../shared/valueParsing.ts';
 import { ps2ToGltfBasisMatrix } from '../../../../shrubs/ShrubTypes';
 import {
   MobyClass,
@@ -35,6 +30,12 @@ import {
   setWaterSurface,
   waterRenderOrder
 } from '../../../../WaterSurfacePass';
+import {
+  fxLevelTextureBaseIdForGame,
+  loadFxTexture,
+  loadFxTextureUrls,
+  resolveFxTextureUrl
+} from '../../FxTextures';
 
 export {
   defaultWaterPlaneDebugOptions,
@@ -68,17 +69,8 @@ interface WaterLayer {
   tileSize: number;
 }
 
-interface FxTextureManifest {
-  Textures?: Array<{
-    Index?: unknown;
-    Path?: unknown;
-  }>;
-}
-
 type WaterTextureMode = 'none' | 'world' | 'worldUnderlay';
 
-const dlFxLevelTextureBaseId = 0x62;
-const uyaFxLevelTextureBaseId = dlFxLevelTextureBaseId + 2;
 const waterPvarByteLength = 0x70;
 const waterOverlayAlphaEnableThreshold = 0x10;
 const waterFogIntensityScale = 1 / 100;
@@ -100,7 +92,7 @@ export class WaterPlaneMobyClass extends MobyClass {
       return null;
     }
 
-    const textureUrls = await loadFxTextureUrls(context);
+    const textureUrls = await loadFxTextureUrls(context.mapPackage);
     const water = new WaterPlaneMobyClass(context, configs);
     await water.loadLayers(textureUrls, fxLevelTextureBaseIdForGame(context.mapPackage.rootManifest.Game));
     if (water.layers.length === 0) {
@@ -237,7 +229,7 @@ export class WaterPlaneMobyClass extends MobyClass {
       return;
     }
 
-    const texture = textureUrl ? await loadTexture(loader, textureUrl) : null;
+    const texture = textureUrl ? await loadFxTexture(loader, textureUrl) : null;
     const tileSize = finiteNonZero(repeatScale, 1);
     if (texture) {
       if (textureMode === 'world') {
@@ -328,16 +320,6 @@ function getWaterRenderPosZ(config: WaterPvar): number {
   return config.posZ;
 }
 
-function fxLevelTextureBaseIdForGame(game: unknown): number {
-  return typeof game === 'string' && ['GC', 'UYA'].includes(game.toUpperCase())
-    ? uyaFxLevelTextureBaseId
-    : dlFxLevelTextureBaseId;
-}
-
-export function resolveFxTextureUrl(textureUrls: Map<number, string>, pvarTextureId: number, fxLevelTextureBaseId: number): string | null {
-  return pvarTextureId >= 0 ? textureUrls.get(fxLevelTextureBaseId + pvarTextureId) ?? null : null;
-}
-
 function readWaterColor(view: DataView, offset: number): WaterColor {
   const alpha = view.getUint8(offset + 3);
   const color = new THREE.Color(
@@ -408,45 +390,6 @@ function readWaterFog(view: DataView): WaterFog | null {
     nearIntensity,
     farIntensity
   };
-}
-
-export async function loadFxTextureUrls(context: MobyClassContext): Promise<Map<number, string>> {
-  const assetRootPath = dirnamePackagePath(context.mapPackage.assetManifestPath);
-  const manifest = await context.mapPackage.assetPackage.readOptionalJson<FxTextureManifest>(
-    joinPackagePath(assetRootPath, 'fx/manifest.json')
-  );
-  const urls = new Map<number, string>();
-  for (const entry of manifest?.Textures ?? []) {
-    const index = numberValue(entry.Index);
-    const path = stringValue(entry.Path);
-    if (index === null || !path) {
-      continue;
-    }
-
-    urls.set(index, await context.mapPackage.assetPackage.resolveUrl(joinPackagePath(assetRootPath, path)));
-  }
-
-  return urls;
-}
-
-export async function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Texture | null> {
-  try {
-    const texture = await loader.loadAsync(url);
-    texture.colorSpace = THREE.NoColorSpace;
-    texture.flipY = false;
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.magFilter = THREE.LinearFilter;
-    texture.minFilter = THREE.LinearMipmapLinearFilter;
-    texture.needsUpdate = true;
-    return texture;
-  } catch {
-    return null;
-  }
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 function finiteNumber(value: number, fallback: number): number {

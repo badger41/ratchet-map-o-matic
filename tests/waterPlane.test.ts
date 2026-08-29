@@ -7,12 +7,17 @@ import {
 } from '../src/features/map-viewer/renderer/mobys/simulation/dl/2871/WaterPlaneGeometry.ts';
 import { createWaterWaveComponents } from '../src/features/map-viewer/renderer/mobys/simulation/dl/2871/WaterWaves.ts';
 import {
+  fxLevelTextureBaseIdForGame,
+  resolveFxTextureUrl
+} from '../src/features/map-viewer/renderer/mobys/simulation/FxTextures.ts';
+import {
   advanceWaterTristripOffset,
   createWaterTristripGeometry,
   createWaterTristripFade,
-  parseWaterTristripPvar,
   waterTristripColorPasses
-} from '../src/features/map-viewer/renderer/mobys/simulation/dl/6576/WaterTristripData.ts';
+} from '../src/features/map-viewer/renderer/mobys/simulation/WaterTristripData.ts';
+import { parseWaterTristripPvar } from '../src/features/map-viewer/renderer/mobys/simulation/dl/6576/WaterTristripData.ts';
+import { parseUyaWaterTristripPvar } from '../src/features/map-viewer/renderer/mobys/simulation/uya/6576/WaterTristripData.ts';
 
 test('decodes DL water tristrips and preserves triangle-strip winding', () => {
   const pvarData = new Uint8Array(0x70);
@@ -34,6 +39,7 @@ test('decodes DL water tristrips and preserves triangle-strip winding', () => {
   assert.equal(config.splineIndex, 7);
   assert.equal(config.overlayFxTexId, 5);
   assert.equal(config.invertOverlayColor, true);
+  assert.equal(config.colorPassCount, 2);
   assert.ok(Math.abs(config.underlayColor.opacity - 0x7d / 0x80) < 1e-6);
   assert.ok(Math.abs(config.overlayColor.opacity - 15 / 0x80) < 1e-6);
   assert.ok(Math.abs(config.scrollSpeed - 0.3) < 1e-6);
@@ -71,6 +77,42 @@ test('decodes DL water tristrips and preserves triangle-strip winding', () => {
     }
   ]);
   geometry.dispose();
+});
+
+test('decodes the UYA Level09 water tristrip layout', () => {
+  const pvarData = new Uint8Array(0xa0);
+  const pvar = new DataView(pvarData.buffer);
+  pvarData.set([0x16, 0x28, 0x07, 0x80], 0x00);
+  pvarData.set([0x20, 0x20, 0x20, 0xff], 0x08);
+  pvar.setInt32(0x10, 1, true);
+  pvar.setInt32(0x14, 2, true);
+  pvar.setInt32(0x18, 0, true);
+  pvar.setFloat32(0x24, 1, true);
+  pvar.setInt32(0x34, 1, true);
+  pvar.setInt32(0x3c, 181, true);
+  pvar.setFloat32(0x48, 1, true);
+  pvar.setFloat32(0x4c, 1, true);
+
+  const config = parseUyaWaterTristripPvar(pvarData);
+  assert.ok(config);
+  assert.equal(config.splineIndex, 181);
+  assert.equal(config.overlayFxTexId, 0);
+  assert.equal(config.colorPassCount, 2);
+  assert.equal(config.invertOverlayColor, true);
+  assert.equal(config.scrollSpeed, 1);
+  assert.equal(config.underlayColor.opacity, 1);
+  assert.equal(config.overlayColor.opacity, 1);
+  assert.equal(config.oscillationAmplitude, 0);
+  assert.equal(config.directionalFadeStart, 0);
+  assert.equal(config.directionalFadeEnd, 0);
+  assert.equal(
+    resolveFxTextureUrl(
+      new Map([[0x64, 'level09-fx']]),
+      config.overlayFxTexId,
+      fxLevelTextureBaseIdForGame('UYA')
+    ),
+    'level09-fx'
+  );
 });
 
 test('matches the game water tristrip UV oscillation', () => {

@@ -12,7 +12,7 @@ import {
   waterPlaneMobyClassId
 } from './2871/WaterPlane';
 import {
-  WaterTristripMobyClass,
+  createDlWaterTristripMobyClass,
   waterTristripMobyClassId
 } from './6576/WaterTristrip';
 
@@ -20,5 +20,5 @@ export const dlMobyClassFactories = new Map<number, MobyClassFactory>([
   [rotatingTieGroupMobyClassId, RotatingTieGroupMobyClass.create],
   [tieGlowColorMobyClassId, TieGlowColorMobyClass.create],
   [waterPlaneMobyClassId, WaterPlaneMobyClass.create],
-  [waterTristripMobyClassId, WaterTristripMobyClass.create]
+  [waterTristripMobyClassId, createDlWaterTristripMobyClass]
 ]);
