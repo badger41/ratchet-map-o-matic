@@ -92,9 +92,16 @@ function canMerge(left: TiePrimitive, right: TiePrimitive): boolean {
     && left.hasAmbientAttribute === right.hasAmbientAttribute
     && left.ambientSlotCount === right.ambientSlotCount
     && left.ambientWordCount === right.ambientWordCount
+    && left.packedLightModeBits === right.packedLightModeBits
+    && sameNumbers(left.packedLightNormals, right.packedLightNormals)
+    && sameNumbers(left.packedLightScales, right.packedLightScales)
     && sameRecipes(left, right)
     && left.matrixWorld.equals(right.matrixWorld)
     && sameGeometryStreams(left.geometry, right.geometry);
+}
+
+function sameNumbers(left: number[], right: number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function sameMaterial(

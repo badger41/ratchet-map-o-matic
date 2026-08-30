@@ -8,6 +8,7 @@ import {
 } from '../src/features/map-viewer/renderer/TfragAtlas.ts';
 import {
   decodeTfragRgb5Color,
+  evaluatePs2DirectionalLight,
   resolveTfragAlphaState,
   scaleTfragVertexColor
 } from '../src/features/map-viewer/renderer/TfragMaterialState.ts';
@@ -57,19 +58,35 @@ test('normalizes PS2 tfrag alpha without letting blends punch the depth buffer',
   assert.equal(resolveTfragAlphaState(false, 1, 0, true), null);
 });
 
-test('decodes normalized tfrag RGB5 as the game PEXT5 modulation bytes', () => {
-  assert.deepEqual(decodeTfragRgb5Color([66 / 255, 132 / 255, 1]), [0.5, 1, 31 / 16]);
+test('decodes normalized tfrag RGB5 with the game /16 cache scale', () => {
+  assert.deepEqual(decodeTfragRgb5Color([66 / 255, 132 / 255, 1]), [8 / 16, 16 / 16, 31 / 16]);
   assert.deepEqual(scaleTfragVertexColor([0.5 + Math.SQRT1_2, 0, 3], 0.5), [77 / 128, 0, 127 / 128]);
 });
 
-test('samples PS2 model textures without pre-filter sRGB decoding', () => {
+test('uses both directional-light vectors exactly as stored by the game', () => {
+  const topColor: [number, number, number, number] = [1, 0.5, 0.25, 0];
+  const inverseColor: [number, number, number, number] = [0.25, 0.5, 1, 0];
+  const topDirection: [number, number, number] = [0, 1, 0];
+  const inverseDirection: [number, number, number] = [0, -1, 0];
+
+  assert.deepEqual(
+    evaluatePs2DirectionalLight(topColor, topDirection, inverseColor, inverseDirection, [0, 1, 0]),
+    [1, 0.5, 0.25]
+  );
+  assert.deepEqual(
+    evaluatePs2DirectionalLight(topColor, topDirection, inverseColor, inverseDirection, [0, -1, 0]),
+    [0.25, 0.5, 1]
+  );
+});
+
+test('samples PS2 model textures without changing the source sampler', () => {
   const texture = new THREE.Texture();
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   configureModelDisplayTexture(texture);
   assert.equal(texture.colorSpace, THREE.NoColorSpace);
-  assert.equal(texture.minFilter, THREE.LinearFilter);
-  assert.equal(texture.generateMipmaps, false);
+  assert.equal(texture.minFilter, THREE.LinearMipmapLinearFilter);
+  assert.equal(texture.generateMipmaps, true);
 });
 
 test('only shares a water split plane when every water instance has the same surface', () => {

@@ -1560,7 +1560,7 @@ function resolveMapSceneFog(levelSettings: DlLevelSettings): MapSceneFog | null 
 }
 
 function fogAmountFromDlIntensity(value: number): number {
-  return (255 - (finiteNumber(value) ?? 255)) / 255;
+  return 1 - clamp01((finiteNumber(value) ?? 255) / 255) * (255 / 256);
 }
 
 function finiteNumber(value: number): number | null {

@@ -181,7 +181,7 @@ export function tieAmbientPackedColor(
 }
 
 function decodeTieAmbientChannel(value: number, shift: number): number {
-  return shift >= 8 ? 0 : (value << 3) >> shift;
+  return shift >= 8 ? 0 : ((value << 3) | (value >> 2)) >> shift;
 }
 
 function readTieInstanceRecord(view: DataView, index: number, offset: number): TieInstanceRecord {

@@ -8,8 +8,10 @@ import {
   vertexStage
 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
-import { tieAmbientPackedColor } from '../../../../services/mapPackages/tiePackageParsers';
-import { getTieAmbientAttribute } from './TieClassSource';
+import type { DirectionalLightRecord } from '../../../../services/mapPackages/mapPackageTypes';
+import { tieAmbientPackedColor } from '../../../../services/mapPackages/tiePackageParsers.ts';
+import { getTieAmbientAttribute } from './TieClassSource.ts';
+import { applyTieSourceLighting } from './TieLighting.ts';
 import {
   tieAmbientAttributeName,
   tieAmbientInstanceRowAttributeName,
@@ -18,12 +20,13 @@ import {
   type TieAmbientColorRecipe,
   type TieAmbientTextureBinding,
   type TiePrimitive
-} from './TieTypes';
-import { clampByte } from './tieUtils';
+} from './TieTypes.ts';
+import { clampByte } from './tieUtils.ts';
 
 export function createTieAmbientTextureBinding(
   records: PreparedTieRecord[],
-  primitive: TiePrimitive
+  primitive: TiePrimitive,
+  directionalLights: DirectionalLightRecord[] = []
 ): TieAmbientTextureBinding | null {
   if (primitive.isGlowOverlay || !primitive.hasAmbientAttribute || records.length === 0) {
     return null;
@@ -34,7 +37,7 @@ export function createTieAmbientTextureBinding(
     return null;
   }
 
-  const textureResult = createTieAmbientTexture(records, ambientIndices, primitive.ambientColorRecipes);
+  const textureResult = createTieAmbientTexture(records, ambientIndices, primitive, directionalLights);
   return {
     texture: textureResult.texture,
     wordCount: ambientIndices.length,
@@ -42,6 +45,7 @@ export function createTieAmbientTextureBinding(
     recipeCount: primitive.ambientColorRecipes.length,
     recipeSamples: textureResult.recipeSamples,
     validSamples: textureResult.validSamples,
+    hasBakedDirectionalLight: textureResult.hasBakedDirectionalLight,
     rowByRecord: createTieAmbientRowMap(records),
     statsCounted: false
   };
@@ -70,7 +74,7 @@ export function createTieAmbientRawColorNode(
     ambientIndex.add(float(0.5)).div(wordCount).clamp(0, 1),
     ambientRow.add(float(0.5)).div(instanceCount).clamp(0, 1)
   );
-  return vertexStage(texture(ambientBinding.texture, ambientUv).rgb);
+  return vertexStage(texture(ambientBinding.texture, ambientUv).rgb).setInterpolation('linear');
 }
 
 function createTieAmbientRowMap(records: PreparedTieRecord[]): WeakMap<PreparedTieRecord, number> {
@@ -136,24 +140,45 @@ function readAttributeX(
 function createTieAmbientTexture(
   records: PreparedTieRecord[],
   ambientIndices: number[],
-  recipes: TieAmbientColorRecipe[]
-): { texture: THREE.DataTexture; recipeSamples: number; validSamples: number } {
+  primitive: TiePrimitive,
+  directionalLights: DirectionalLightRecord[]
+): {
+  texture: THREE.DataTexture;
+  recipeSamples: number;
+  validSamples: number;
+  hasBakedDirectionalLight: boolean;
+} {
   const width = Math.max(1, ambientIndices.length);
   const height = Math.max(1, records.length);
   const data = new Uint8Array(width * height * 4);
-  const recipeByTargetIndex = buildTieAmbientRecipeMap(recipes);
+  const recipeByTargetIndex = buildTieAmbientRecipeMap(primitive.ambientColorRecipes);
+  const packedSourceCount = Math.max(0, (primitive.ambientWordCount ?? 2) - 2);
+  const hasPackedLightData = packedSourceCount > 0
+    && primitive.packedLightNormals.length >= packedSourceCount
+    && (
+      ((primitive.packedLightModeBits ?? 0) & 1) === 0
+      || primitive.packedLightScales.length >= packedSourceCount
+    );
+  const hasBakedDirectionalLight = hasPackedLightData && directionalLights.length > 0;
   let recipeSamples = 0;
   let validSamples = 0;
 
   for (let y = 0; y < height; y += 1) {
-    const words = records[y]?.colorEntry?.words ?? [];
+    const record = records[y];
+    const words = record?.colorEntry?.words ?? [];
+    const resolveSourceColor = (sourceIndex: number) => {
+      const color = tieAmbientPackedColor(words, sourceIndex);
+      return hasPackedLightData && color.valid && record
+        ? applyTieSourceLighting(color, sourceIndex, record, primitive, directionalLights)
+        : color;
+    };
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
       const sourceIndex = ambientIndices[x] ?? 0;
       const recipe = recipeByTargetIndex.get(sourceIndex);
       const color = recipe
-        ? tieAmbientRecipeColor(words, recipe)
-        : tieAmbientPackedColor(words, sourceIndex);
+        ? tieAmbientRecipeColor(recipe, resolveSourceColor)
+        : resolveSourceColor(sourceIndex);
 
       if (recipe) {
         recipeSamples += 1;
@@ -180,7 +205,7 @@ function createTieAmbientTexture(
   texture.flipY = false;
   texture.colorSpace = THREE.NoColorSpace;
   texture.needsUpdate = true;
-  return { texture, recipeSamples, validSamples };
+  return { texture, recipeSamples, validSamples, hasBakedDirectionalLight };
 }
 
 function buildTieAmbientRecipeMap(recipes: TieAmbientColorRecipe[]): Map<number, TieAmbientColorRecipe> {
@@ -197,14 +222,14 @@ function buildTieAmbientRecipeMap(recipes: TieAmbientColorRecipe[]): Map<number,
 }
 
 function tieAmbientRecipeColor(
-  words: number[],
-  recipe: TieAmbientColorRecipe
-): { r: number; g: number; b: number; valid: boolean } {
+  recipe: TieAmbientColorRecipe,
+  resolveSourceColor: (sourceIndex: number) => TiePackedColor
+): TiePackedColor {
   let r = 0;
   let g = 0;
   let b = 0;
   for (const sourceIndex of recipe.sourceIndices) {
-    const color = tieAmbientPackedColor(words, sourceIndex);
+    const color = resolveSourceColor(sourceIndex);
     if (!color.valid) {
       return tieAmbientNeutralPackedColor(false);
     }
@@ -223,7 +248,14 @@ function tieAmbientRecipeColor(
   };
 }
 
-function tieAmbientNeutralPackedColor(valid: boolean): { r: number; g: number; b: number; valid: boolean } {
+interface TiePackedColor {
+  r: number;
+  g: number;
+  b: number;
+  valid: boolean;
+}
+
+function tieAmbientNeutralPackedColor(valid: boolean): TiePackedColor {
   return {
     r: tieAmbientPs2NeutralByte,
     g: tieAmbientPs2NeutralByte,

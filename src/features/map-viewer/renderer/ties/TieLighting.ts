@@ -20,12 +20,139 @@ import type {
   DirectionalLightRecord,
   Vec4
 } from '../../../../services/mapPackages/mapPackageTypes';
+import { evaluatePs2DirectionalLight } from '../TfragMaterialState.ts';
 import {
   lightSelectorAttributeName,
   tieDirectionalLightSlotCount,
   type PreparedTieRecord,
-  type TieDirectionalLightBinding
-} from './TieTypes';
+  type TieDirectionalLightBinding,
+  type TiePrimitive
+} from './TieTypes.ts';
+
+export interface TieSourceColor {
+  r: number;
+  g: number;
+  b: number;
+  valid: boolean;
+}
+
+export function applyTieSourceLighting(
+  color: TieSourceColor,
+  sourceIndex: number,
+  record: PreparedTieRecord,
+  primitive: TiePrimitive,
+  directionalLights: DirectionalLightRecord[]
+): TieSourceColor {
+  const packedIndex = sourceIndex - 2;
+  const packedNormal = primitive.packedLightNormals[packedIndex];
+  if (!Number.isFinite(packedNormal)) {
+    return color;
+  }
+
+  const contribution = evaluateTieDirectionalLight(
+    record.source.lightSelector,
+    transformTieNormal(decodeTiePackedNormal(packedNormal), record),
+    directionalLights);
+  const lit = {
+    r: clampByte(color.r + Math.floor(contribution[0] * 127)),
+    g: clampByte(color.g + Math.floor(contribution[1] * 127)),
+    b: clampByte(color.b + Math.floor(contribution[2] * 127)),
+    valid: true
+  };
+  if (((primitive.packedLightModeBits ?? 0) & 1) === 0) {
+    return lit;
+  }
+
+  const scale = primitive.packedLightScales[packedIndex] ?? 128;
+  return {
+    r: clampByte(Math.floor(lit.r * scale / 128)),
+    g: clampByte(Math.floor(lit.g * scale / 128)),
+    b: clampByte(Math.floor(lit.b * scale / 128)),
+    valid: true
+  };
+}
+
+function decodeTiePackedNormal(packed: number): [number, number, number] {
+  const azimuth = (packed & 0xff) * Math.PI / 128;
+  const elevation = ((packed >> 8) & 0xff) * Math.PI / 128;
+  const elevationCos = Math.cos(elevation);
+  return [
+    -Math.cos(azimuth) * elevationCos,
+    -Math.sin(azimuth) * elevationCos,
+    -Math.sin(elevation)
+  ];
+}
+
+function transformTieNormal(
+  normal: [number, number, number],
+  record: PreparedTieRecord
+): [number, number, number] {
+  const rows = record.source.matrixRows.map((row, index) => {
+    const length = Math.hypot(row[0], row[1], row[2]);
+    return length > 0.000001
+      ? [row[0] / length, row[1] / length, row[2] / length]
+      : [index === 0 ? 1 : 0, index === 1 ? 1 : 0, index === 2 ? 1 : 0];
+  });
+  return [
+    rows[0][0] * normal[0] + rows[1][0] * normal[1] + rows[2][0] * normal[2],
+    rows[0][1] * normal[0] + rows[1][1] * normal[1] + rows[2][1] * normal[2],
+    rows[0][2] * normal[0] + rows[1][2] * normal[1] + rows[2][2] * normal[2]
+  ];
+}
+
+function evaluateTieDirectionalLight(
+  selector: number,
+  normal: [number, number, number],
+  directionalLights: DirectionalLightRecord[]
+): [number, number, number] {
+  const primary = directionalLights[selector & 0x0f];
+  if (!primary) {
+    return [0, 0, 0];
+  }
+
+  const blendAmount = ((selector >> 8) & 0xff) / 256;
+  const secondary = blendAmount > 0 ? directionalLights[(selector >> 4) & 0x0f] : null;
+  if (!secondary) {
+    return evaluatePs2DirectionalLight(
+      primary.topColor,
+      vec3Value(primary.topDirection),
+      primary.inverseColor,
+      vec3Value(primary.inverseDirection),
+      normal);
+  }
+
+  return evaluatePs2DirectionalLight(
+    mixVec4Value(primary.topColor, secondary.topColor, blendAmount),
+    mixVec3Value(primary.topDirection, secondary.topDirection, blendAmount),
+    mixVec4Value(primary.inverseColor, secondary.inverseColor, blendAmount),
+    mixVec3Value(primary.inverseDirection, secondary.inverseDirection, blendAmount),
+    normal);
+}
+
+function vec3Value(value: Vec4): [number, number, number] {
+  return [value[0], value[1], value[2]];
+}
+
+function mixVec3Value(left: Vec4, right: Vec4, amount: number): [number, number, number] {
+  return [
+    left[0] * (1 - amount) + right[0] * amount,
+    left[1] * (1 - amount) + right[1] * amount,
+    left[2] * (1 - amount) + right[2] * amount
+  ];
+}
+
+function mixVec4Value(left: Vec4, right: Vec4, amount: number): Vec4 {
+  return [
+    left[0] * (1 - amount) + right[0] * amount,
+    left[1] * (1 - amount) + right[1] * amount,
+    left[2] * (1 - amount) + right[2] * amount,
+    left[3] * (1 - amount) + right[3] * amount
+  ];
+}
+
+function clampByte(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
 
 export function createTieDirectionalLightBinding(directionalLights: DirectionalLightRecord[]): TieDirectionalLightBinding | null {
   if (directionalLights.length === 0) {
@@ -107,7 +234,7 @@ export function createTieDirectionalLightNode(binding: TieDirectionalLightBindin
   return vertexStage(max(
     topColor.rgb.mul(topDot).add(inverseColor.rgb.mul(inverseDot)),
     vec3(0, 0, 0)
-  ));
+  )).setInterpolation('linear');
 }
 
 function createTieLightTexture(data: Float32Array, name: string): THREE.DataTexture {

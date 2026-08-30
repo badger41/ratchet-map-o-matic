@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import type { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   defaultTieRenderOptions,
+  type DirectionalLightRecord,
   type GltfExportEntry,
   type LoadedMapPackage,
   type TieColorTable,
@@ -124,6 +125,7 @@ export class TieInstanceController {
   private alphaBlendGroup: TieGroup | null = null;
   private stats: TieStats = { ...emptyTieStats };
   private meshBindings: TieInstancedMeshBinding[] = [];
+  private directionalLights: DirectionalLightRecord[] = [];
   private directionalLightBinding: TieDirectionalLightBinding | null = null;
   private skyboxReflectionTexture: THREE.Texture | null = null;
   private options: TieRenderOptions = { ...defaultTieRenderOptions };
@@ -184,6 +186,7 @@ export class TieInstanceController {
     this.group = group;
     this.alphaBlendGroup = alphaBlendGroup;
     this.applyBundleMode();
+    this.directionalLights = mapPackage.directionalLights;
     this.directionalLightBinding = createTieDirectionalLightBinding(mapPackage.directionalLights);
 
     if (!mapPackage.tieClassIdsPath || !mapPackage.tieInstancesPath || mapPackage.tieEntries.length === 0) {
@@ -239,6 +242,7 @@ export class TieInstanceController {
 
   dispose(): void {
     const directionalLightBinding = this.directionalLightBinding;
+    this.directionalLights = [];
     this.directionalLightBinding = null;
     this.skyboxReflectionTexture = null;
     this.modelDisplayOptions = null;
@@ -904,7 +908,7 @@ export class TieInstanceController {
     glowColorBinding: TieGlowColorBinding | null,
     usesGlowEmission: boolean
   ): TieMaterialSet {
-    const ambientBinding = createTieAmbientTextureBinding(records, primitive);
+    const ambientBinding = createTieAmbientTextureBinding(records, primitive, this.directionalLights);
     const displayOptions = this.modelDisplayOptions;
     if (!displayOptions) {
       throw new Error('Tie material display options are not initialized.');

@@ -2,7 +2,6 @@ import * as THREE from 'three/webgpu';
 import {
   attribute,
   float,
-  floor,
   mix,
   positionView,
   sRGBTransferOETF,
@@ -258,7 +257,7 @@ function createTieColorNode(
 ): Node<'vec3'> {
   const baseDisplayColorNode = createTieBaseDisplayColorNode(material);
   const baseColorNode = decodeModelDisplayTextureNode(baseDisplayColorNode);
-  const directionalLightNode = directionalLightBinding
+  const directionalLightNode = directionalLightBinding && !ambientBinding?.hasBakedDirectionalLight
     ? createTieDirectionalLightNode(directionalLightBinding)
     : null;
   let lightTermNode = directionalLightNode;
@@ -267,7 +266,7 @@ function createTieColorNode(
     lightTermNode = directionalLightNode ? ambientTermNode.add(directionalLightNode) : ambientTermNode;
   }
   const litColorNode = lightTermNode
-    ? applyModelDisplayTextureModulateNode(baseDisplayColorNode, quantizeTieLightTermNode(lightTermNode))
+    ? applyModelDisplayTextureModulateNode(baseDisplayColorNode, lightTermNode)
     : baseColorNode;
 
   const featureColorNode = applyModelMaterialFeatureColorNode(
@@ -279,14 +278,6 @@ function createTieColorNode(
       skyboxReflectionTexture,
       hasSecondUvReflection));
   return applyTieFogNode(featureColorNode.clamp(0, 1), displayOptions);
-}
-
-function quantizeTieLightTermNode(lightTermNode: Node<'vec3'>): Node<'vec3'> {
-  return floor(
-    lightTermNode.clamp(0, tieAmbientRawIntensityScale)
-      .mul(float(128))
-      .add(float(0.5))
-  ).div(float(128));
 }
 
 function createTieBaseDisplayColorNode(material: THREE.MeshBasicNodeMaterial): Node<'vec3'> {

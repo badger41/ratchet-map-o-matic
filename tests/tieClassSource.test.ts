@@ -36,7 +36,10 @@ test('adjacent compatible tie primitives share one exact index stream', () => {
       ambientSlotCount: null,
       ambientWordCount: null,
       ambientColorRecipes: [],
-      ambientSourceIndices: null
+      ambientSourceIndices: null,
+      packedLightModeBits: null,
+      packedLightNormals: [],
+      packedLightScales: []
     };
   };
 

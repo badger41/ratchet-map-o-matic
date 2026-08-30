@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import {
   dot,
   float,
+  floor,
   max,
   mix,
   positionView,
@@ -9,7 +10,8 @@ import {
   sRGBTransferEOTF,
   sRGBTransferOETF,
   uniform,
-  vec3
+  vec3,
+  vertexStage
 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
 
@@ -153,10 +155,12 @@ function applyModelFogNode(
     .clamp(0, 1);
   const nearIntensity = modelFogNearIntensity.mul(modelFogNearIntensityScale);
   const farIntensity = modelFogFarIntensity.mul(modelFogFarIntensityScale);
-  const fogAmount = mix(nearIntensity, farIntensity, distanceMix)
+  const fogAmount = vertexStage(mix(nearIntensity, farIntensity, distanceMix)
+    .clamp(0, modelFogModulationMaxAmount))
+    .setInterpolation('linear')
     .mul(modelFogEnabled)
     .mul(familyFogEnabled)
-    .clamp(0, modelFogModulationMaxAmount);
+    .clamp(0, 1);
   const displayColor = sRGBTransferOETF(colorNode) as Node<'vec3'>;
   const displayFogBase = sRGBTransferOETF(vec3(modelFogRed, modelFogGreen, modelFogBlue)) as Node<'vec3'>;
   const displayFog = displayFogBase.mul(modelFogColorScale).clamp(0, 1);
@@ -194,7 +198,9 @@ function applyStaticModelFogNode(
     .sub(float(nearDistance))
     .div(float(farDistance - nearDistance))
     .clamp(0, 1);
-  const fogAmount = mix(float(nearIntensity), float(farIntensity), distanceMix).clamp(0, maxAmount);
+  const fogAmount = vertexStage(
+    mix(float(nearIntensity), float(farIntensity), distanceMix).clamp(0, maxAmount)
+  ).setInterpolation('linear');
   const displayColor = sRGBTransferOETF(colorNode) as Node<'vec3'>;
   const displayFogBase = sRGBTransferOETF(vec3(fog.color.r, fog.color.g, fog.color.b)) as Node<'vec3'>;
   const displayFog = displayFogBase
@@ -218,10 +224,6 @@ export function applyModelDisplayModulateNode(baseColorNode: Node<'vec3'>, light
 
 export function configureModelDisplayTexture(texture: THREE.Texture): void {
   texture.colorSpace = THREE.NoColorSpace;
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearFilter;
-  texture.generateMipmaps = false;
-  texture.anisotropy = 1;
   texture.needsUpdate = true;
 }
 
@@ -233,7 +235,9 @@ export function applyModelDisplayTextureModulateNode(
   displayColorNode: Node<'vec3'>,
   lightTermNode: Node<'vec3'>
 ): Node<'vec3'> {
-  return decodeModelDisplayTextureNode(displayColorNode.mul(lightTermNode).clamp(0, 1));
+  const textureByte = floor(displayColorNode.clamp(0, 1).mul(float(255)).add(float(0.05)));
+  const modulatedByte = floor(textureByte.mul(lightTermNode)).clamp(0, 255);
+  return decodeModelDisplayTextureNode(modulatedByte.div(float(255)));
 }
 
 export function applyModelColorStrengthNode(colorNode: Node<'vec3'>, strengthNode: FloatNodeOrNumber): Node<'vec3'> {

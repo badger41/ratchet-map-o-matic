@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
-import { float, texture, uv, vec3, vertexColor } from 'three/tsl';
+import { attribute, float, texture, uv, vec3, vertexStage } from 'three/tsl';
 import type { DirectionalLightRecord, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
 import {
   applyModelDisplayTextureModulateNode,
@@ -16,7 +16,12 @@ import {
   type TfragAtlas,
   type TfragAtlasRegion
 } from './TfragAtlas';
-import { decodeTfragRgb5Color, resolveTfragAlphaState, scaleTfragVertexColor } from './TfragMaterialState';
+import {
+  decodeTfragRgb5Color,
+  evaluatePs2DirectionalLight,
+  resolveTfragAlphaState,
+  scaleTfragVertexColor
+} from './TfragMaterialState';
 import {
   aboveWaterRenderOrder,
   belowWaterRenderOrder,
@@ -506,7 +511,7 @@ function evaluateSelectedLights(
 }
 
 function evaluateLightRecord(record: PreparedDirectionalLightRecord, normal: [number, number, number]): [number, number, number] {
-  return evaluatePreparedLightRecord(record.topColor, record.topDirection, record.inverseColor, record.inverseDirection, normal);
+  return evaluatePs2DirectionalLight(record.topColor, record.topDirection, record.inverseColor, record.inverseDirection, normal);
 }
 
 function evaluateBlendedLightRecord(
@@ -521,26 +526,7 @@ function evaluateBlendedLightRecord(
   const topDirection = mixVec3(primary.topDirection, secondary.topDirection, t);
   const inverseDirection = mixVec3(primary.inverseDirection, secondary.inverseDirection, t);
 
-  return evaluatePreparedLightRecord(topColor, topDirection, inverseColor, inverseDirection, normal);
-}
-
-function evaluatePreparedLightRecord(
-  topColor: Vec4,
-  topDirection: [number, number, number],
-  inverseColor: Vec4,
-  inverseDirection: [number, number, number],
-  normal: [number, number, number]
-): [number, number, number] {
-  const topDotRaw = dotVec3(normal, normalizeVec3(topDirection));
-  const inverseDotRaw = dotVec3(normal, normalizeVec3(inverseDirection));
-  const topDot = Math.max(topDotRaw, topDotRaw * topColor[3]);
-  const inverseDot = Math.max(inverseDotRaw, inverseDotRaw * inverseColor[3]);
-
-  return [
-    Math.max(0, topColor[0] * topDot + inverseColor[0] * inverseDot),
-    Math.max(0, topColor[1] * topDot + inverseColor[1] * inverseDot),
-    Math.max(0, topColor[2] * topDot + inverseColor[2] * inverseDot)
-  ];
+  return evaluatePs2DirectionalLight(topColor, topDirection, inverseColor, inverseDirection, normal);
 }
 
 function createTfragDisplayMaterial(
@@ -562,13 +548,14 @@ function createTfragDisplayMaterial(
     toneMapped: false
   });
   material.forceSinglePass = true;
+  const lightTerm = vertexStage(attribute<'vec3'>('color', 'vec3')).setInterpolation('linear');
 
   const map = material.map;
   if (map) {
     configureModelDisplayTexture(map);
     const mapSample = texture(map, uv());
     material.colorNode = applyTfragFogNode(
-      applyModelDisplayTextureModulateNode(mapSample.rgb, vertexColor().rgb),
+      applyModelDisplayTextureModulateNode(mapSample.rgb, lightTerm),
       displayOptions
     );
 
@@ -587,7 +574,7 @@ function createTfragDisplayMaterial(
     }
   } else {
     material.colorNode = applyTfragFogNode(
-      applyModelDisplayTextureModulateNode(vec3(1, 1, 1), vertexColor().rgb),
+      applyModelDisplayTextureModulateNode(vec3(1, 1, 1), lightTerm),
       displayOptions
     );
   }
@@ -1037,10 +1024,6 @@ function normalizeVec3(value: [number, number, number]): [number, number, number
   }
 
   return [value[0] / length, value[1] / length, value[2] / length];
-}
-
-function dotVec3(a: [number, number, number], b: [number, number, number]): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
 function clampPs2VertexColor(value: number): number {

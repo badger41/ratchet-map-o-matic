@@ -88,7 +88,10 @@ export function collectTiePrimitives(source: THREE.Object3D): TiePrimitive[] {
       ambientSlotCount: resolveTieObjectNumber(object, 'AmbientSlotCount'),
       ambientWordCount: resolveTieObjectNumber(object, 'AmbientWordCount'),
       ambientColorRecipes: resolveTieAmbientColorRecipes(object),
-      ambientSourceIndices: null
+      ambientSourceIndices: null,
+      packedLightModeBits: resolveTieObjectNumber(object, 'PackedLightModeBits'),
+      packedLightNormals: resolveTieObjectNumberArray(object, 'PackedLightNormals'),
+      packedLightScales: resolveTieObjectNumberArray(object, 'PackedLightScales')
     });
   });
 
@@ -229,6 +232,17 @@ function resolveTieAmbientColorRecipes(object: THREE.Object3D): TieAmbientColorR
     const recipes = normalizeTieAmbientColorRecipes(value);
     if (recipes.length > 0) {
       return recipes;
+    }
+  }
+
+  return [];
+}
+
+function resolveTieObjectNumberArray(object: THREE.Object3D, key: string): number[] {
+  for (const value of resolveTieObjectUserDataValues(object, key)) {
+    const numbers = normalizeNumberArray(value);
+    if (numbers.length > 0) {
+      return numbers;
     }
   }
 

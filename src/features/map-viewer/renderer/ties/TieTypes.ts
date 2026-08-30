@@ -17,6 +17,9 @@ export interface TiePrimitive {
   ambientWordCount: number | null;
   ambientColorRecipes: TieAmbientColorRecipe[];
   ambientSourceIndices: number[] | null;
+  packedLightModeBits: number | null;
+  packedLightNormals: number[];
+  packedLightScales: number[];
 }
 
 export interface PreparedTieRecord {
@@ -55,6 +58,7 @@ export interface TieAmbientTextureBinding {
   recipeCount: number;
   recipeSamples: number;
   validSamples: number;
+  hasBakedDirectionalLight: boolean;
   rowByRecord: WeakMap<PreparedTieRecord, number>;
   statsCounted: boolean;
 }
