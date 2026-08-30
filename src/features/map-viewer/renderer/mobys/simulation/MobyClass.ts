@@ -16,6 +16,7 @@ export interface MobyClassContext {
   tieController: TieInstanceController;
   camera: THREE.Camera;
   instances: DlMobyInstance[];
+  indexedInstances: DlMobyInstance[];
   cuboids: GameplayCuboid[];
   splines: GameplaySpline[];
 }

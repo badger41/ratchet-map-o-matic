@@ -34,8 +34,23 @@ export function usesStoredMobyAmbient(game: string | null | undefined): boolean 
   return ['GC', 'UYA'].includes(game?.toUpperCase() ?? '');
 }
 
-export function resolveMobyMission(mission: number, game: string | null | undefined): number {
-  return game?.toUpperCase() === 'DL' ? mission : -1;
+export function isDeadlockedGame(game: unknown): boolean {
+  const key = typeof game === 'string' ? game.toLowerCase() : '';
+  return key === 'dl' || key.includes('deadlocked');
+}
+
+export function resolveMobyMission(mission: number, game: unknown): number {
+  return isDeadlockedGame(game) ? mission : -1;
+}
+
+export function refreshMobyInstanceBounds(
+  mesh: THREE.InstancedMesh,
+  localBoundingSphereCenter: THREE.Vector3
+): void {
+  mesh.geometry.boundingSphere!.center.copy(localBoundingSphereCenter);
+  mesh.computeBoundingBox();
+  mesh.computeBoundingSphere();
+  mesh.geometry.boundingSphere!.center.copy(mesh.boundingSphere!.center);
 }
 
 export function pruneMobyLods(root: THREE.Object3D): void {

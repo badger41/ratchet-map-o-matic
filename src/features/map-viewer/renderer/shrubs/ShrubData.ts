@@ -1,8 +1,5 @@
 import * as THREE from 'three/webgpu';
-import type {
-  GltfExportEntry,
-  ShrubInstanceRecord
-} from '../../../../services/mapPackages/mapPackageTypes';
+import type { ShrubInstanceRecord } from '../../../../services/mapPackages/mapPackageTypes';
 import {
   gltfToPs2BasisMatrix,
   ps2ToGltfBasisMatrix,
@@ -10,33 +7,6 @@ import {
   shrubInstanceChunkMaxRecords,
   type PreparedShrubRecord
 } from './ShrubTypes';
-import { numberValue } from '../ties/tieUtils';
-
-export function buildShrubEntryMap(entries: GltfExportEntry[]): Map<number, GltfExportEntry> {
-  const map = new Map<number, GltfExportEntry>();
-  for (const entry of entries) {
-    const modelId = numberValue(entry.ModelId);
-    if (modelId !== null) {
-      map.set(modelId, entry);
-    }
-  }
-
-  return map;
-}
-
-export function groupShrubRecordsByClassId(records: ShrubInstanceRecord[]): Map<number, ShrubInstanceRecord[]> {
-  const groups = new Map<number, ShrubInstanceRecord[]>();
-  for (const record of records) {
-    const group = groups.get(record.classId);
-    if (group) {
-      group.push(record);
-    } else {
-      groups.set(record.classId, [record]);
-    }
-  }
-
-  return groups;
-}
 
 export function prepareShrubRecord(record: ShrubInstanceRecord): PreparedShrubRecord {
   const instanceMatrix = buildShrubInstanceMatrix(record);

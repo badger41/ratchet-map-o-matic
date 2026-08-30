@@ -28,11 +28,10 @@ import {
   pruneToLod0
 } from './TieClassSource';
 import {
-  buildTieEntryMap,
   chunkTieRecords,
-  groupRecordsByClassId,
   prepareTieRecord
 } from './TieData';
+import { buildModelEntryMap, groupRecordsByClassId } from '../InstanceData';
 import { hasTieBloomSourceNear } from './TieBloomRange';
 import {
   disposeInactiveMaterial,
@@ -216,7 +215,7 @@ export class TieInstanceController {
     this.tieGroupByRecordIndex = groupBytes
       ? buildTieGroupRecordIndex(parseTieGroupRecords(groupBytes, records.length))
       : new Map();
-    const entriesByClassId = buildTieEntryMap(mapPackage.tieEntries);
+    const entriesByClassId = buildModelEntryMap(mapPackage.tieEntries);
     const recordsByClassId = groupRecordsByClassId(records);
 
     this.stats.classIds = classIds.length || mapPackage.tieClassCountExpected || 0;

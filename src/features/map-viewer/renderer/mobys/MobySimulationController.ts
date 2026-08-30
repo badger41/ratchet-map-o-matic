@@ -1,13 +1,16 @@
 import * as THREE from 'three/webgpu';
 import type { LoadedMapPackage } from '../../../../services/mapPackages/mapPackageTypes';
 import type {
-  DlMobyInstance,
   DlMobyInstances,
+  DlMobyMissionInstances,
   GameplayCuboid,
   GameplaySpline
 } from '../../../../services/wasm/ratchetPs2Wasm';
+import { mobyMissionVisible } from '../../../../services/mapLoading/dlMobyMissions';
 import { disposeObject3D } from '../RendererDisposal';
+import { groupRecordsByClassId } from '../InstanceData';
 import type { MobyInstanceController } from './MobyInstanceController';
+import { isDeadlockedGame } from './MobyGltfSupport';
 import type { TieInstanceController } from '../ties/TieInstanceController';
 import {
   type MobyClass,
@@ -16,6 +19,7 @@ import {
   type MobyClassUpdate
 } from './simulation/MobyClass';
 import { dlMobyClassFactories } from './simulation/dl/dlMobyClasses';
+import { isSplineMoverSpawnTarget } from './simulation/dl/5992/SplineMoverData';
 import { gcMobyClassFactories } from './simulation/gc/gcMobyClasses';
 import { uyaMobyClassFactories } from './simulation/uya/uyaMobyClasses';
 
@@ -26,10 +30,16 @@ export interface MobySimulationStats {
   fixedTicks: number;
 }
 
+interface MobySimulationClass {
+  mission: number | null;
+  mobyClass: MobyClass;
+}
+
 export class MobySimulationController {
   private root: THREE.Group | null = null;
-  private classes: MobyClass[] = [];
+  private classes: MobySimulationClass[] = [];
   private enabled = true;
+  private selectedMission: number | null = null;
   private fixedTicks = 0;
   private registeredClasses = 0;
 
@@ -37,6 +47,7 @@ export class MobySimulationController {
     parent: THREE.Object3D,
     mapPackage: LoadedMapPackage,
     mobyInstances: DlMobyInstances | null,
+    mobyMissions: DlMobyMissionInstances[],
     mobyController: MobyInstanceController,
     tieController: TieInstanceController,
     camera: THREE.Camera,
@@ -53,28 +64,44 @@ export class MobySimulationController {
 
     const classFactories = getMobyClassFactoriesForGame(mapPackage.rootManifest.Game);
     this.registeredClasses = classFactories.size;
-    const recordsByClassId = groupMobyRecordsByClassId(mobyInstances?.instances ?? []);
-    for (const [classId, createClass] of classFactories) {
-      const instances = recordsByClassId.get(classId) ?? [];
-      if (instances.length === 0) {
-        continue;
-      }
+    const coreInstances = mobyInstances?.instances ?? [];
+    const indexedCoreInstances = coreInstances.filter((instance) => !isSplineMoverSpawnTarget(instance));
+    const instanceSets = [
+      { mission: null, instances: coreInstances, indexedInstances: indexedCoreInstances },
+      ...mobyMissions.map(({ missionIndex, mobyInstances: missionInstances }) => ({
+        mission: missionIndex,
+        instances: missionInstances.instances,
+        indexedInstances: [
+          ...indexedCoreInstances,
+          ...missionInstances.instances.filter((instance) => !isSplineMoverSpawnTarget(instance))
+        ]
+      }))
+    ];
+    for (const instanceSet of instanceSets) {
+      const recordsByClassId = groupRecordsByClassId(instanceSet.instances);
+      for (const [classId, createClass] of classFactories) {
+        const instances = recordsByClassId.get(classId) ?? [];
+        if (instances.length === 0) {
+          continue;
+        }
 
-      const mobyClass = await createClass({
-        root,
-        mapPackage,
-        mobyController,
-        tieController,
-        camera,
-        instances,
-        cuboids,
-        splines
-      });
-      if (mobyClass) {
-        mobyClass.setEnabled(this.enabled);
-        this.classes.push(mobyClass);
+        const mobyClass = await createClass({
+          root,
+          mapPackage,
+          mobyController,
+          tieController,
+          camera,
+          instances,
+          indexedInstances: instanceSet.indexedInstances,
+          cuboids,
+          splines
+        });
+        if (mobyClass) {
+          this.classes.push({ mission: instanceSet.mission, mobyClass });
+        }
       }
     }
+    this.applyEnabledClasses();
 
     return this.getStats();
   }
@@ -84,9 +111,16 @@ export class MobySimulationController {
     if (this.root) {
       this.root.visible = enabled;
     }
-    for (const mobyClass of this.classes) {
-      mobyClass.setEnabled(enabled);
+    this.applyEnabledClasses();
+  }
+
+  setMission(mission: number | null): void {
+    if (this.selectedMission === mission) {
+      return;
     }
+
+    this.selectedMission = mission;
+    this.applyEnabledClasses();
   }
 
   fixedUpdate(stepSeconds: number): void {
@@ -99,8 +133,10 @@ export class MobySimulationController {
       stepSeconds,
       tick: this.fixedTicks
     };
-    for (const mobyClass of this.classes) {
-      mobyClass.update(update);
+    for (const simulation of this.classes) {
+      if (this.isClassEnabled(simulation)) {
+        simulation.mobyClass.update(update);
+      }
     }
   }
 
@@ -110,23 +146,29 @@ export class MobySimulationController {
     }
 
     const frame: MobyClassFrame = { timeSeconds };
-    for (const mobyClass of this.classes) {
-      mobyClass.render(frame);
+    for (const simulation of this.classes) {
+      if (this.isClassEnabled(simulation)) {
+        simulation.mobyClass.render(frame);
+      }
     }
   }
 
   getStats(): MobySimulationStats {
+    const activeClasses = this.classes.filter((simulation) => this.isClassEnabled(simulation));
     return {
       registeredClasses: this.registeredClasses,
-      activeSimulators: this.classes.length,
-      simulatedInstances: this.classes.reduce((total, mobyClass) => total + mobyClass.instanceCount, 0),
+      activeSimulators: activeClasses.length,
+      simulatedInstances: activeClasses.reduce(
+        (total, simulation) => total + simulation.mobyClass.instanceCount,
+        0
+      ),
       fixedTicks: this.fixedTicks
     };
   }
 
   dispose(): void {
-    for (const mobyClass of this.classes) {
-      mobyClass.dispose();
+    for (const simulation of this.classes) {
+      simulation.mobyClass.dispose();
     }
 
     this.classes = [];
@@ -138,25 +180,29 @@ export class MobySimulationController {
       this.root = null;
     }
   }
-}
 
-function groupMobyRecordsByClassId(records: DlMobyInstance[]): Map<number, DlMobyInstance[]> {
-  const groups = new Map<number, DlMobyInstance[]>();
-  for (const record of records) {
-    const group = groups.get(record.classId);
-    if (group) {
-      group.push(record);
-    } else {
-      groups.set(record.classId, [record]);
-    }
+  private isClassEnabled(simulation: MobySimulationClass): boolean {
+    return this.enabled && mobyMissionVisible(simulation.mission ?? -1, this.selectedMission);
   }
 
-  return groups;
+  private applyEnabledClasses(): void {
+    // Disable inactive missions first so active ones restore any shared class visibility last.
+    for (const simulation of this.classes) {
+      if (!this.isClassEnabled(simulation)) {
+        simulation.mobyClass.setEnabled(false);
+      }
+    }
+    for (const simulation of this.classes) {
+      if (this.isClassEnabled(simulation)) {
+        simulation.mobyClass.setEnabled(true);
+      }
+    }
+  }
 }
 
 function getMobyClassFactoriesForGame(game: unknown): Map<number, MobyClassFactory> {
   const key = typeof game === 'string' ? game.toLowerCase() : '';
-  if (key === 'dl' || key.includes('deadlocked')) {
+  if (isDeadlockedGame(game)) {
     return dlMobyClassFactories;
   }
 

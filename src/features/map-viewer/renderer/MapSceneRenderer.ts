@@ -64,12 +64,14 @@ import {
 } from './RendererDisposal';
 import { yieldToBrowser } from './RendererTiming';
 import { MobyInstanceController } from './mobys/MobyInstanceController';
+import { isDeadlockedGame } from './mobys/MobyGltfSupport';
 import { MobySimulationController } from './mobys/MobySimulationController';
 import {
   defaultWaterPlaneDebugOptions,
   setWaterPlaneDebugOptions,
   type WaterPlaneDebugOptions
 } from './mobys/simulation/dl/2871/WaterPlane';
+import { materializeSplineMoverSpawnTargets } from './mobys/simulation/dl/5992/SplineMoverData';
 import { SkyboxController } from './skybox/SkyboxController';
 import { mapLinearColorFromRgb96 } from './skybox/SkyboxBackground';
 import { ShrubInstanceController } from './shrubs/ShrubInstanceController';
@@ -365,6 +367,16 @@ export class MapSceneRenderer {
     const root = new THREE.Group();
     root.name = 'map_package';
     const modelDisplayOptions = this.createModelDisplayNodeOptions();
+    const isDeadlocked = isDeadlockedGame(mapPackage.rootManifest.Game);
+    const mobyInstances = isDeadlocked && this.mobyInstances
+      ? materializeSplineMoverSpawnTargets(this.mobyInstances)
+      : this.mobyInstances;
+    const mobyMissions = isDeadlocked
+      ? this.mobyMissions.map((mission) => ({
+        ...mission,
+        mobyInstances: materializeSplineMoverSpawnTargets(mission.mobyInstances)
+      }))
+      : this.mobyMissions;
 
     try {
       const skyboxPromise = this.timeAsyncStep('load skybox', () => this.loadSkybox(mapPackage));
@@ -373,7 +385,13 @@ export class MapSceneRenderer {
         skyboxPromise,
         skyboxPromise.then(() => this.timeAsyncStep('load ties', () => this.loadTies(root, mapPackage, modelDisplayOptions))),
         this.timeAsyncStep('load shrubs', () => this.loadShrubs(root, mapPackage, modelDisplayOptions)),
-        this.timeAsyncStep('load mobys', () => this.loadMobys(root, mapPackage, modelDisplayOptions))
+        this.timeAsyncStep('load mobys', () => this.loadMobys(
+          root,
+          mapPackage,
+          modelDisplayOptions,
+          mobyInstances,
+          mobyMissions
+        ))
       ] as const;
       let loadResults;
       try {
@@ -386,8 +404,8 @@ export class MapSceneRenderer {
       await this.timeAsyncStep('load moby simulation', () => this.mobySimulationController.load(
         root,
         mapPackage,
-        // ponytail: missions affect instanced rendering only; include selected mission records if mission simulation is needed.
-        this.mobyInstances,
+        mobyInstances,
+        mobyMissions,
         this.mobyController,
         this.tieController,
         this.camera,
@@ -398,6 +416,7 @@ export class MapSceneRenderer {
       this.shrubController.moveAlphaBlendPassToEnd();
       this.mobyController.moveAlphaBlendPassToEnd();
       this.mobySimulationController.setEnabled(this.mobySimulationEnabled);
+      this.mobyController.flushInstanceTransforms();
       this.resetMobySimulationClock(performance.now());
 
       await this.timeAsyncStep('first frame setup', () => this.prepareFirstFrame(root));
@@ -576,7 +595,9 @@ export class MapSceneRenderer {
   private async loadMobys(
     root: THREE.Object3D,
     mapPackage: LoadedMapPackage,
-    modelDisplayOptions: ModelDisplayNodeOptions
+    modelDisplayOptions: ModelDisplayNodeOptions,
+    mobyInstances: DlMobyInstances | null,
+    mobyMissions: DlMobyMissionInstances[]
   ): Promise<MobyStats> {
     this.onLoadProgress({ id: 'mobys', status: 'active', detail: 'Preparing instances' });
     this.onStatus('Loading moby instances');
@@ -584,8 +605,8 @@ export class MapSceneRenderer {
       root,
       mapPackage,
       this.loader,
-      this.mobyInstances,
-      this.mobyMissions,
+      mobyInstances,
+      mobyMissions,
       this.resolveShrubRenderOptions(),
       modelDisplayOptions,
       (loaded, total) => {
@@ -877,6 +898,8 @@ export class MapSceneRenderer {
 
   setMobyMission(mission: number | null): void {
     this.mobyController.setMission(mission);
+    this.mobySimulationController.setMission(mission);
+    this.resetMobySimulationClock(performance.now());
   }
 
   setMobySimulationEnabled(enabled: boolean): void {
@@ -1051,6 +1074,7 @@ export class MapSceneRenderer {
     this.controls?.update(frameMs / 1000);
     this.skyboxController.update(time / 1000);
     this.mobySimulationController.renderUpdate(time / 1000);
+    this.mobyController.flushInstanceTransforms();
     this.skyboxController.syncCamera(this.camera, this.skyCamera);
     const bloomStartMs = collectDetails ? performance.now() : 0;
     this.lastBloomStatus = this.resolveGlowBloomStatus();

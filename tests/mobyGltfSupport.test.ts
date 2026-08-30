@@ -3,10 +3,12 @@ import test from 'node:test';
 import * as THREE from 'three/webgpu';
 import {
   inspectMobyViewOptions,
+  isDeadlockedGame,
   isMobyMetalObject,
   mobyPreviewAlphaScale,
   prepareMobyInstanceLighting,
   pruneMobyLods,
+  refreshMobyInstanceBounds,
   resolveMobyMission,
   setMobyBangles,
   setMobyBindPose,
@@ -26,6 +28,7 @@ test('uses UYA moby color as ambient light and preserves its directional-light s
   assert.equal(usesStoredMobyAmbient('DL'), false);
   assert.equal(resolveMobyMission(8, 'UYA'), -1);
   assert.equal(resolveMobyMission(8, 'DL'), 8);
+  assert.equal(isDeadlockedGame('Deadlocked'), true);
   assert.deepEqual(prepareMobyInstanceLighting({
     color: { red: 75, green: 60, blue: 47 },
     light: 1
@@ -41,6 +44,28 @@ test('uses UYA moby color as ambient light and preserves its directional-light s
     color: { red: 72, green: 69, blue: 80 },
     light: 0x0707
   }).lightSelector, 0x77);
+});
+
+test('keeps animated moby batch bounds stable across updates', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    2, 0, 0,
+    0, 2, 0
+  ], 3));
+  const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshBasicMaterial(), 1);
+  mesh.setMatrixAt(0, new THREE.Matrix4().makeTranslation(10, 0, 0));
+  mesh.computeBoundingSphere();
+  const localCenter = geometry.boundingSphere!.center.clone();
+  geometry.boundingSphere!.center.copy(mesh.boundingSphere!.center);
+
+  mesh.setMatrixAt(0, new THREE.Matrix4().makeTranslation(20, 0, 0));
+  refreshMobyInstanceBounds(mesh, localCenter);
+  const firstCenter = mesh.boundingSphere!.center.clone();
+  refreshMobyInstanceBounds(mesh, localCenter);
+
+  assert.ok(mesh.boundingSphere!.center.distanceTo(firstCenter) < 1e-6);
+  assert.ok(Math.abs(mesh.boundingSphere!.center.x - (20 + localCenter.x)) < 1e-6);
 });
 
 test('keeps high-detail moby faces and drops lower LOD groups', () => {

@@ -22,6 +22,7 @@ import {
   type MobyClassContext,
   type MobyClassUpdate
 } from './MobyClass';
+import { indexGameplaySplines } from './GameplaySplinePath';
 import {
   advanceWaterTristripOffset,
   createWaterTristripGeometry,
@@ -51,7 +52,7 @@ export async function createWaterTristripMobyClass(
   context: MobyClassContext,
   parsePvar: WaterTristripPvarParser
 ): Promise<MobyClass | null> {
-  const splines = new Map(context.splines.map((spline) => [spline.index, spline]));
+  const splines = indexGameplaySplines(context.splines);
   const configs = context.instances.flatMap((instance): WaterTristripConfig[] => {
     const pvar = parsePvar(instance.pvar?.data);
     const spline = pvar && splines.get(pvar.splineIndex);

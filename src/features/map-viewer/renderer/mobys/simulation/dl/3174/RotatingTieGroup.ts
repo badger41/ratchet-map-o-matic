@@ -9,6 +9,7 @@ import {
   type MobyClassContext,
   type MobyClassUpdate
 } from '../../MobyClass';
+import { wrapRadians } from '../../SimulationMath';
 
 export const rotatingTieGroupMobyClassId = 0x0c66;
 
@@ -24,7 +25,6 @@ interface RotatingTieGroupConfig {
 
 const c66PvarByteLength = 0x20;
 const degreesToRadians = Math.PI / 180;
-const tau = Math.PI * 2;
 
 export class RotatingTieGroupMobyClass extends MobyClass {
   private readonly euler = new THREE.Euler();
@@ -66,9 +66,9 @@ export class RotatingTieGroupMobyClass extends MobyClass {
 
   override update(update: MobyClassUpdate): void {
     for (const config of this.configs) {
-      config.angles.x = wrapAngle(config.angles.x + config.rotationRadiansPerSecond.x * update.stepSeconds);
-      config.angles.y = wrapAngle(config.angles.y + config.rotationRadiansPerSecond.y * update.stepSeconds);
-      config.angles.z = wrapAngle(config.angles.z + config.rotationRadiansPerSecond.z * update.stepSeconds);
+      config.angles.x = wrapRadians(config.angles.x + config.rotationRadiansPerSecond.x * update.stepSeconds);
+      config.angles.y = wrapRadians(config.angles.y + config.rotationRadiansPerSecond.y * update.stepSeconds);
+      config.angles.z = wrapRadians(config.angles.z + config.rotationRadiansPerSecond.z * update.stepSeconds);
     }
 
     this.applyTieGroupTransforms();
@@ -170,10 +170,4 @@ function uniqueValidTieGroupIndices(indices: number[]): number[] {
   }
 
   return [...unique];
-}
-
-function wrapAngle(value: number): number {
-  return value > tau || value < -tau
-    ? value % tau
-    : value;
 }

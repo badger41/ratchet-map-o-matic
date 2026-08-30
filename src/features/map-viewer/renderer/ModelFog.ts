@@ -44,8 +44,8 @@ export interface ModelFogDebugOptions {
 }
 
 export const defaultModelFogDebugOptions: ModelFogDebugOptions = {
-  fogNearDistanceScale: 1,
-  fogFarDistanceScale: 1,
+  fogNearDistanceScale: 0.9,
+  fogFarDistanceScale: 0.9,
   fogNearIntensityScale: 1,
   fogFarIntensityScale: 1,
   fogMeshColorStrength: 1,
@@ -164,7 +164,10 @@ function applyModelFogNode(
   const displayColor = sRGBTransferOETF(colorNode) as Node<'vec3'>;
   const displayFogBase = sRGBTransferOETF(vec3(modelFogRed, modelFogGreen, modelFogBlue)) as Node<'vec3'>;
   const displayFog = displayFogBase.mul(modelFogColorScale).clamp(0, 1);
-  return sRGBTransferEOTF(mix(displayColor, displayFog, fogAmount)) as Node<'vec3'>;
+  const foggedDisplayByte = floor(
+    mix(displayColor, displayFog, fogAmount).clamp(0, 1).mul(float(255)).add(float(0.05))
+  );
+  return sRGBTransferEOTF(foggedDisplayByte.div(float(255))) as Node<'vec3'>;
 }
 
 function applyStaticModelFogNode(
@@ -206,7 +209,10 @@ function applyStaticModelFogNode(
   const displayFog = displayFogBase
     .mul(float(finiteNonNegative(fogOptions.fogMeshColorStrength, defaultModelFogDebugOptions.fogMeshColorStrength)))
     .clamp(0, 1);
-  return sRGBTransferEOTF(mix(displayColor, displayFog, fogAmount)) as Node<'vec3'>;
+  const foggedDisplayByte = floor(
+    mix(displayColor, displayFog, fogAmount).clamp(0, 1).mul(float(255)).add(float(0.05))
+  );
+  return sRGBTransferEOTF(foggedDisplayByte.div(float(255))) as Node<'vec3'>;
 }
 
 export function applyModelColorGammaNode(colorNode: Node<'vec3'>, exponent: number): Node<'vec3'> {

@@ -19,11 +19,10 @@ import {
   loadShrubClassSource
 } from './ShrubClassSource';
 import {
-  buildShrubEntryMap,
   chunkShrubRecords,
-  groupShrubRecordsByClassId,
   prepareShrubRecord
 } from './ShrubData';
+import { buildModelEntryMap, groupRecordsByClassId } from '../InstanceData';
 import { disposeObject3D } from './shrubDisposal';
 import {
   createLightSelectorInstanceAttribute,
@@ -119,8 +118,8 @@ export class ShrubInstanceController {
     ]);
     const classIds = parseShrubClassIds(classIdsBytes);
     const records = parseShrubInstanceRecords(instancesBytes, mapPackage.shrubInstanceCountExpected);
-    const entriesByClassId = buildShrubEntryMap(mapPackage.shrubEntries);
-    const recordsByClassId = groupShrubRecordsByClassId(records);
+    const entriesByClassId = buildModelEntryMap(mapPackage.shrubEntries);
+    const recordsByClassId = groupRecordsByClassId(records);
 
     this.stats.classIds = classIds.length || mapPackage.shrubClassCountExpected || 0;
     this.stats.instances = records.length;

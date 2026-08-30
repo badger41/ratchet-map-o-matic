@@ -45,11 +45,8 @@ import {
   isMesh
 } from '../shrubs/ShrubClassSource';
 import { disposeObject3D } from '../RendererDisposal';
-import {
-  gltfToPs2BasisMatrix,
-  ps2ToGltfBasisMatrix
-} from '../shrubs/ShrubTypes';
-import { LoadYieldController, numberValue } from '../ties/tieUtils';
+import { LoadYieldController } from '../ties/tieUtils';
+import { buildModelEntryMap, groupRecordsByClassId } from '../InstanceData';
 import {
   configureModelMaterialTransparency,
   createModelOpacityNode,
@@ -88,9 +85,11 @@ import {
   mobyReflectionOriginAttributeName,
   prepareMobyInstanceLighting,
   pruneMobyLods,
+  refreshMobyInstanceBounds,
   resolveMobyMission,
   usesStoredMobyAmbient
 } from './MobyGltfSupport';
+import { buildMobyInstanceMatrix } from './MobyData';
 import { mergeAdjacentModelPrimitives } from '../ModelPrimitiveMerge';
 
 type MobyGroup = THREE.Group & {
@@ -112,13 +111,22 @@ interface MobyMeshBinding {
   mission: number;
   mesh: THREE.InstancedMesh;
   material: THREE.Material | THREE.Material[];
+  records: PreparedMobyRecord[];
+  primitiveMatrixWorld: THREE.Matrix4;
+  localBoundingSphereCenter: THREE.Vector3;
 }
 
 interface PreparedMobyRecord {
+  source: DlMobyInstance;
   mission: number;
   instanceMatrix: THREE.Matrix4;
   ambientColor: [number, number, number];
   lightSelector: number;
+}
+
+interface MobyRecordBinding {
+  binding: MobyMeshBinding;
+  localIndex: number;
 }
 
 type MobyLoadProgressCallback = (loadedClasses: number, totalClasses: number) => void;
@@ -156,6 +164,9 @@ export class MobyInstanceController {
   private readonly lightSelectorsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
   private readonly ambientColorsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
   private readonly reflectionOriginsByChunk = new WeakMap<PreparedMobyRecord[], THREE.InstancedBufferAttribute>();
+  private readonly instanceTransformMatrix = new THREE.Matrix4();
+  private instanceBindings = new WeakMap<DlMobyInstance, MobyRecordBinding[]>();
+  private readonly dirtyTransformBindings = new Set<MobyMeshBinding>();
 
   async load(
     parent: THREE.Object3D,
@@ -196,8 +207,8 @@ export class MobyInstanceController {
 
     this.chromeTexture = await loadMobyChromeTexture(mapPackage, loader);
 
-    const entriesByClassId = buildMobyEntryMap(mapPackage.mobyEntries);
-    const recordsByClassId = groupMobyRecordsByClassId(records);
+    const entriesByClassId = buildModelEntryMap(mapPackage.mobyEntries);
+    const recordsByClassId = groupRecordsByClassId(records);
     this.stats.classIds = recordsByClassId.size;
     this.stats.instances = records.length;
 
@@ -211,6 +222,8 @@ export class MobyInstanceController {
     const directionalLightBinding = this.directionalLightBinding;
     this.directionalLightBinding = null;
     this.modelDisplayOptions = null;
+    this.instanceBindings = new WeakMap();
+    this.dirtyTransformBindings.clear();
 
     if (!this.group && !this.alphaBlendGroup) {
       if (directionalLightBinding) {
@@ -266,6 +279,34 @@ export class MobyInstanceController {
         binding.mesh.visible = visible && mobyMissionVisible(binding.mission, this.selectedMission);
       }
     }
+    this.markBundleNeedsUpdate();
+  }
+
+  setInstanceTransform(instance: DlMobyInstance, transform: THREE.Matrix4 | null): void {
+    for (const { binding, localIndex } of this.instanceBindings.get(instance) ?? []) {
+      const instanceMatrix = transform ?? binding.records[localIndex].instanceMatrix;
+      this.instanceTransformMatrix.multiplyMatrices(instanceMatrix, binding.primitiveMatrixWorld);
+      binding.mesh.setMatrixAt(localIndex, this.instanceTransformMatrix);
+      binding.mesh.instanceMatrix.needsUpdate = true;
+      this.dirtyTransformBindings.add(binding);
+      const reflectionOrigin = binding.mesh.geometry.getAttribute(mobyReflectionOriginAttributeName);
+      if (reflectionOrigin instanceof THREE.InstancedBufferAttribute) {
+        const elements = instanceMatrix.elements;
+        reflectionOrigin.setXYZ(localIndex, elements[12], elements[13], elements[14]);
+        reflectionOrigin.needsUpdate = true;
+      }
+    }
+  }
+
+  flushInstanceTransforms(): void {
+    if (this.dirtyTransformBindings.size === 0) {
+      return;
+    }
+
+    for (const binding of this.dirtyTransformBindings) {
+      refreshMobyInstanceBounds(binding.mesh, binding.localBoundingSphereCenter);
+    }
+    this.dirtyTransformBindings.clear();
     this.markBundleNeedsUpdate();
   }
 
@@ -476,6 +517,7 @@ export class MobyInstanceController {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
+    const localBoundingSphereCenter = geometry.boundingSphere!.center.clone();
     // Three sorts instanced meshes by geometry bounds, so use this batch's actual center.
     geometry.boundingSphere!.center.copy(mesh.boundingSphere!.center);
     const targetGroup = this.alphaBlendGroup && modelMaterialUsesAlphaBlend(material)
@@ -485,7 +527,25 @@ export class MobyInstanceController {
     if (!primitive.metal) {
       syncModelAlphaOpaquePass(mesh);
     }
-    this.meshBindings.push({ classId, mission, mesh, material });
+    const binding: MobyMeshBinding = {
+      classId,
+      mission,
+      mesh,
+      material,
+      records,
+      primitiveMatrixWorld: primitive.matrixWorld.clone(),
+      localBoundingSphereCenter
+    };
+    this.meshBindings.push(binding);
+    for (const [localIndex, record] of records.entries()) {
+      const bindings = this.instanceBindings.get(record.source);
+      const recordBinding = { binding, localIndex };
+      if (bindings) {
+        bindings.push(recordBinding);
+      } else {
+        this.instanceBindings.set(record.source, [recordBinding]);
+      }
+    }
 
     this.stats.batches += 1;
     this.stats.triangles += estimateTriangleCount(geometry) * records.length;
@@ -573,64 +633,13 @@ function collectMobyPrimitives(source: THREE.Object3D): MobyPrimitive[] {
   return mergeAdjacentModelPrimitives(primitives, (left, right) => left.metal === right.metal);
 }
 
-function buildMobyEntryMap(entries: GltfExportEntry[]): Map<number, GltfExportEntry> {
-  const map = new Map<number, GltfExportEntry>();
-  for (const entry of entries) {
-    const modelId = numberValue(entry.ModelId);
-    if (modelId !== null) {
-      map.set(modelId, entry);
-    }
-  }
-
-  return map;
-}
-
-function groupMobyRecordsByClassId(records: DlMobyInstance[]): Map<number, DlMobyInstance[]> {
-  const groups = new Map<number, DlMobyInstance[]>();
-  for (const record of records) {
-    const group = groups.get(record.classId);
-    if (group) {
-      group.push(record);
-    } else {
-      groups.set(record.classId, [record]);
-    }
-  }
-
-  return groups;
-}
-
 function prepareMobyRecord(record: DlMobyInstance, game: string | null | undefined): PreparedMobyRecord {
   return {
+    source: record,
     mission: resolveMobyMission(record.mission, game),
     instanceMatrix: buildMobyInstanceMatrix(record),
     ...prepareMobyInstanceLighting(record)
   };
-}
-
-function buildMobyInstanceMatrix(record: DlMobyInstance): THREE.Matrix4 {
-  const position = new THREE.Vector3(
-    finiteNumber(record.position.x),
-    finiteNumber(record.position.y),
-    finiteNumber(record.position.z)
-  ).applyMatrix4(ps2ToGltfBasisMatrix);
-  const sourceRotation = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(
-    finiteNumber(record.rotation.x),
-    finiteNumber(record.rotation.y),
-    finiteNumber(record.rotation.z),
-    'ZYX'
-  ));
-  const rotationMatrix = new THREE.Matrix4()
-    .copy(ps2ToGltfBasisMatrix)
-    .multiply(sourceRotation)
-    .multiply(gltfToPs2BasisMatrix);
-  const rotation = new THREE.Quaternion().setFromRotationMatrix(rotationMatrix);
-  const scale = finitePositive(record.scale, 1);
-
-  return new THREE.Matrix4().compose(
-    position,
-    rotation,
-    new THREE.Vector3(scale, scale, scale)
-  );
 }
 
 function chunkMobyRecords(records: PreparedMobyRecord[]): PreparedMobyRecord[][] {
@@ -903,12 +912,4 @@ function quantizeMobyLightTermNode(lightTermNode: Node<'vec3'>): Node<'vec3'> {
       .mul(float(mobyPs2NeutralByte))
       .add(float(0.5))
   ).div(float(mobyPs2NeutralByte));
-}
-
-function finiteNumber(value: number, fallback = 0): number {
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function finitePositive(value: number, fallback: number): number {
-  return Number.isFinite(value) && Math.abs(value) > 1e-8 ? value : fallback;
 }

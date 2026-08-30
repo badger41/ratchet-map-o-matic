@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
 import type {
-  GltfExportEntry,
   TieColorTable,
   TieInstanceRecord
 } from '../../../../services/mapPackages/mapPackageTypes';
@@ -11,33 +10,6 @@ import {
   tieInstanceChunkMaxRecords,
   type PreparedTieRecord
 } from './TieTypes';
-import { numberValue } from './tieUtils';
-
-export function buildTieEntryMap(entries: GltfExportEntry[]): Map<number, GltfExportEntry> {
-  const map = new Map<number, GltfExportEntry>();
-  for (const entry of entries) {
-    const modelId = numberValue(entry.ModelId);
-    if (modelId !== null) {
-      map.set(modelId, entry);
-    }
-  }
-
-  return map;
-}
-
-export function groupRecordsByClassId(records: TieInstanceRecord[]): Map<number, TieInstanceRecord[]> {
-  const groups = new Map<number, TieInstanceRecord[]>();
-  for (const record of records) {
-    const group = groups.get(record.classId);
-    if (group) {
-      group.push(record);
-    } else {
-      groups.set(record.classId, [record]);
-    }
-  }
-
-  return groups;
-}
 
 export function prepareTieRecord(record: TieInstanceRecord, colorTable: TieColorTable | null): PreparedTieRecord {
   const instanceMatrix = buildTieInstanceMatrix(record);
