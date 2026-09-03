@@ -21,6 +21,7 @@ import type {
   Vec4,
   WorldManifest
 } from './mapPackageTypes';
+import { parseRc1PointLightRecords } from './rc1/Rc1PointLights.ts';
 
 export function normalizeManifestUrl(value: string): string {
   const trimmed = value.trim();
@@ -96,9 +97,15 @@ export async function loadMapPackageFromAssetPackage(
   const worldManifestPath = joinPackagePath(manifestRootPath, 'world/manifest.json');
   const worldManifest = await assetPackage.readOptionalJson<WorldManifest>(worldManifestPath);
   const directionalLightPackagePath = findDirectionalLightPath(manifestRootPath, rootManifest, worldManifest);
-  const directionalLightUrl = await assetPackage.resolveUrl(directionalLightPackagePath);
-  const directionalLightBytes = await assetPackage.readBytes(directionalLightPackagePath);
-  const directionalLights = parseDirectionalLightRecords(directionalLightBytes);
+  const directionalLightBytes = await assetPackage.readOptionalBytes(directionalLightPackagePath);
+  const directionalLights = directionalLightBytes ? parseDirectionalLightRecords(directionalLightBytes) : [];
+  const rc1PointLightPackagePath = rootManifest.Game?.toUpperCase() === 'RC1'
+    ? findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'point_lights')
+    : null;
+  const rc1PointLightBytes = rc1PointLightPackagePath
+    ? await assetPackage.readOptionalBytes(rc1PointLightPackagePath)
+    : null;
+  const rc1PointLights = rc1PointLightBytes ? parseRc1PointLightRecords(rc1PointLightBytes) : [];
   const tieClassIdsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_class_ids');
   const tieInstancesPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_instances');
   const tieColorsPackagePath = findStaticInstancePath(manifestRootPath, rootManifest, worldManifest, 'tie_instance_colors');
@@ -149,9 +156,8 @@ export async function loadMapPackageFromAssetPackage(
     shrubGroupsPath: shrubGroupsPackagePath,
     shrubClassCountExpected: numberValue(worldManifest?.ShrubClassCount),
     shrubInstanceCountExpected: numberValue(worldManifest?.ShrubInstanceCount),
-    directionalLightPath: directionalLightPackagePath,
-    directionalLightUrl,
-    directionalLights
+    directionalLights,
+    rc1PointLights
   };
 }
 

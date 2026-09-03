@@ -83,6 +83,14 @@ import {
   LoadYieldController
 } from './tieUtils';
 import {
+  createRc1TiePointLightAttributes,
+  prepareRc1PointLights,
+  rc1TiePointColorAttributeName,
+  rc1TiePointDirectionAttributeName,
+  type PreparedRc1PointLight,
+  type Rc1TiePointLightAttributes
+} from '../rc1/Rc1Lighting.ts';
+import {
   aboveWaterRenderOrder,
   belowWaterRenderOrder,
   createWaterSurfaceMaterialPasses
@@ -125,6 +133,8 @@ export class TieInstanceController {
   private stats: TieStats = { ...emptyTieStats };
   private meshBindings: TieInstancedMeshBinding[] = [];
   private directionalLights: DirectionalLightRecord[] = [];
+  private rc1PointLights: PreparedRc1PointLight[] = [];
+  private isRc1 = false;
   private directionalLightBinding: TieDirectionalLightBinding | null = null;
   private skyboxReflectionTexture: THREE.Texture | null = null;
   private options: TieRenderOptions = { ...defaultTieRenderOptions };
@@ -151,6 +161,7 @@ export class TieInstanceController {
   private readonly ambientRowsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
   private readonly glowRowsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
   private readonly lightSelectorsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
+  private readonly rc1PointLightsByChunk = new WeakMap<PreparedTieRecord[], Rc1TiePointLightAttributes>();
   private readonly reflectionOriginsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
   private readonly mirroredReflectionOriginsByChunk = new WeakMap<PreparedTieRecord[], THREE.InstancedBufferAttribute>();
 
@@ -187,6 +198,8 @@ export class TieInstanceController {
     this.applyBundleMode();
     this.directionalLights = mapPackage.directionalLights;
     this.directionalLightBinding = createTieDirectionalLightBinding(mapPackage.directionalLights);
+    this.isRc1 = mapPackage.rootManifest.Game?.toUpperCase() === 'RC1';
+    this.rc1PointLights = prepareRc1PointLights(mapPackage.rc1PointLights);
 
     if (!mapPackage.tieClassIdsPath || !mapPackage.tieInstancesPath || mapPackage.tieEntries.length === 0) {
       logTieTimingEnd('load skipped', loadStartMs);
@@ -242,6 +255,8 @@ export class TieInstanceController {
   dispose(): void {
     const directionalLightBinding = this.directionalLightBinding;
     this.directionalLights = [];
+    this.rc1PointLights = [];
+    this.isRc1 = false;
     this.directionalLightBinding = null;
     this.skyboxReflectionTexture = null;
     this.modelDisplayOptions = null;
@@ -555,6 +570,15 @@ export class TieInstanceController {
         this.getChunkAttribute(this.lightSelectorsByChunk, records, () => createLightSelectorInstanceAttribute(records))
       );
     }
+    if (!primitive.isGlowOverlay && this.rc1PointLights.length > 0) {
+      let attributes = this.rc1PointLightsByChunk.get(records);
+      if (!attributes) {
+        attributes = createRc1TiePointLightAttributes(records, this.rc1PointLights);
+        this.rc1PointLightsByChunk.set(records, attributes);
+      }
+      geometry.setAttribute(rc1TiePointDirectionAttributeName, attributes.direction);
+      geometry.setAttribute(rc1TiePointColorAttributeName, attributes.color);
+    }
     if (glowColorBinding) {
       geometry.setAttribute(
         tieGlowColorRowAttributeName,
@@ -831,7 +855,8 @@ export class TieInstanceController {
       binding.glowColorBinding,
       this.directionalLightBinding,
       this.skyboxReflectionTexture,
-      displayOptions);
+      displayOptions,
+      binding.mesh.geometry.hasAttribute(rc1TiePointColorAttributeName));
   }
 
   private getBindingMaterialSource(binding: TieInstancedMeshBinding): THREE.Material | THREE.Material[] {
@@ -907,7 +932,8 @@ export class TieInstanceController {
     glowColorBinding: TieGlowColorBinding | null,
     usesGlowEmission: boolean
   ): TieMaterialSet {
-    const ambientBinding = createTieAmbientTextureBinding(records, primitive, this.directionalLights);
+    const hasRc1PointLights = this.rc1PointLights.length > 0;
+    const ambientBinding = createTieAmbientTextureBinding(records, primitive, this.directionalLights, this.isRc1);
     const displayOptions = this.modelDisplayOptions;
     if (!displayOptions) {
       throw new Error('Tie material display options are not initialized.');
@@ -921,7 +947,8 @@ export class TieInstanceController {
           glowColorBinding,
           this.directionalLightBinding,
           this.skyboxReflectionTexture,
-          displayOptions)
+          displayOptions,
+          hasRc1PointLights && !usesGlowEmission)
       : null;
     return {
       flatMaterial: coloredMaterial
@@ -933,7 +960,8 @@ export class TieInstanceController {
           glowColorBinding,
           this.directionalLightBinding,
           this.skyboxReflectionTexture,
-          displayOptions),
+          displayOptions,
+          hasRc1PointLights && !usesGlowEmission),
       coloredMaterial,
       textureMaterial: null,
       ambientBinding,

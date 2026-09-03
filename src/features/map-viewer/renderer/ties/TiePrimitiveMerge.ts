@@ -1,13 +1,16 @@
 import * as THREE from 'three/webgpu';
 import type { TiePrimitive } from './TieTypes';
+import { resolveModelMaterialInfo } from '../model-materials/ModelMaterialNodes.ts';
 
 // ponytail: avoid unbounded draw-call fan-out; use OIT if complex meshes need exact sorting.
 const maxSortableAlphaComponents = 8;
 
-export function mergeAdjacentTiePrimitives(primitives: TiePrimitive[]): TiePrimitive[] {
+export function mergeTiePrimitives(primitives: TiePrimitive[]): TiePrimitive[] {
   const merged: TiePrimitive[] = [];
   for (const primitive of primitives) {
-    const previous = merged.at(-1);
+    const previous = tieMaterialUsesAlphaBlend(primitive.material)
+      ? merged.at(-1)
+      : merged.find((candidate) => canMerge(candidate, primitive));
     if (previous && canMerge(previous, primitive)) {
       previous.geometry = mergeGeometry(previous.geometry, primitive.geometry);
     } else {
@@ -109,10 +112,61 @@ function sameMaterial(
   right: THREE.Material | THREE.Material[]
 ): boolean {
   if (!Array.isArray(left) || !Array.isArray(right)) {
-    return left === right;
+    return !Array.isArray(left) && !Array.isArray(right)
+      && tieMaterialRenderKey(left) === tieMaterialRenderKey(right);
   }
 
-  return left.length === right.length && left.every((material, index) => material === right[index]);
+  return left.length === right.length
+    && left.every((material, index) => tieMaterialRenderKey(material) === tieMaterialRenderKey(right[index]));
+}
+
+function tieMaterialUsesAlphaBlend(material: THREE.Material | THREE.Material[]): boolean {
+  const materials = Array.isArray(material) ? material : [material];
+  return materials.some((item) => resolveModelMaterialInfo(item, 'tie').usesAlphaBlend);
+}
+
+const tieMaterialRenderKeys = new WeakMap<THREE.Material, string>();
+
+function tieMaterialRenderKey(material: THREE.Material): string {
+  const cached = tieMaterialRenderKeys.get(material);
+  if (cached) {
+    return cached;
+  }
+
+  const source = material as Partial<THREE.MeshStandardMaterial>;
+  const info = resolveModelMaterialInfo(material, 'tie');
+  const key = [
+    source.map?.uuid,
+    source.alphaMap?.uuid,
+    source.emissiveMap?.uuid,
+    source.color?.getHexString(),
+    source.vertexColors,
+    material.side,
+    material.transparent,
+    material.opacity,
+    material.alphaTest,
+    material.depthTest,
+    material.depthWrite,
+    info.alphaUsage,
+    info.alphaMode,
+    info.usesOpacityAlpha,
+    info.usesReflectiveMask,
+    info.usesAlphaCutout,
+    info.usesAlphaBlend,
+    info.usesAlphaMask,
+    info.hasOpaqueTexels,
+    info.fullOpacityAlpha,
+    info.usesReflectiveMask ? info.passFlags : 0,
+    info.usesReflectiveMask ? info.passEnvironmentModeBits : 0,
+    info.usesReflectiveMask ? info.secondPassMode : null,
+    info.usesGlowEmission,
+    info.glowEmissionStrength,
+    info.glowTint.getHexString(),
+    info.usesReflectiveMask ? info.reflectiveEnvironmentSource : null,
+    info.usesReflectiveMask ? info.reflectiveBleedColor.getHexString() : null
+  ].join('|');
+  tieMaterialRenderKeys.set(material, key);
+  return key;
 }
 
 function sameRecipes(left: TiePrimitive, right: TiePrimitive): boolean {

@@ -22,11 +22,13 @@ import {
   type TiePrimitive
 } from './TieTypes.ts';
 import { clampByte } from './tieUtils.ts';
+import { decodeRc1TieAmbientColor } from '../rc1/Rc1Lighting.ts';
 
 export function createTieAmbientTextureBinding(
   records: PreparedTieRecord[],
   primitive: TiePrimitive,
-  directionalLights: DirectionalLightRecord[] = []
+  directionalLights: DirectionalLightRecord[] = [],
+  useRc1ColorFormat = false
 ): TieAmbientTextureBinding | null {
   if (primitive.isGlowOverlay || !primitive.hasAmbientAttribute || records.length === 0) {
     return null;
@@ -37,7 +39,7 @@ export function createTieAmbientTextureBinding(
     return null;
   }
 
-  const textureResult = createTieAmbientTexture(records, ambientIndices, primitive, directionalLights);
+  const textureResult = createTieAmbientTexture(records, ambientIndices, primitive, directionalLights, useRc1ColorFormat);
   return {
     texture: textureResult.texture,
     wordCount: ambientIndices.length,
@@ -141,7 +143,8 @@ function createTieAmbientTexture(
   records: PreparedTieRecord[],
   ambientIndices: number[],
   primitive: TiePrimitive,
-  directionalLights: DirectionalLightRecord[]
+  directionalLights: DirectionalLightRecord[],
+  useRc1ColorFormat: boolean
 ): {
   texture: THREE.DataTexture;
   recipeSamples: number;
@@ -159,7 +162,7 @@ function createTieAmbientTexture(
       ((primitive.packedLightModeBits ?? 0) & 1) === 0
       || primitive.packedLightScales.length >= packedSourceCount
     );
-  const hasBakedDirectionalLight = hasPackedLightData && directionalLights.length > 0;
+  const hasBakedDirectionalLight = !useRc1ColorFormat && hasPackedLightData && directionalLights.length > 0;
   let recipeSamples = 0;
   let validSamples = 0;
 
@@ -167,8 +170,10 @@ function createTieAmbientTexture(
     const record = records[y];
     const words = record?.colorEntry?.words ?? [];
     const resolveSourceColor = (sourceIndex: number) => {
-      const color = tieAmbientPackedColor(words, sourceIndex);
-      return hasPackedLightData && color.valid && record
+      const color = useRc1ColorFormat
+        ? decodeRc1TieAmbientColor(words, sourceIndex)
+        : tieAmbientPackedColor(words, sourceIndex);
+      return !useRc1ColorFormat && hasPackedLightData && color.valid && record
         ? applyTieSourceLighting(color, sourceIndex, record, primitive, directionalLights)
         : color;
     };

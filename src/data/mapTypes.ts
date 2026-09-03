@@ -1,4 +1,4 @@
-export type RatchetGameId = 'DL' | 'GC' | 'UYA';
+export type RatchetGameId = 'RC1' | 'DL' | 'GC' | 'UYA';
 export type MapCategory = 'SP' | 'MP' | 'Mission' | 'Custom';
 export type MapSourceKind = 'vanillaWad' | 'customZip';
 

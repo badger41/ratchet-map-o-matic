@@ -8,6 +8,7 @@ import {
 } from '../renderPackages/indexedDbRenderPackageStore';
 import {
   loadRatchetPs2Wasm,
+  type GameplayBlocks,
   type DlMobyMissionInstances,
   type DlMobyInstances,
   type DlMobyInstance,
@@ -290,25 +291,28 @@ async function buildWadRenderPackage(
   gameId: MapDefinition['gameId'],
   wadBytes: Uint8Array
 ): Promise<PackedFilePackageResult> {
-  if (gameId === 'GC') {
-    if (!wasm.buildGcLevelWadRenderPackageEnvelope) {
-      throw new Error('Optimized GC WASM render package export is not loaded. Hard-refresh the page and retry.');
-    }
-
-    return decodeRenderPackageEnvelope(await wasm.buildGcLevelWadRenderPackageEnvelope(wadBytes));
+  const envelopeBuilder = getWadRenderPackageEnvelopeBuilder(wasm, gameId);
+  if (envelopeBuilder) {
+    return decodeRenderPackageEnvelope(await envelopeBuilder(wadBytes));
   }
 
-  if (gameId === 'UYA') {
-    if (!wasm.buildUyaLevelWadRenderPackageEnvelope) {
-      throw new Error('Optimized UYA WASM render package export is not loaded. Hard-refresh the page and retry.');
-    }
-
-    return decodeRenderPackageEnvelope(await wasm.buildUyaLevelWadRenderPackageEnvelope(wadBytes));
+  if (gameId !== 'DL') {
+    throw new Error(`Optimized ${gameId} WASM render package export is not loaded. Hard-refresh the page and retry.`);
   }
 
-  return wasm.buildDlLevelWadRenderPackageEnvelope
-    ? decodeRenderPackageEnvelope(await wasm.buildDlLevelWadRenderPackageEnvelope(wadBytes))
-    : wasm.buildDlLevelWadRenderPackage(wadBytes);
+  return wasm.buildDlLevelWadRenderPackage(wadBytes);
+}
+
+function getWadRenderPackageEnvelopeBuilder(
+  wasm: RatchetPs2WasmModule,
+  gameId: MapDefinition['gameId']
+) {
+  switch (gameId) {
+    case 'RC1': return wasm.buildRc1LevelWadRenderPackageEnvelope;
+    case 'GC': return wasm.buildGcLevelWadRenderPackageEnvelope;
+    case 'UYA': return wasm.buildUyaLevelWadRenderPackageEnvelope;
+    case 'DL': return wasm.buildDlLevelWadRenderPackageEnvelope;
+  }
 }
 
 async function buildUyaCustomMapZipRenderPackage(
@@ -340,13 +344,7 @@ function hasRenderPackageEnvelope(
       : Boolean(wasm.buildDlLevelWadRenderPackageEnvelope);
   }
 
-  if (map.gameId === 'GC') {
-    return Boolean(wasm.buildGcLevelWadRenderPackageEnvelope);
-  }
-
-  return map.gameId === 'UYA'
-    ? Boolean(wasm.buildUyaLevelWadRenderPackageEnvelope)
-    : Boolean(wasm.buildDlLevelWadRenderPackageEnvelope);
+  return Boolean(getWadRenderPackageEnvelopeBuilder(wasm, map.gameId));
 }
 
 function decodeRenderPackageEnvelope(envelope: WasmByteArray): PackedFilePackageResult {
@@ -374,6 +372,16 @@ async function parsePackedGameplayData(
   renderPackage: PackedFilePackageResult,
   gameId: MapDefinition['gameId']
 ): Promise<GameplayData> {
+  if (gameId === 'RC1') {
+    try {
+      return normalizeGameplay(await wasm.parseRc1GameplayCore(
+        readRequiredPackedFileBytes(renderPackage, 'gameplay/gameplay_core.bin')));
+    } catch (error) {
+      console.warn('Failed to parse packed RC1 gameplay data.', error);
+      return emptyGameplayData();
+    }
+  }
+
   if (gameId !== 'DL') {
     return parsePackedUyaGameplayData(wasm, renderPackage, gameId);
   }
@@ -384,7 +392,7 @@ async function parsePackedGameplayData(
   }
 
   try {
-    const gameplayData = await parseGameplayCore(wasm, gameplayCore);
+    const gameplayData = await parseDlGameplayCore(wasm, gameplayCore);
     return {
       ...gameplayData,
       mobyMissions: await parseDlMobyMissions(wasm, renderPackage)
@@ -399,6 +407,18 @@ async function parseLooseGameplayData(
   manifestUrl: string,
   gameId: MapDefinition['gameId']
 ): Promise<GameplayData> {
+  if (gameId === 'RC1') {
+    try {
+      const gameplayCore = await fetchLooseGameplayCore(manifestUrl);
+      return gameplayCore
+        ? normalizeGameplay(await (await loadRatchetPs2Wasm()).parseRc1GameplayCore(gameplayCore))
+        : emptyGameplayData();
+    } catch (error) {
+      console.warn('Failed to parse loose RC1 gameplay data.', error);
+      return emptyGameplayData();
+    }
+  }
+
   if (gameId !== 'DL') {
     try {
       return await parseLooseUyaGameplayData(manifestUrl, gameId);
@@ -415,7 +435,7 @@ async function parseLooseGameplayData(
     }
 
     const wasm = await loadRatchetPs2Wasm();
-    return await parseGameplayCore(wasm, gameplayCore);
+    return await parseDlGameplayCore(wasm, gameplayCore);
   } catch (error) {
     console.warn('Failed to parse loose DL gameplay data.', error);
     return emptyGameplayData();
@@ -430,9 +450,12 @@ async function fetchLooseGameplayCore(manifestUrl: string): Promise<Uint8Array |
     : null;
 }
 
-async function parseGameplayCore(wasm: RatchetPs2WasmModule, gameplayCore: Uint8Array): Promise<GameplayData> {
-  const gameplay = await wasm.parseDlGameplayCore(gameplayCore);
-  const pvarTables = normalizeDlPvarTables(gameplay.pvarTables);
+async function parseDlGameplayCore(wasm: RatchetPs2WasmModule, gameplayCore: Uint8Array): Promise<GameplayData> {
+  return normalizeGameplay(await wasm.parseDlGameplayCore(gameplayCore));
+}
+
+function normalizeGameplay(gameplay: GameplayBlocks): GameplayData {
+  const pvarTables = normalizePvarTables(gameplay.pvarTables);
   const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
   return {
     levelSettings: gameplay.blocks.find((block) => block.levelSettings)?.levelSettings ?? null,
@@ -472,7 +495,7 @@ async function parseDlMobyMission(
 ): Promise<DlMobyMissionInstances | null> {
   const gameplay = await wasm.parseDlGameplayMission(gameplayBytes);
   const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
-  const withPvars = attachMobyPvars(mobyInstances, normalizeDlPvarTables(gameplay.pvarTables));
+  const withPvars = attachMobyPvars(mobyInstances, normalizePvarTables(gameplay.pvarTables));
   return withPvars?.instances.length ? { missionIndex, mobyInstances: withPvars } : null;
 }
 
@@ -512,7 +535,7 @@ async function parseUyaGameplayCore(
   const gameplay = gameId === 'GC' && wasm.parseGcGameplayCore
     ? await wasm.parseGcGameplayCore(gameplayCore)
     : await wasm.parseUyaGameplayCore(gameplayCore);
-  const pvarTables = normalizeDlPvarTables(gameplay.pvarTables);
+  const pvarTables = normalizePvarTables(gameplay.pvarTables);
   const mobyInstances = gameplay.blocks.find((block) => block.mobyInstances)?.mobyInstances ?? null;
 
   return {
@@ -618,7 +641,7 @@ function attachMobyPvars(mobyInstances: DlMobyInstances | null, pvarTables: DlPv
   };
 }
 
-function normalizeDlPvarTables(pvarTables: DlPvarTables | null | undefined): DlPvarTables | null {
+function normalizePvarTables(pvarTables: DlPvarTables | null | undefined): DlPvarTables | null {
   if (!pvarTables) {
     return null;
   }
@@ -772,6 +795,8 @@ function yieldToBrowser(): Promise<void> {
 }
 
 async function findCachedPackage(sourceUrl: string): Promise<IndexedDbRenderPackageMetadata | null> {
+  if (import.meta.env.DEV) return null;
+
   try {
     return await findIndexedDbRenderPackageBySourceUrl(sourceUrl);
   } catch (error) {

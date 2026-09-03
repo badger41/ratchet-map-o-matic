@@ -120,7 +120,7 @@ export default function TieWindow({
     renderer.setAnimationLoop(() => {
       controls.update();
       if (modelRoot) {
-        setTiePreviewSideMode(modelRoot, camera, sideModeRef.current);
+        setTiePreviewSideMode(modelRoot, sideModeRef.current);
       }
       renderer.render(scene, camera);
     });
@@ -143,7 +143,7 @@ export default function TieWindow({
       configureTiePreviewMaterials(modelRoot);
       scene.add(modelRoot);
       frameTie(camera, controls, modelRoot);
-      setTiePreviewSideMode(modelRoot, camera, sideModeRef.current);
+      setTiePreviewSideMode(modelRoot, sideModeRef.current);
       setLoading(false);
     }
 
@@ -350,7 +350,7 @@ async function generateTieThumbnails(
         configureTiePreviewMaterials(root);
         scene.add(root);
         camera.lookAt(frameTieCamera(camera, root));
-        setTiePreviewSideMode(root, camera, 'game');
+        setTiePreviewSideMode(root, 'game');
         renderer.render(scene, camera);
         onThumbnail(tie.key, renderer.domElement.toDataURL('image/webp', 0.82));
       } catch (thumbnailError) {
@@ -383,9 +383,10 @@ function configureTiePreviewMaterials(root: THREE.Object3D): void {
     const materials = sourceMaterials.map((material) => material.clone());
     mesh.material = Array.isArray(mesh.material) ? materials : materials[0];
     for (const material of materials) {
+      const sourceSide = material.side;
       const info = resolveModelMaterialInfo(material, 'tie');
       configureModelMaterialTransparency(material, info);
-      material.userData.mapOmaticTiePreviewSourceSide = material.side;
+      material.userData.mapOmaticTiePreviewSourceSide = sourceSide;
       const map = (material as THREE.MeshStandardMaterial).map;
       if (!map) {
         continue;
@@ -412,19 +413,12 @@ function configureTiePreviewMaterials(root: THREE.Object3D): void {
   for (const mesh of meshes) {
     syncModelAlphaOpaquePass(mesh);
   }
-
-  root.updateMatrixWorld(true);
-  root.userData.mapOmaticTiePreviewSphere = new THREE.Box3()
-    .setFromObject(root)
-    .getBoundingSphere(new THREE.Sphere());
 }
 
 function setTiePreviewSideMode(
   root: THREE.Object3D,
-  camera: THREE.PerspectiveCamera,
   mode: TiePreviewSideMode
 ): void {
-  const distanceBucket = tiePreviewDistanceBucket(root, camera);
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
@@ -432,57 +426,17 @@ function setTiePreviewSideMode(
     }
 
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      const bfcDistance = Number(mesh.geometry?.userData?.BfcDistance);
       const side = mode === 'double'
         ? THREE.DoubleSide
         : mode === 'front'
           ? THREE.FrontSide
-          : Number.isFinite(bfcDistance)
-            ? distanceBucket < bfcDistance ? THREE.FrontSide : THREE.DoubleSide
-            : material.userData.mapOmaticTiePreviewSourceSide ?? THREE.FrontSide;
+          : material.userData.mapOmaticTiePreviewSourceSide ?? THREE.FrontSide;
       if (material.side !== side) {
         material.side = side;
         material.needsUpdate = true;
       }
     }
   });
-}
-
-function tiePreviewDistanceBucket(root: THREE.Object3D, camera: THREE.PerspectiveCamera): number {
-  const sphere = root.userData.mapOmaticTiePreviewSphere as THREE.Sphere | undefined;
-  if (!sphere) {
-    return 0;
-  }
-
-  const sourceBounds: { radius: number | null; center: number[] | null } = {
-    radius: null,
-    center: null
-  };
-  root.traverse((object) => {
-    const value = Number(object.userData?.ScaledBoundingRadius);
-    if (sourceBounds.radius === null && Number.isFinite(value) && value > 0) {
-      sourceBounds.radius = value;
-    }
-    const center = object.userData?.ScaledBoundingSphereCenter;
-    if (sourceBounds.center === null && Array.isArray(center) && center.length >= 3) {
-      sourceBounds.center = center.slice(0, 3).map(Number);
-    }
-  });
-
-  camera.updateMatrixWorld(true);
-  const centerWorld = sourceBounds.center?.every(Number.isFinite)
-    ? root.localToWorld(new THREE.Vector3(
-      sourceBounds.center[0],
-      sourceBounds.center[1],
-      sourceBounds.center[2]
-    ))
-    : sphere.center;
-  const centerView = centerWorld.clone().applyMatrix4(camera.matrixWorldInverse);
-  return THREE.MathUtils.clamp(
-    Math.floor(Math.max(0, -centerView.z - (sourceBounds.radius ?? sphere.radius))),
-    0,
-    127
-  );
 }
 
 function frameTie(

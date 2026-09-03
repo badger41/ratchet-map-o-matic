@@ -23,7 +23,8 @@ import {
 } from '../src/features/map-viewer/renderer/model-materials/ModelMaterialNodes.ts';
 import { mergeMissionMobyEntries } from '../src/services/mapPackages/mobyPackageEntries.ts';
 
-test('uses UYA moby color as ambient light and preserves its directional-light selector', () => {
+test('uses stored moby color as ambient light and preserves its directional-light selector', () => {
+  assert.equal(usesStoredMobyAmbient('RC1'), true);
   assert.equal(usesStoredMobyAmbient('UYA'), true);
   assert.equal(usesStoredMobyAmbient('DL'), false);
   assert.equal(resolveMobyMission(8, 'UYA'), -1);

@@ -144,7 +144,7 @@ export interface GameplayGeometry {
   areas: GameplayArea[];
 }
 
-export interface DlGameplayBlock {
+export interface GameplayBlock {
   index: number;
   headerOffset: number;
   pointer: number;
@@ -154,13 +154,16 @@ export interface DlGameplayBlock {
   mobyInstances: DlMobyInstances | null;
 }
 
-export interface DlGameplayBlocks {
+export interface GameplayBlocks {
   kind: string;
   headerSize: number;
   pvarTables: DlPvarTables | null;
   geometry: GameplayGeometry;
-  blocks: DlGameplayBlock[];
+  blocks: GameplayBlock[];
 }
+
+export type DlGameplayBlocks = GameplayBlocks;
+export type Rc1GameplayBlocks = GameplayBlocks;
 
 export type UyaRgb96 = DlRgb96;
 export type UyaVector3 = DlVector3;
@@ -242,12 +245,15 @@ export interface RatchetPs2WasmModule {
   unpackUyaLevelWad(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   parseDlGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
   parseDlGameplayMission(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
+  parseRc1GameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<Rc1GameplayBlocks>;
   parseGcGameplayCore?(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
   parseUyaGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
   buildDlLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   buildDlLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
   buildGcLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   buildGcLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
+  buildRc1LevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
+  buildRc1LevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
   buildUyaLevelWadRenderPackage(levelWadBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
   buildUyaLevelWadRenderPackageEnvelope?(levelWadBytes: Uint8Array | ArrayBuffer): Promise<WasmByteArray>;
   buildUyaCustomMapZipRenderPackage?(zipBytes: Uint8Array | ArrayBuffer): Promise<PackedFilePackageResult>;
@@ -271,7 +277,9 @@ export function loadRatchetPs2Wasm(): Promise<RatchetPs2WasmModule> {
 
 async function initializeRatchetPs2WasmModule(): Promise<RatchetPs2WasmModule> {
   const assetBaseUrl = resolveRatchetPs2WasmAssetBaseUrl();
-  const moduleUrl = new URL('ratchetps2-wasm.js', assetBaseUrl);
+  const moduleUrl = import.meta.env.DEV
+    ? new URL('../../vendor/ratchetps2-wasm/ratchetps2-wasm.js', import.meta.url)
+    : new URL('ratchetps2-wasm.js', assetBaseUrl);
   moduleUrl.searchParams.set('v', ratchetPs2WasmVersion);
   const wasm = await import(/* @vite-ignore */ moduleUrl.toString()) as RatchetPs2WasmModule;
   await wasm.initializeRatchetPs2Wasm({ assetBaseUrl });

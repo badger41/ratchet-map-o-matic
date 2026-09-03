@@ -26,6 +26,7 @@ import {
 } from './mapLoaderState';
 
 const gameOptions: Array<{ gameId: RatchetGameId; label: string }> = [
+  { gameId: 'RC1', label: 'Ratchet & Clank' },
   { gameId: 'GC', label: 'Going Commando' },
   { gameId: 'UYA', label: 'Up Your Arsenal' },
   { gameId: 'DL', label: 'Deadlocked' }
@@ -408,7 +409,7 @@ function readMapRoute(): MapRouteSeed {
 
   const maps = mapsForGame(gameId);
   const sourceSegment = sourceSlug?.toLowerCase();
-  if (sourceSegment === customRouteSegment && gameId !== 'GC') {
+  if (sourceSegment === customRouteSegment && (gameId === 'DL' || gameId === 'UYA')) {
     return {
       gameId,
       source: 'custom',
@@ -435,7 +436,7 @@ function readMapRoute(): MapRouteSeed {
 
 function parseRouteGameId(value: string | undefined): RatchetGameId | null {
   const normalized = value?.toUpperCase();
-  return normalized === 'DL' || normalized === 'GC' || normalized === 'UYA' ? normalized : null;
+  return gameOptions.find((game) => game.gameId === normalized)?.gameId ?? null;
 }
 
 function parseRouteLevel(value: string | undefined): number | null {

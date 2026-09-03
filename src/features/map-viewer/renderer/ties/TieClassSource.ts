@@ -18,7 +18,7 @@ import {
   numberValue
 } from './tieUtils';
 import {
-  mergeAdjacentTiePrimitives,
+  mergeTiePrimitives,
   splitIndexedTieGeometryComponents
 } from './TiePrimitiveMerge';
 import { resolveModelMaterialInfo } from '../model-materials/ModelMaterialNodes';
@@ -95,7 +95,7 @@ export function collectTiePrimitives(source: THREE.Object3D): TiePrimitive[] {
     });
   });
 
-  return splitAlphaBlendPrimitives(mergeAdjacentTiePrimitives(primitives));
+  return splitAlphaBlendPrimitives(mergeTiePrimitives(primitives));
 }
 
 function splitAlphaBlendPrimitives(primitives: TiePrimitive[]): TiePrimitive[] {

@@ -14,6 +14,7 @@ import {
   vertexStage
 } from 'three/tsl';
 import type Node from 'three/src/nodes/core/Node.js';
+import { createRc1TiePointLightNode } from '../rc1/Rc1Lighting.ts';
 import {
   applyModelMaterialFeatureColorNode,
   configureModelMaterialTransparency,
@@ -61,7 +62,8 @@ export function cloneTieMaterial(
   glowColorBinding: TieGlowColorBinding | null,
   directionalLightBinding: TieDirectionalLightBinding | null,
   skyboxReflectionTexture: THREE.Texture | null,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  hasRc1PointLights = false
 ): THREE.Material | THREE.Material[] {
   return Array.isArray(material)
     ? material.map((item) => createTieDisplayMaterial(
@@ -71,7 +73,8 @@ export function cloneTieMaterial(
       glowColorBinding,
       directionalLightBinding,
       skyboxReflectionTexture,
-      displayOptions))
+      displayOptions,
+      hasRc1PointLights))
     : createTieDisplayMaterial(
       material,
       geometry,
@@ -79,7 +82,8 @@ export function cloneTieMaterial(
       glowColorBinding,
       directionalLightBinding,
       skyboxReflectionTexture,
-      displayOptions);
+      displayOptions,
+      hasRc1PointLights);
 }
 
 export function cloneTieTextureMaterial(material: THREE.Material | THREE.Material[]): THREE.Material | THREE.Material[] {
@@ -149,7 +153,8 @@ function createTieDisplayMaterial(
   glowColorBinding: TieGlowColorBinding | null,
   directionalLightBinding: TieDirectionalLightBinding | null,
   skyboxReflectionTexture: THREE.Texture | null,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  hasRc1PointLights: boolean
 ): THREE.Material {
   const sourceMaterial = source as Partial<THREE.MeshBasicMaterial>;
   const modelMaterialInfo = resolveModelMaterialInfo(source, 'tie');
@@ -205,7 +210,7 @@ function createTieDisplayMaterial(
   }
 
   const needsFeatureColorNode = modelMaterialInfo.usesReflectiveMask;
-  if (ambientBinding || directionalLightBinding || needsFeatureColorNode) {
+  if (ambientBinding || directionalLightBinding || hasRc1PointLights || needsFeatureColorNode) {
     material.colorNode = createTieColorNode(
       material,
       ambientBinding,
@@ -213,7 +218,8 @@ function createTieDisplayMaterial(
       reflectionTexture,
       hasSecondUvReflection,
       modelMaterialInfo,
-      displayOptions);
+      displayOptions,
+      hasRc1PointLights);
   }
 
   return material;
@@ -253,7 +259,8 @@ function createTieColorNode(
   skyboxReflectionTexture: THREE.Texture | null,
   hasSecondUvReflection: boolean,
   modelMaterialInfo: ModelMaterialInfo,
-  displayOptions: ModelDisplayNodeOptions
+  displayOptions: ModelDisplayNodeOptions,
+  hasRc1PointLights: boolean
 ): Node<'vec3'> {
   const baseDisplayColorNode = createTieBaseDisplayColorNode(material);
   const baseColorNode = decodeModelDisplayTextureNode(baseDisplayColorNode);
@@ -264,6 +271,10 @@ function createTieColorNode(
   if (ambientBinding) {
     const ambientTermNode = createTieAmbientRawColorNode(ambientBinding).mul(float(tieAmbientRawIntensityScale));
     lightTermNode = directionalLightNode ? ambientTermNode.add(directionalLightNode) : ambientTermNode;
+  }
+  if (hasRc1PointLights) {
+    const pointLightNode = createRc1TiePointLightNode();
+    lightTermNode = lightTermNode ? lightTermNode.add(pointLightNode) : pointLightNode;
   }
   const litColorNode = lightTermNode
     ? applyModelDisplayTextureModulateNode(baseDisplayColorNode, lightTermNode)

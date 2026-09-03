@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { attribute, float, texture, uv, vec3, vertexStage } from 'three/tsl';
 import type { DirectionalLightRecord, TfragStats, Vec4 } from '../../../services/mapPackages/mapPackageTypes';
+import type { Rc1PointLightRecord } from '../../../services/mapPackages/rc1/Rc1PointLights.ts';
 import {
   applyModelDisplayTextureModulateNode,
   applyTfragFogNode,
@@ -27,6 +28,11 @@ import {
   belowWaterRenderOrder,
   createWaterSurfaceMaterialPasses
 } from './WaterSurfacePass';
+import {
+  evaluateRc1PointLighting,
+  prepareRc1PointLights,
+  type PreparedRc1PointLight
+} from './rc1/Rc1Lighting.ts';
 
 type AnyAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 type TypedArray =
@@ -62,6 +68,7 @@ interface TfragGeometryBatch {
 
 interface BakeContext {
   directionalLights: PreparedDirectionalLightRecord[];
+  rc1PointLights: PreparedRc1PointLight[];
 }
 
 interface PreparedDirectionalLightRecord {
@@ -164,7 +171,8 @@ export class TfragMaterialController {
   prepare(
     root: THREE.Object3D,
     directionalLights: DirectionalLightRecord[],
-    displayOptions: ModelDisplayNodeOptions
+    displayOptions: ModelDisplayNodeOptions,
+    rc1PointLights: Rc1PointLightRecord[] = []
   ): TfragStats {
     pruneToLod0(root);
     this.dispose();
@@ -173,7 +181,7 @@ export class TfragMaterialController {
     root.updateWorldMatrix(true, true);
     const atlas = createTfragAtlas(root);
     this.atlasTexture = atlas?.texture ?? null;
-    const bakeContext = createTfragBakeContext(directionalLights);
+    const bakeContext = createTfragBakeContext(directionalLights, rc1PointLights);
     const batches = new Map<string, TfragGeometryBatch>();
     const materialCache = new Map<string, THREE.Material>();
     const sourceMeshes: THREE.Mesh[] = [];
@@ -202,6 +210,7 @@ export class TfragMaterialController {
       }
 
       const clonedGeometry = mesh.geometry.clone();
+      bakeTfragGeometryColors(clonedGeometry, bakeContext, mesh.matrixWorld);
       const batchTarget = getTfragBatchTarget(root, mesh);
       const targetWorldInverse = new THREE.Matrix4().copy(batchTarget.matrixWorld).invert();
       const localToTarget = new THREE.Matrix4().multiplyMatrices(targetWorldInverse, mesh.matrixWorld);
@@ -216,7 +225,6 @@ export class TfragMaterialController {
       if (atlasRegion) {
         applyTfragAtlasUvs(geometry, atlasRegion);
       }
-      bakeTfragGeometryColors(geometry, bakeContext);
 
       const batchKey = `${batchTarget.uuid}:${materialKey}`;
       let batch = batches.get(batchKey);
@@ -405,7 +413,11 @@ function pruneToLod0(root: THREE.Object3D): void {
   }
 }
 
-function bakeTfragGeometryColors(geometry: THREE.BufferGeometry, context: BakeContext): void {
+function bakeTfragGeometryColors(
+  geometry: THREE.BufferGeometry,
+  context: BakeContext,
+  matrixWorld: THREE.Matrix4
+): void {
   const geometryAttributes = geometry as GeometryWithAttributes;
   const positions = geometry.getAttribute('position');
   const cacheColor = getSourceTfragCacheColor(geometry);
@@ -416,17 +428,28 @@ function bakeTfragGeometryColors(geometry: THREE.BufferGeometry, context: BakeCo
   const vertexCount = positions?.count ?? cacheColor?.count ?? baseColor?.count ?? 0;
   const colorAttribute = getWritableColorAttribute(geometry, vertexCount);
   const colors = colorAttribute.array as Float32Array;
+  const pointPosition = new THREE.Vector3();
+  const pointNormal = new THREE.Vector3();
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrixWorld);
 
   for (let index = 0; index < vertexCount; index += 1) {
     const fallbackColor = readColor(cacheColor, index, [1, 1, 1]);
     const base = readColor(baseColor, index, fallbackColor);
     const normal = normalizeVec3(readVec3(lightNormal, index, [0, 1, 0]));
+    pointPosition.set(
+      Number(positions?.getX(index) ?? 0),
+      Number(positions?.getY(index) ?? 0),
+      Number(positions?.getZ(index) ?? 0)
+    ).applyMatrix4(matrixWorld);
+    pointNormal.set(...normal).applyNormalMatrix(normalMatrix).normalize();
     const selectorValue = Math.floor(Math.max(readScalar(selector, index, 15), 0) + 0.5);
     const postScaleValue = readScalar(postScale, index, 1);
     const color = computeTfragColor({
       base,
       fallbackColor,
       normal,
+      worldPosition: [pointPosition.x, pointPosition.y, pointPosition.z],
+      worldNormal: [pointNormal.x, pointNormal.y, pointNormal.z],
       selectorValue,
       postScaleValue,
       context
@@ -463,22 +486,29 @@ function computeTfragColor(input: {
   base: [number, number, number];
   fallbackColor: [number, number, number];
   normal: [number, number, number];
+  worldPosition: [number, number, number];
+  worldNormal: [number, number, number];
   selectorValue: number;
   postScaleValue: number;
   context: BakeContext;
 }): [number, number, number] {
-  const { base, fallbackColor, normal, selectorValue, postScaleValue, context } = input;
+  const { base, fallbackColor, normal, worldPosition, worldNormal, selectorValue, postScaleValue, context } = input;
 
   const lightContribution = evaluateSelectedLights(selectorValue, normal, context.directionalLights);
+  const pointContribution = evaluateRc1PointLighting(worldPosition, worldNormal, context.rc1PointLights);
   if (!lightContribution.valid) {
-    return applyOutputScale(fallbackColor, postScaleValue);
+    return applyOutputScale([
+      clampPs2VertexColor(fallbackColor[0] + pointContribution[0]),
+      clampPs2VertexColor(fallbackColor[1] + pointContribution[1]),
+      clampPs2VertexColor(fallbackColor[2] + pointContribution[2])
+    ], postScaleValue);
   }
 
   const decodedBase = decodeTfragRgb5Color(base);
   const lit: [number, number, number] = [
-    clampPs2VertexColor(decodedBase[0] + lightContribution.color[0]),
-    clampPs2VertexColor(decodedBase[1] + lightContribution.color[1]),
-    clampPs2VertexColor(decodedBase[2] + lightContribution.color[2])
+    clampPs2VertexColor(decodedBase[0] + lightContribution.color[0] + pointContribution[0]),
+    clampPs2VertexColor(decodedBase[1] + lightContribution.color[1] + pointContribution[1]),
+    clampPs2VertexColor(decodedBase[2] + lightContribution.color[2] + pointContribution[2])
   ];
   return applyOutputScale(lit, postScaleValue);
 }
@@ -977,9 +1007,13 @@ function getWritableColorAttribute(geometry: THREE.BufferGeometry, vertexCount: 
   return new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
 }
 
-function createTfragBakeContext(directionalLights: DirectionalLightRecord[]): BakeContext {
+function createTfragBakeContext(
+  directionalLights: DirectionalLightRecord[],
+  rc1PointLights: Rc1PointLightRecord[]
+): BakeContext {
   return {
-    directionalLights: directionalLights.map(prepareDirectionalLightRecord)
+    directionalLights: directionalLights.map(prepareDirectionalLightRecord),
+    rc1PointLights: prepareRc1PointLights(rc1PointLights)
   };
 }
 

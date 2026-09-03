@@ -1,4 +1,5 @@
 import type { MapAssetPackage } from '../mapAssets/mapAssetPackage';
+import type { Rc1PointLightRecord } from './rc1/Rc1PointLights.ts';
 
 export type Vec4 = [number, number, number, number];
 
@@ -124,9 +125,8 @@ export interface LoadedMapPackage {
   shrubGroupsPath: string | null;
   shrubClassCountExpected: number | null;
   shrubInstanceCountExpected: number | null;
-  directionalLightPath: string;
-  directionalLightUrl: string;
   directionalLights: DirectionalLightRecord[];
+  rc1PointLights: Rc1PointLightRecord[];
 }
 
 export interface TfragStats {

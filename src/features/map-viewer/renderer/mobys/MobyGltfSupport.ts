@@ -31,7 +31,7 @@ export function prepareMobyInstanceLighting(
 }
 
 export function usesStoredMobyAmbient(game: string | null | undefined): boolean {
-  return ['GC', 'UYA'].includes(game?.toUpperCase() ?? '');
+  return ['RC1', 'GC', 'UYA'].includes(game?.toUpperCase() ?? '');
 }
 
 export function isDeadlockedGame(game: unknown): boolean {

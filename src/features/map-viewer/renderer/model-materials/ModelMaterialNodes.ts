@@ -179,7 +179,6 @@ export function configureModelMaterialTransparency(
 ): void {
   material.userData.mapOmaticModelMaterialInfo = info;
   material.opacity = 1;
-  material.side = THREE.DoubleSide;
   material.alphaHash = false;
   material.alphaToCoverage = false;
 

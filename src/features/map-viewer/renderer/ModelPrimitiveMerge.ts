@@ -8,13 +8,16 @@ interface ModelPrimitive {
   renderOrder: number;
 }
 
-export function mergeAdjacentModelPrimitives<T extends ModelPrimitive>(
+export function mergeModelPrimitives<T extends ModelPrimitive>(
   primitives: T[],
-  sameState: (left: T, right: T) => boolean = () => true
+  sameState: (left: T, right: T) => boolean = () => true,
+  requiresStableOrder: (primitive: T) => boolean = (primitive) => materialUsesAlphaBlend(primitive.material)
 ): T[] {
   const merged: T[] = [];
   for (const primitive of primitives) {
-    const previous = merged.at(-1);
+    const previous = requiresStableOrder(primitive)
+      ? merged.at(-1)
+      : merged.find((candidate) => canMerge(candidate, primitive) && sameState(candidate, primitive));
     if (!previous || !canMerge(previous, primitive) || !sameState(previous, primitive)) {
       merged.push(primitive);
       continue;
@@ -32,6 +35,11 @@ export function mergeAdjacentModelPrimitives<T extends ModelPrimitive>(
   }
 
   return merged;
+}
+
+function materialUsesAlphaBlend(material: THREE.Material | THREE.Material[]): boolean {
+  const materials = Array.isArray(material) ? material : [material];
+  return materials.some((item) => item.transparent && item.alphaTest <= 0);
 }
 
 function canMerge(left: ModelPrimitive, right: ModelPrimitive): boolean {

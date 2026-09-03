@@ -18,6 +18,7 @@ import { ArrowLeft, Play, X } from 'lucide-react';
 import logoDlUrl from '../../../assets/logos/logo_dl.webp';
 import logoGcUrl from '../../../assets/logos/logo_gc.webp';
 import logoHorizonUrl from '../../../assets/logos/logo_horizon.png';
+import logoRc1Url from '../../../assets/logos/logo_rc1.webp';
 import logoUyaUrl from '../../../assets/logos/logo_uya.webp';
 import type { MapDefinition, RatchetGameId } from '../../../data/mapCatalog';
 import type { CustomMapsStatus, MapSource } from '../mapLoaderState';
@@ -42,6 +43,7 @@ interface WelcomeScreenProps {
 }
 
 const gameLogoUrls: Record<RatchetGameId, string> = {
+  RC1: logoRc1Url,
   DL: logoDlUrl,
   GC: logoGcUrl,
   UYA: logoUyaUrl
@@ -115,7 +117,7 @@ export function WelcomeScreen({
                       </ActionIcon>
                     ) : null}
                   </Group>
-                  {selectedGameId !== 'GC' ? (
+                  {selectedGameId === 'DL' || selectedGameId === 'UYA' ? (
                     <Tooltip label={`View custom ${selectedGameId} maps provided by Horizon`} withArrow>
                       <UnstyledButton
                         aria-label={`View custom ${selectedGameId} maps provided by Horizon`}

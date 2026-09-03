@@ -488,7 +488,8 @@ export class MapSceneRenderer {
     const tfragStats = this.tfragController.prepare(
       tfragRoot,
       mapPackage.directionalLights,
-      modelDisplayOptions
+      modelDisplayOptions,
+      mapPackage.rc1PointLights
     );
     this.onTfragStats(tfragStats);
     this.onLoadProgress({

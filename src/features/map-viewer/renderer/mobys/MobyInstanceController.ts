@@ -90,7 +90,7 @@ import {
   usesStoredMobyAmbient
 } from './MobyGltfSupport';
 import { buildMobyInstanceMatrix } from './MobyData';
-import { mergeAdjacentModelPrimitives } from '../ModelPrimitiveMerge';
+import { mergeModelPrimitives } from '../ModelPrimitiveMerge';
 
 type MobyGroup = THREE.Group & {
   isBundleGroup?: boolean;
@@ -630,7 +630,7 @@ function collectMobyPrimitives(source: THREE.Object3D): MobyPrimitive[] {
     });
   });
 
-  return mergeAdjacentModelPrimitives(primitives, (left, right) => left.metal === right.metal);
+  return mergeModelPrimitives(primitives, (left, right) => left.metal === right.metal);
 }
 
 function prepareMobyRecord(record: DlMobyInstance, game: string | null | undefined): PreparedMobyRecord {
